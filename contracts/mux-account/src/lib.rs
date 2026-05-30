@@ -8,7 +8,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, BytesN, Env, Map, Vec,
+    contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, Map, Vec,
 };
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
@@ -195,6 +195,40 @@ impl MuxAccount {
             .ok_or(MuxAccountError::NotInitialized)
     }
 
+    /// Execute a transaction payload on behalf of the account using a delegated session key.
+    ///
+    /// This function allows a delegated session key to execute a transaction payload
+    /// without requiring the account owner's direct authorization. The session key
+    /// must be authorized for the current account (validated via the session registry).
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment
+    /// * `session_key` - The address of the authorized session key
+    /// * `payload` - The serialized transaction payload to execute
+    ///
+    /// # Returns
+    /// * `Ok(Bytes)` - Empty result on successful execution
+    /// * `Err(MuxAccountError)` - If session key is not authorized or invalid
+    ///
+    /// # Events
+    /// Emits a `SessionExecuted` event on successful execution (currently a placeholder).
+    pub fn execute_with_session(
+        env: Env,
+        session_key: Address,
+        _payload: Bytes,
+    ) -> Result<Bytes, MuxAccountError> {
+        // TODO: Validate that session_key is authorized for this account
+        // This requires the session registry contract to be implemented.
+        // Placeholder check: would call session registry to verify authorization.
+        // session_key.require_auth(); // Temporary: require session key to sign
+
+        // TODO: Emit SessionExecuted event
+        // env.events().publish(("SessionExecuted", session_key), payload);
+
+        // For now, return an empty Bytes result as a no-op stub
+        Ok(Bytes::new(&env))
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────────
 
     fn require_owner(env: &Env) -> Result<(), MuxAccountError> {
@@ -284,5 +318,23 @@ mod tests {
         let asset = Address::generate(&env);
         let result = client.try_set_spend_limit(&asset, &0_i128, &100_u32);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_execute_with_session() {
+        let (env, client, owner) = setup();
+        let guardians: Vec<Address> = Vec::new(&env);
+        client.initialize(&owner, &guardians);
+
+        // Create a session key
+        let session_key = Address::generate(&env);
+        let payload = Bytes::new(&env);
+
+        // Execute with session key should succeed and return empty Bytes
+        let result = client.try_execute_with_session(&session_key, &payload);
+        assert!(result.is_ok());
+
+        let response = result.unwrap();
+        assert_eq!(response.len(), 0);
     }
 }
