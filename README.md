@@ -233,6 +233,7 @@ stellar contract deploy --wasm target/wasm32-unknown-unknown/release/mux_account
 - [Account Abstraction Design](docs/account-abstraction.md) — Goals, architecture, session key design, and transaction flows
 - [Threat Model](docs/threat-model.md) — assets, trust boundaries, and mitigations
 - [Access Control Review Checklist](docs/access-control-checklist.md) — pre-deployment and pre-audit checklist
+- [Contributing Guide](CONTRIBUTING.md) — Commit message format, changelog template, testing requirements
 
 ## Security
 
