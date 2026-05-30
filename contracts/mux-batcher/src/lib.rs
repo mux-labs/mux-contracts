@@ -8,8 +8,13 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, Bytes, Env, Vec,
+    contract, contractimpl, contracttype, contracterror, symbol_short, Address, Bytes, Env, Vec,
 };
+
+// ── Audit events ──────────────────────────────────────────────────────────────
+fn emit(env: &Env, action: soroban_sdk::Symbol, data: impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>) {
+    env.events().publish((symbol_short!("mux_bat"), action), data);
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -32,7 +37,7 @@ pub struct BatchResult {
 
 // ── Errors ────────────────────────────────────────────────────────────────────
 
-#[contracttype]
+#[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum MuxBatcherError {
@@ -96,7 +101,9 @@ impl MuxBatcher {
             }
         }
 
-        Ok(BatchResult { success_count, failure_count, errors })
+        let result = BatchResult { success_count, failure_count, errors };
+        emit(&env, symbol_short!("executed"), (caller, result.success_count, result.failure_count));
+        Ok(result)
     }
 
     /// Simulate a batch without writing state — useful for preflight checks.
@@ -129,7 +136,36 @@ impl MuxBatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env, Vec};
+    use soroban_sdk::{testutils::{Address as _, Events}, symbol_short, FromVal, Env, Vec};
+
+    fn topic_action(env: &Env, events: &soroban_sdk::Vec<(soroban_sdk::Address, soroban_sdk::Vec<soroban_sdk::Val>, soroban_sdk::Val)>, idx: u32) -> soroban_sdk::Symbol {
+        let (_, topics, _) = events.get(idx).unwrap();
+        soroban_sdk::Symbol::from_val(env, &topics.get(1).unwrap())
+    }
+
+    #[test]
+    fn test_execute_batch_emits_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let caller = Address::generate(&env);
+        let target = Address::generate(&env);
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        // require_success=false so a failing call doesn't abort; event still fires
+        ops.push_back(Operation {
+            target,
+            fn_name: symbol_short!("noop"),
+            args: Vec::new(&env),
+            require_success: false,
+        });
+        let _ = client.try_execute_batch(&caller, &ops);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        assert_eq!(topic_action(&env, &events, 0), symbol_short!("executed"));
+    }
 
     #[test]
     fn test_empty_batch_rejected() {

@@ -9,8 +9,13 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, Env, Map, Symbol, Vec,
+    contract, contractimpl, contracttype, contracterror, symbol_short, Address, Env, Symbol, Vec,
 };
+
+// ── Audit events ──────────────────────────────────────────────────────────────
+fn emit(env: &Env, action: Symbol, data: impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>) {
+    env.events().publish((symbol_short!("mux_perm"), action), data);
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -32,7 +37,7 @@ pub struct RoleInfo {
 
 // ── Errors ────────────────────────────────────────────────────────────────────
 
-#[contracttype]
+#[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum MuxPermissionsError {
@@ -58,6 +63,7 @@ impl MuxPermissions {
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
+        emit(&env, symbol_short!("init"), admin);
         Ok(())
     }
 
@@ -69,7 +75,8 @@ impl MuxPermissions {
     ) -> Result<(), MuxPermissionsError> {
         Self::require_admin(&env)?;
         env.storage().instance().set(&DataKey::RoleMembers(role.clone()), &Vec::<Address>::new(&env));
-        env.storage().instance().set(&DataKey::RolePermissions(role), &permissions);
+        env.storage().instance().set(&DataKey::RolePermissions(role.clone()), &permissions);
+        emit(&env, symbol_short!("role_crt"), role);
         Ok(())
     }
 
@@ -100,8 +107,8 @@ impl MuxPermissions {
         if !account_roles.contains(&role) {
             account_roles.push_back(role.clone());
         }
-        env.storage().instance().set(&DataKey::AccountRoles(account), &account_roles);
-
+        env.storage().instance().set(&DataKey::AccountRoles(account.clone()), &account_roles);
+        emit(&env, symbol_short!("role_grt"), (account, role));
         Ok(())
     }
 
@@ -131,9 +138,10 @@ impl MuxPermissions {
             if let Some(i) = account_roles.iter().position(|r| r == role) {
                 account_roles.remove(i as u32);
             }
-            env.storage().instance().set(&DataKey::AccountRoles(account), &account_roles);
+            env.storage().instance().set(&DataKey::AccountRoles(account.clone()), &account_roles);
         }
 
+        emit(&env, symbol_short!("role_rev"), (account, role));
         Ok(())
     }
 
@@ -196,7 +204,12 @@ impl MuxPermissions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, symbol_short, Env, Vec};
+    use soroban_sdk::{testutils::{Address as _, Events}, symbol_short, FromVal, Env, Vec};
+
+    fn topic_action(env: &Env, events: &soroban_sdk::Vec<(soroban_sdk::Address, soroban_sdk::Vec<soroban_sdk::Val>, soroban_sdk::Val)>, idx: u32) -> soroban_sdk::Symbol {
+        let (_, topics, _) = events.get(idx).unwrap();
+        soroban_sdk::Symbol::from_val(env, &topics.get(1).unwrap())
+    }
 
     fn setup() -> (Env, MuxPermissionsClient<'static>, Address) {
         let env = Env::default();
@@ -206,6 +219,40 @@ mod tests {
         let admin = Address::generate(&env);
         client.initialize(&admin);
         (env, client, admin)
+    }
+
+    #[test]
+    fn test_initialize_emits_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxPermissions);
+        let client = MuxPermissionsClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        assert_eq!(topic_action(&env, &events, 0), symbol_short!("init"));
+    }
+
+    #[test]
+    fn test_role_lifecycle_emits_events() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let role = symbol_short!("editor");
+        let perm = symbol_short!("write");
+        let mut perms: Vec<Symbol> = Vec::new(&env);
+        perms.push_back(perm);
+
+        client.create_role(&role, &perms);
+        client.grant_role(&user, &role);
+        client.revoke_role(&user, &role);
+
+        let events = env.events().all();
+        // init (from setup) + role_crt + role_grt + role_rev
+        assert_eq!(events.len(), 4);
+        assert_eq!(topic_action(&env, &events, 1), symbol_short!("role_crt"));
+        assert_eq!(topic_action(&env, &events, 2), symbol_short!("role_grt"));
+        assert_eq!(topic_action(&env, &events, 3), symbol_short!("role_rev"));
     }
 
     #[test]
