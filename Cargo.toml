@@ -10,6 +10,9 @@ resolver = "2"
 [workspace.dependencies]
 soroban-sdk = { version = "21.0.0", features = ["testutils"] }
 
+[profile.dev]
+overflow-checks = true
+
 [profile.release]
 opt-level = "z"
 overflow-checks = true

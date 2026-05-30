@@ -222,7 +222,7 @@ impl MuxAccount {
             amount,
             period_ledgers,
             spent: 0,
-            reset_ledger: env.ledger().sequence() + period_ledgers,
+            reset_ledger: env.ledger().sequence().saturating_add(period_ledgers),
         };
         env.storage()
             .instance()
@@ -241,6 +241,18 @@ impl MuxAccount {
         let caller = env.current_contract_address();
         caller.require_auth();
 
+        // Reentrancy guard: reject if a debit_spend call is already in progress.
+        // On error return Soroban rolls back storage, so the flag is self-cleaning.
+        if env
+            .storage()
+            .instance()
+            .get::<DataKey, bool>(&DataKey::Executing)
+            .unwrap_or(false)
+        {
+            return Err(MuxAccountError::ReentrancyDetected);
+        }
+        env.storage().instance().set(&DataKey::Executing, &true);
+
         let mut limit: SpendLimit = env
             .storage()
             .instance()
@@ -249,10 +261,13 @@ impl MuxAccount {
 
         if env.ledger().sequence() >= limit.reset_ledger {
             limit.spent = 0;
-            limit.reset_ledger = env.ledger().sequence() + limit.period_ledgers;
+            limit.reset_ledger = env.ledger().sequence().saturating_add(limit.period_ledgers);
         }
 
-        let new_spent = limit.spent + spend;
+        let new_spent = limit
+            .spent
+            .checked_add(spend)
+            .ok_or(MuxAccountError::ArithmeticOverflow)?;
         if new_spent > limit.amount {
             return Err(MuxAccountError::SpendLimitExceeded);
         }
