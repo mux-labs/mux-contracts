@@ -1,0 +1,46 @@
+version: "3.9"
+
+services:
+  soroban-rpc:
+    image: stellar/quickstart:soroban-latest
+    container_name: mux-soroban-localnet
+    environment:
+      # Enable Soroban on quickstart
+      QUICKSTART_SOROBAN: "true"
+      NETWORK: ${NETWORK:-standalone}
+      SOROBAN_RPC_PORT: ${SOROBAN_RPC_PORT:-8000}
+    ports:
+      # Soroban RPC endpoint
+      - "${SOROBAN_RPC_PORT:-8000}:8000"
+      # Horizon API (optional)
+      - "${HORIZON_PORT:-8001}:8001"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "-f",
+          "-X",
+          "POST",
+          "http://localhost:8000",
+          "-H",
+          "Content-Type: application/json",
+          "-d",
+          '{"jsonrpc":"2.0","id":1,"method":"getNetwork","params":[]}',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    volumes:
+      # Persist ledger data
+      - soroban-data:/opt/stellar
+    command: --standalone
+
+volumes:
+  soroban-data:
+    driver: local
+
+networks:
+  default:
+    name: mux-network
