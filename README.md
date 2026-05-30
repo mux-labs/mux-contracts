@@ -90,6 +90,46 @@ Network endpoints are configured in `bindings/src/network.ts` via environment va
 
 See [docker-compose.yml](docker-compose.yml) for spinning up a local Stellar/Soroban node.
 
+## Error Handling
+
+Contract errors are mapped to HTTP status codes for API/gateway implementations.
+
+**Using error mapping in your API:**
+
+```typescript
+import {
+  contractErrorToHttp,
+  ERROR_HTTP_MAP,
+  type HttpErrorResponse,
+} from "@mux-protocol/contracts";
+
+// Convert a contract error to HTTP response
+const httpError: HttpErrorResponse = contractErrorToHttp("Unauthorized");
+// { statusCode: 401, message: "Unauthorized", errorType: "Unauthorized" }
+
+// Use in Express middleware example:
+async function handleContractCall(req, res) {
+  try {
+    const result = await muxAccount.transfer(/*...*/);
+    res.json(result);
+  } catch (error) {
+    const httpError = contractErrorToHttp(String(error));
+    res.status(httpError.statusCode).json({
+      error: httpError.errorType,
+      message: httpError.message,
+    });
+  }
+}
+```
+
+**Status code mappings:**
+
+- **401 Unauthorized** — `Unauthorized`, `Expired`
+- **404 Not Found** — `*NotFound`, `*NotInRole`, `*NotInitialized` (when expected to exist)
+- **400 Bad Request** — Invalid input, validation failures, constraint violations
+- **409 Conflict** — `AlreadyInitialized`
+- **500 Internal Server Error** — Unexpected or initialization errors
+
 ## Security
 
 - [Threat Model](docs/threat-model.md) — assets, trust boundaries, and mitigations
