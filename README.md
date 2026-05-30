@@ -63,6 +63,8 @@ cd bindings && npm ci && npm run build
 
 - [Threat Model](docs/threat-model.md) — assets, trust boundaries, and mitigations
 - [Access Control Review Checklist](docs/access-control-checklist.md) — pre-deployment and pre-audit checklist
+- [Storage Griefing Notes](docs/storage-griefing.md) — collection caps, TTL management, keeper runbook
+- [External Audit Prep](docs/audit-prep.md) — scope, entry points, known limitations, auditor checklist
 
 To report a vulnerability, open a private security advisory on GitHub.
 

@@ -158,3 +158,4 @@ All three contracts use **instance storage**, which is shared across all callers
 |---|---|---|
 | 2026-05-30 | 0.1.0 | Initial threat model |
 | 2026-05-30 | 0.1.1 | Storage griefing: added T-21 TTL expiry threat; added `extend_ttl` mitigation in all contracts; added `docs/storage-griefing.md` |
+| 2026-05-30 | 0.1.2 | Added `docs/audit-prep.md` — scope, entry points, known limitations, auditor checklist |
