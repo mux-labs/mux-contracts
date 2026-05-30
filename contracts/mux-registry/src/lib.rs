@@ -40,7 +40,9 @@ impl MuxRegistry {
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::Names, &Vec::<Symbol>::new(&env));
+        env.storage()
+            .instance()
+            .set(&DataKey::Names, &Vec::<Symbol>::new(&env));
         Ok(())
     }
 
@@ -56,7 +58,9 @@ impl MuxRegistry {
             names.push_back(name.clone());
             env.storage().instance().set(&DataKey::Names, &names);
         }
-        env.storage().instance().set(&DataKey::Version(name), &version);
+        env.storage()
+            .instance()
+            .set(&DataKey::Version(name), &version);
         Ok(())
     }
 
@@ -94,7 +98,7 @@ impl MuxRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, symbol_short, Env, String};
+    use soroban_sdk::{symbol_short, testutils::Address as _, Env, String};
 
     fn setup() -> (Env, MuxRegistryClient<'static>, Address) {
         let env = Env::default();

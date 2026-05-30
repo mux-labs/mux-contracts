@@ -7,9 +7,7 @@
 
 #![no_std]
 
-use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, BytesN, Env, Map, Vec,
-};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, Map, Vec};
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
@@ -78,8 +76,13 @@ impl MuxAccount {
         }
         owner.require_auth();
         env.storage().instance().set(&DataKey::Owner, &owner);
-        env.storage().instance().set(&DataKey::GuardianSet, &guardians);
-        env.storage().instance().set(&DataKey::Delegates, &Map::<Address, DelegateInfo>::new(&env));
+        env.storage()
+            .instance()
+            .set(&DataKey::GuardianSet, &guardians);
+        env.storage().instance().set(
+            &DataKey::Delegates,
+            &Map::<Address, DelegateInfo>::new(&env),
+        );
         env.storage().instance().set(&DataKey::Nonce, &0_u64);
         env.storage().instance().set(&DataKey::Paused, &false);
         Ok(())
@@ -124,9 +127,15 @@ impl MuxAccount {
 
         delegates.set(
             delegate.clone(),
-            DelegateInfo { address: delegate, expiry_ledger, can_spend },
+            DelegateInfo {
+                address: delegate,
+                expiry_ledger,
+                can_spend,
+            },
         );
-        env.storage().instance().set(&DataKey::Delegates, &delegates);
+        env.storage()
+            .instance()
+            .set(&DataKey::Delegates, &delegates);
         Ok(())
     }
 
@@ -144,7 +153,9 @@ impl MuxAccount {
             return Err(MuxAccountError::DelegateNotFound);
         }
         delegates.remove(delegate);
-        env.storage().instance().set(&DataKey::Delegates, &delegates);
+        env.storage()
+            .instance()
+            .set(&DataKey::Delegates, &delegates);
         Ok(())
     }
 
@@ -170,7 +181,9 @@ impl MuxAccount {
             spent: 0,
             reset_ledger: env.ledger().sequence() + period_ledgers,
         };
-        env.storage().instance().set(&DataKey::SpendLimit(asset), &limit);
+        env.storage()
+            .instance()
+            .set(&DataKey::SpendLimit(asset), &limit);
         Ok(())
     }
 
@@ -196,7 +209,9 @@ impl MuxAccount {
             return Err(MuxAccountError::SpendLimitExceeded);
         }
         limit.spent = new_spent;
-        env.storage().instance().set(&DataKey::SpendLimit(asset), &limit);
+        env.storage()
+            .instance()
+            .set(&DataKey::SpendLimit(asset), &limit);
         Ok(())
     }
 
@@ -339,10 +354,14 @@ mod tests {
 
         // State-mutating operations are blocked while paused
         let delegate = Address::generate(&env);
-        assert!(client.try_set_delegate(&delegate, &1000_u32, &true).is_err());
+        assert!(client
+            .try_set_delegate(&delegate, &1000_u32, &true)
+            .is_err());
 
         let asset = Address::generate(&env);
-        assert!(client.try_set_spend_limit(&asset, &100_i128, &10_u32).is_err());
+        assert!(client
+            .try_set_spend_limit(&asset, &100_i128, &10_u32)
+            .is_err());
     }
 
     #[test]

@@ -7,9 +7,7 @@
 
 #![no_std]
 
-use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, Bytes, Env, Vec,
-};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, Env, Vec};
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -96,7 +94,11 @@ impl MuxBatcher {
             }
         }
 
-        Ok(BatchResult { success_count, failure_count, errors })
+        Ok(BatchResult {
+            success_count,
+            failure_count,
+            errors,
+        })
     }
 
     /// Simulate a batch without writing state — useful for preflight checks.

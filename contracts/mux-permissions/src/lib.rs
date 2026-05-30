@@ -8,9 +8,7 @@
 
 #![no_std]
 
-use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, Env, Map, Symbol, Vec,
-};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Map, Symbol, Vec};
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -64,8 +62,12 @@ impl MuxPermissions {
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::AdminThreshold, &1_u32);
-        env.storage().instance().set(&DataKey::PendingAdmins, &Vec::<Address>::new(&env));
+        env.storage()
+            .instance()
+            .set(&DataKey::AdminThreshold, &1_u32);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmins, &Vec::<Address>::new(&env));
         Ok(())
     }
 
@@ -76,8 +78,13 @@ impl MuxPermissions {
         permissions: Vec<Symbol>,
     ) -> Result<(), MuxPermissionsError> {
         Self::require_admin(&env)?;
-        env.storage().instance().set(&DataKey::RoleMembers(role.clone()), &Vec::<Address>::new(&env));
-        env.storage().instance().set(&DataKey::RolePermissions(role), &permissions);
+        env.storage().instance().set(
+            &DataKey::RoleMembers(role.clone()),
+            &Vec::<Address>::new(&env),
+        );
+        env.storage()
+            .instance()
+            .set(&DataKey::RolePermissions(role), &permissions);
         Ok(())
     }
 
@@ -85,7 +92,11 @@ impl MuxPermissions {
     pub fn grant_role(env: Env, account: Address, role: Symbol) -> Result<(), MuxPermissionsError> {
         Self::require_admin(&env)?;
 
-        if !env.storage().instance().has(&DataKey::RolePermissions(role.clone())) {
+        if !env
+            .storage()
+            .instance()
+            .has(&DataKey::RolePermissions(role.clone()))
+        {
             return Err(MuxPermissionsError::RoleNotFound);
         }
 
@@ -98,7 +109,9 @@ impl MuxPermissions {
         if !members.contains(&account) {
             members.push_back(account.clone());
         }
-        env.storage().instance().set(&DataKey::RoleMembers(role.clone()), &members);
+        env.storage()
+            .instance()
+            .set(&DataKey::RoleMembers(role.clone()), &members);
 
         let mut account_roles: Vec<Symbol> = env
             .storage()
@@ -108,13 +121,19 @@ impl MuxPermissions {
         if !account_roles.contains(&role) {
             account_roles.push_back(role.clone());
         }
-        env.storage().instance().set(&DataKey::AccountRoles(account), &account_roles);
+        env.storage()
+            .instance()
+            .set(&DataKey::AccountRoles(account), &account_roles);
 
         Ok(())
     }
 
     /// Revoke a role from an account.
-    pub fn revoke_role(env: Env, account: Address, role: Symbol) -> Result<(), MuxPermissionsError> {
+    pub fn revoke_role(
+        env: Env,
+        account: Address,
+        role: Symbol,
+    ) -> Result<(), MuxPermissionsError> {
         Self::require_admin(&env)?;
 
         let mut members: Vec<Address> = env
@@ -125,10 +144,14 @@ impl MuxPermissions {
 
         let pos = members.iter().position(|a| a == account);
         match pos {
-            Some(i) => { members.remove(i as u32); }
+            Some(i) => {
+                members.remove(i as u32);
+            }
             None => return Err(MuxPermissionsError::AccountNotInRole),
         }
-        env.storage().instance().set(&DataKey::RoleMembers(role.clone()), &members);
+        env.storage()
+            .instance()
+            .set(&DataKey::RoleMembers(role.clone()), &members);
 
         // Clean up account-role index
         if let Some(mut account_roles) = env
@@ -139,18 +162,16 @@ impl MuxPermissions {
             if let Some(i) = account_roles.iter().position(|r| r == role) {
                 account_roles.remove(i as u32);
             }
-            env.storage().instance().set(&DataKey::AccountRoles(account), &account_roles);
+            env.storage()
+                .instance()
+                .set(&DataKey::AccountRoles(account), &account_roles);
         }
 
         Ok(())
     }
 
     /// Check whether an account has a specific permission through any of its roles.
-    pub fn has_permission(
-        env: Env,
-        account: Address,
-        permission: Symbol,
-    ) -> bool {
+    pub fn has_permission(env: Env, account: Address, permission: Symbol) -> bool {
         let account_roles: Vec<Symbol> = env
             .storage()
             .instance()
@@ -191,7 +212,9 @@ impl MuxPermissions {
     /// Set the number of approvals required to promote a pending admin.
     pub fn set_admin_threshold(env: Env, threshold: u32) -> Result<(), MuxPermissionsError> {
         Self::require_admin(&env)?;
-        env.storage().instance().set(&DataKey::AdminThreshold, &threshold);
+        env.storage()
+            .instance()
+            .set(&DataKey::AdminThreshold, &threshold);
         Ok(())
     }
 
@@ -205,11 +228,14 @@ impl MuxPermissions {
             .unwrap_or_else(|| Vec::new(&env));
         if !pending.contains(&new_admin) {
             pending.push_back(new_admin.clone());
-            env.storage().instance().set(&DataKey::PendingAdmins, &pending);
-            // Initialize approvals list for this candidate
             env.storage()
                 .instance()
-                .set(&DataKey::AdminApprovals(new_admin), &Vec::<Address>::new(&env));
+                .set(&DataKey::PendingAdmins, &pending);
+            // Initialize approvals list for this candidate
+            env.storage().instance().set(
+                &DataKey::AdminApprovals(new_admin),
+                &Vec::<Address>::new(&env),
+            );
         }
         Ok(())
     }
@@ -265,7 +291,9 @@ impl MuxPermissions {
             if let Some(i) = updated_pending.iter().position(|a| a == new_admin) {
                 updated_pending.remove(i as u32);
             }
-            env.storage().instance().set(&DataKey::PendingAdmins, &updated_pending);
+            env.storage()
+                .instance()
+                .set(&DataKey::PendingAdmins, &updated_pending);
         }
 
         Ok(())
@@ -297,7 +325,7 @@ impl MuxPermissions {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, symbol_short, Env, Vec};
+    use soroban_sdk::{symbol_short, testutils::Address as _, Env, Vec};
 
     fn setup() -> (Env, MuxPermissionsClient<'static>, Address) {
         let env = Env::default();
