@@ -26,6 +26,9 @@ pub enum DataKey {
     RoleMembers(Symbol),
     RolePermissions(Symbol),
     AccountRoles(Address),
+    PendingAdmins,
+    AdminThreshold,
+    AdminApprovals(Address),
 }
 
 #[contracttype]
@@ -235,6 +238,106 @@ impl MuxPermissions {
             .instance()
             .get(&DataKey::RoleMembers(role))
             .ok_or(MuxPermissionsError::RoleNotFound)
+    }
+
+    // ── Multisig admin ─────────────────────────────────────────────────────────
+
+    /// Set the number of approvals required to promote a pending admin.
+    pub fn set_admin_threshold(env: Env, threshold: u32) -> Result<(), MuxPermissionsError> {
+        Self::require_admin(&env)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::AdminThreshold, &threshold);
+        Ok(())
+    }
+
+    /// Propose a new admin address. Admin-only. Adds to the pending list.
+    pub fn propose_admin(env: Env, new_admin: Address) -> Result<(), MuxPermissionsError> {
+        Self::require_admin(&env)?;
+        let mut pending: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmins)
+            .unwrap_or_else(|| Vec::new(&env));
+        if !pending.contains(&new_admin) {
+            pending.push_back(new_admin.clone());
+            env.storage()
+                .instance()
+                .set(&DataKey::PendingAdmins, &pending);
+            // Initialize approvals list for this candidate
+            env.storage().instance().set(
+                &DataKey::AdminApprovals(new_admin),
+                &Vec::<Address>::new(&env),
+            );
+        }
+        Ok(())
+    }
+
+    /// Approve a pending admin. When approvals reach the threshold, the new
+    /// admin is promoted and removed from the pending list.
+    pub fn approve_admin(
+        env: Env,
+        approver: Address,
+        new_admin: Address,
+    ) -> Result<(), MuxPermissionsError> {
+        Self::require_admin(&env)?;
+        approver.require_auth();
+
+        let pending: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmins)
+            .unwrap_or_else(|| Vec::new(&env));
+        if !pending.contains(&new_admin) {
+            return Err(MuxPermissionsError::AdminNotFound);
+        }
+
+        let mut approvals: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AdminApprovals(new_admin.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        if approvals.contains(&approver) {
+            return Err(MuxPermissionsError::AlreadyApproved);
+        }
+        approvals.push_back(approver);
+        env.storage()
+            .instance()
+            .set(&DataKey::AdminApprovals(new_admin.clone()), &approvals);
+
+        let threshold: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::AdminThreshold)
+            .unwrap_or(1);
+
+        if approvals.len() >= threshold {
+            // Promote new admin
+            env.storage().instance().set(&DataKey::Admin, &new_admin);
+            // Remove from pending
+            let mut updated_pending: Vec<Address> = env
+                .storage()
+                .instance()
+                .get(&DataKey::PendingAdmins)
+                .unwrap_or_else(|| Vec::new(&env));
+            if let Some(i) = updated_pending.iter().position(|a| a == new_admin) {
+                updated_pending.remove(i as u32);
+            }
+            env.storage()
+                .instance()
+                .set(&DataKey::PendingAdmins, &updated_pending);
+        }
+
+        Ok(())
+    }
+
+    /// Return all pending admin candidates.
+    pub fn get_pending_admins(env: Env) -> Vec<Address> {
+        env.storage()
+            .instance()
+            .get(&DataKey::PendingAdmins)
+            .unwrap_or_else(|| Vec::new(&env))
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────

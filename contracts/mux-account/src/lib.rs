@@ -143,6 +143,21 @@ impl MuxAccount {
         Ok(())
     }
 
+    /// Unpause the contract — restores normal operation.
+    pub fn unpause(env: Env) -> Result<(), MuxAccountError> {
+        Self::require_owner(&env)?;
+        env.storage().instance().set(&DataKey::Paused, &false);
+        Ok(())
+    }
+
+    /// Return whether the contract is currently paused.
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
     /// Add or update a delegate with an expiry and spending permission flag.
     pub fn set_delegate(
         env: Env,
@@ -150,6 +165,7 @@ impl MuxAccount {
         expiry_ledger: u32,
         can_spend: bool,
     ) -> Result<(), MuxAccountError> {
+        Self::require_not_paused(&env)?;
         Self::require_owner(&env)?;
         let mut delegates: Map<Address, DelegateInfo> = env
             .storage()
@@ -184,6 +200,7 @@ impl MuxAccount {
 
     /// Remove a delegate.
     pub fn remove_delegate(env: Env, delegate: Address) -> Result<(), MuxAccountError> {
+        Self::require_not_paused(&env)?;
         Self::require_owner(&env)?;
         let mut delegates: Map<Address, DelegateInfo> = env
             .storage()
@@ -210,6 +227,7 @@ impl MuxAccount {
         amount: i128,
         period_ledgers: u32,
     ) -> Result<(), MuxAccountError> {
+        Self::require_not_paused(&env)?;
         Self::require_owner(&env)?;
         if amount <= 0 {
             return Err(MuxAccountError::InvalidAmount);
@@ -238,6 +256,7 @@ impl MuxAccount {
 
     /// Check and debit a spend against the configured limit.
     pub fn debit_spend(env: Env, asset: Address, spend: i128) -> Result<(), MuxAccountError> {
+        Self::require_not_paused(&env)?;
         let caller = env.current_contract_address();
         caller.require_auth();
 

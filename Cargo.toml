@@ -4,6 +4,7 @@ members = [
     "contracts/mux-account-factory",
     "contracts/mux-batcher",
     "contracts/mux-permissions",
+    "contracts/mux-registry",
 ]
 resolver = "2"
 
