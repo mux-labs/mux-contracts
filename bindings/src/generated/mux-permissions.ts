@@ -17,6 +17,7 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import type { MuxPermissionsError } from "../types";
+import { pollTransaction } from "../horizon";
 
 export interface MuxPermissionsClientOptions {
   contractId: string;
@@ -148,5 +149,6 @@ export class MuxPermissionsClient {
     if (sendResult.status === "ERROR") {
       throw new Error(`Transaction failed: ${JSON.stringify(sendResult.errorResult)}`);
     }
+    await pollTransaction(this.server, sendResult.hash);
   }
 }
