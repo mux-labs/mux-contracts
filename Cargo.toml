@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "contracts/mux-account",
+    "contracts/mux-account-factory",
     "contracts/mux-batcher",
     "contracts/mux-permissions",
     "contracts/mux-registry",
@@ -9,6 +10,9 @@ resolver = "2"
 
 [workspace.dependencies]
 soroban-sdk = { version = "21.0.0", features = ["testutils"] }
+
+[profile.dev]
+overflow-checks = true
 
 [profile.release]
 opt-level = "z"

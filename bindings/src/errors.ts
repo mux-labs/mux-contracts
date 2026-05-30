@@ -41,9 +41,13 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   // State conflict → 409
   AlreadyInitialized: 409,
 
+  // Security guard violations → 409 Conflict (concurrent/reentrant call)
+  ReentrancyDetected: 409,
+
   // Internal/Uninitialized → 500
   NotInitialized: 500,
   RequiredOperationFailed: 500,
+  ArithmeticOverflow: 500,
 };
 
 /**

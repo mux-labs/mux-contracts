@@ -77,8 +77,8 @@ Off-chain components (TypeScript SDK, frontend, deployment scripts) are out of s
 | # | Threat | STRIDE | Likelihood | Impact | Mitigation |
 |---|--------|--------|------------|--------|------------|
 | T-05 | Spend limit bypass via period reset manipulation | Elevation of Privilege | Low | High | Reset ledger set at initialization; only the contract increments it |
-| T-06 | Integer overflow in spend accounting | Tampering | Low | High | Rust's checked arithmetic in release; `overflow-checks = true` in Cargo profile |
-| T-07 | Re-entrancy via `debit_spend` | Elevation of Privilege | Low | Medium | Soroban does not allow re-entrant calls into the same contract instance |
+| T-06 | Integer overflow in spend accounting | Tampering | Low | High | `checked_add` in `debit_spend` returns `ArithmeticOverflow` error on overflow; `saturating_add` for ledger sequence arithmetic; `overflow-checks = true` in both dev and release Cargo profiles |
+| T-07 | Re-entrancy via `debit_spend` or `execute_batch` | Elevation of Privilege | Low | Medium | Defense-in-depth storage lock (`DataKey::Executing`) set on entry and cleared on success; Soroban VM also prevents recursive same-contract calls at the host level |
 
 ### 4.3 Batch Execution Abuse
 
@@ -96,7 +96,29 @@ Off-chain components (TypeScript SDK, frontend, deployment scripts) are out of s
 | T-12 | Role granted to wrong address | Tampering | Medium | High | Admin-only `grant_role`; all operations emit events (Soroban events) |
 | T-13 | Stale role membership | Information Disclosure | Low | Low | `get_role_members` always returns current state from storage |
 
-### 4.5 Supply Chain
+### 4.5 Storage Griefing
+
+All three contracts use **instance storage**, which is shared across all callers and billed as a single rent unit. Unbounded growth in any collection raises rent costs for every user of the contract and can eventually make the contract economically unviable.
+
+| # | Threat | STRIDE | Likelihood | Impact | Mitigation |
+|---|--------|--------|------------|--------|------------|
+| T-17 | Owner floods delegate map to bloat instance storage | Denial of Service | Low | Medium | `MAX_DELEGATES = 64` hard cap in `set_delegate`; new entries beyond cap return `TooManyDelegates` |
+| T-18 | Admin floods a role's member list | Denial of Service | Low | Medium | `MAX_ROLE_MEMBERS = 256` cap in `grant_role`; returns `TooManyMembers` |
+| T-19 | Admin assigns excessive roles to one account | Denial of Service | Low | Low | `MAX_ROLES_PER_ACCOUNT = 32` cap in `grant_role`; returns `TooManyRoles` |
+| T-20 | Spend limits accumulate unbounded per-asset keys | Denial of Service | Low | Low | Each asset key is a separate instance entry; owner controls which assets are registered; no public write path |
+| T-21 | Instance storage TTL expiry causes silent data loss | Denial of Service | Medium | High | Callers must extend TTL via `env.storage().instance().extend_ttl()`; document minimum TTL extension in deployment runbook |
+
+**Storage sizing reference (approximate):**
+
+| Collection | Entry size | Cap | Max storage |
+|---|---|---|---|
+| `Delegates` map | ~72 bytes/entry | 64 | ~4.6 KB |
+| `RoleMembers` vec | ~32 bytes/entry | 256 | ~8 KB |
+| `AccountRoles` vec | ~8 bytes/entry | 32 | ~256 bytes |
+
+> See [docs/storage-griefing.md](storage-griefing.md) for full mitigation details, TTL constants, and the deployment keeper runbook.
+
+### 4.6 Supply Chain
 
 | # | Threat | STRIDE | Likelihood | Impact | Mitigation |
 |---|--------|--------|------------|--------|------------|
@@ -111,7 +133,10 @@ Off-chain components (TypeScript SDK, frontend, deployment scripts) are out of s
 | Control | Where Applied |
 |---|---|
 | `require_auth()` on all write operations | All three contracts |
-| `overflow-checks = true` in release profile | Cargo.toml |
+| `overflow-checks = true` in dev and release profiles | Cargo.toml |
+| `checked_add` for spend accumulation | `mux-account::debit_spend` |
+| `saturating_add` for ledger sequence arithmetic | `mux-account::set_spend_limit`, `debit_spend` |
+| `DataKey::Executing` reentrancy guard | `mux-account::debit_spend`, `mux-batcher::execute_batch` |
 | `MAX_BATCH_SIZE` cap | `mux-batcher` |
 | Delegate `expiry_ledger` | `mux-account` |
 | Spend limit period reset via ledger sequence | `mux-account` |
@@ -135,3 +160,5 @@ Off-chain components (TypeScript SDK, frontend, deployment scripts) are out of s
 | Date | Version | Change |
 |---|---|---|
 | 2026-05-30 | 0.1.0 | Initial threat model |
+| 2026-05-30 | 0.1.1 | Storage griefing: added T-21 TTL expiry threat; added `extend_ttl` mitigation in all contracts; added `docs/storage-griefing.md` |
+| 2026-05-30 | 0.1.2 | Added `docs/audit-prep.md` — scope, entry points, known limitations, auditor checklist |
