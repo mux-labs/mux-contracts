@@ -1,0 +1,17 @@
+{
+  "localnet": {
+    "muxAccount": "",
+    "muxBatcher": "",
+    "muxPermissions": ""
+  },
+  "testnet": {
+    "muxAccount": "",
+    "muxBatcher": "",
+    "muxPermissions": ""
+  },
+  "mainnet": {
+    "muxAccount": "",
+    "muxBatcher": "",
+    "muxPermissions": ""
+  }
+}

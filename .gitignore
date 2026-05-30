@@ -1,0 +1,33 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+*.pdb
+
+# WASM
+*.wasm
+
+# Node / TypeScript
+node_modules/
+dist/
+*.tsbuildinfo
+.env.local
+.env.*.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.localnet
+
+# Build artifacts
+*.o
+*.a
+*.so
+.deps/
