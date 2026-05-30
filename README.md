@@ -235,6 +235,10 @@ stellar contract deploy --wasm target/wasm32-unknown-unknown/release/mux_account
 
 To report a vulnerability, open a private security advisory on GitHub.
 
+## Contributing
+
+- [Breaking Change Policy](docs/BREAKING_CHANGES.md) — guidelines for backward compatibility, deprecation periods, and versioning
+
 ## License
 
 [MIT](LICENSE)
