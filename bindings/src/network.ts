@@ -1,7 +1,6 @@
 import { Networks } from "@stellar/stellar-sdk";
 import type { MuxContractIds } from "./types";
 import { DEFAULT_ADDRESSES } from "./addresses-config";
-import { loadContractAddresses } from "./addresses";
 
 export interface NetworkConfig {
   rpcUrl: string;

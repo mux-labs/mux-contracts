@@ -7,9 +7,7 @@
 
 #![no_std]
 
-use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, BytesN, Env, Map, Vec,
-};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Map, Vec};
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
@@ -20,6 +18,10 @@ pub enum DataKey {
     SpendLimit(Address),
     GuardianSet,
     Nonce,
+    /// Set to `true` while `debit_spend` is executing.
+    /// Defense-in-depth against cross-contract re-entrancy; Soroban's VM
+    /// also prevents recursive same-contract calls at the host level.
+    Executing,
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -44,7 +46,7 @@ pub struct DelegateInfo {
 
 // ── Errors ────────────────────────────────────────────────────────────────────
 
-#[contracttype]
+#[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum MuxAccountError {
@@ -56,6 +58,8 @@ pub enum MuxAccountError {
     SpendLimitExceeded = 6,
     InvalidAmount = 7,
     InvalidPeriod = 8,
+    ReentrancyDetected = 9,
+    ArithmeticOverflow = 10,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -76,8 +80,13 @@ impl MuxAccount {
         }
         owner.require_auth();
         env.storage().instance().set(&DataKey::Owner, &owner);
-        env.storage().instance().set(&DataKey::GuardianSet, &guardians);
-        env.storage().instance().set(&DataKey::Delegates, &Map::<Address, DelegateInfo>::new(&env));
+        env.storage()
+            .instance()
+            .set(&DataKey::GuardianSet, &guardians);
+        env.storage().instance().set(
+            &DataKey::Delegates,
+            &Map::<Address, DelegateInfo>::new(&env),
+        );
         env.storage().instance().set(&DataKey::Nonce, &0_u64);
         Ok(())
     }
@@ -98,9 +107,15 @@ impl MuxAccount {
 
         delegates.set(
             delegate.clone(),
-            DelegateInfo { address: delegate, expiry_ledger, can_spend },
+            DelegateInfo {
+                address: delegate,
+                expiry_ledger,
+                can_spend,
+            },
         );
-        env.storage().instance().set(&DataKey::Delegates, &delegates);
+        env.storage()
+            .instance()
+            .set(&DataKey::Delegates, &delegates);
         Ok(())
     }
 
@@ -117,7 +132,9 @@ impl MuxAccount {
             return Err(MuxAccountError::DelegateNotFound);
         }
         delegates.remove(delegate);
-        env.storage().instance().set(&DataKey::Delegates, &delegates);
+        env.storage()
+            .instance()
+            .set(&DataKey::Delegates, &delegates);
         Ok(())
     }
 
@@ -140,9 +157,11 @@ impl MuxAccount {
             amount,
             period_ledgers,
             spent: 0,
-            reset_ledger: env.ledger().sequence() + period_ledgers,
+            reset_ledger: env.ledger().sequence().saturating_add(period_ledgers),
         };
-        env.storage().instance().set(&DataKey::SpendLimit(asset), &limit);
+        env.storage()
+            .instance()
+            .set(&DataKey::SpendLimit(asset), &limit);
         Ok(())
     }
 
@@ -150,6 +169,18 @@ impl MuxAccount {
     pub fn debit_spend(env: Env, asset: Address, spend: i128) -> Result<(), MuxAccountError> {
         let caller = env.current_contract_address();
         caller.require_auth();
+
+        // Reentrancy guard: reject if a debit_spend call is already in progress.
+        // On error return Soroban rolls back storage, so the flag is self-cleaning.
+        if env
+            .storage()
+            .instance()
+            .get::<DataKey, bool>(&DataKey::Executing)
+            .unwrap_or(false)
+        {
+            return Err(MuxAccountError::ReentrancyDetected);
+        }
+        env.storage().instance().set(&DataKey::Executing, &true);
 
         let mut limit: SpendLimit = env
             .storage()
@@ -159,15 +190,22 @@ impl MuxAccount {
 
         if env.ledger().sequence() >= limit.reset_ledger {
             limit.spent = 0;
-            limit.reset_ledger = env.ledger().sequence() + limit.period_ledgers;
+            limit.reset_ledger = env.ledger().sequence().saturating_add(limit.period_ledgers);
         }
 
-        let new_spent = limit.spent + spend;
+        let new_spent = limit
+            .spent
+            .checked_add(spend)
+            .ok_or(MuxAccountError::ArithmeticOverflow)?;
         if new_spent > limit.amount {
             return Err(MuxAccountError::SpendLimitExceeded);
         }
         limit.spent = new_spent;
-        env.storage().instance().set(&DataKey::SpendLimit(asset), &limit);
+        env.storage()
+            .instance()
+            .set(&DataKey::SpendLimit(asset), &limit);
+
+        env.storage().instance().set(&DataKey::Executing, &false);
         Ok(())
     }
 
@@ -283,6 +321,41 @@ mod tests {
 
         let asset = Address::generate(&env);
         let result = client.try_set_spend_limit(&asset, &0_i128, &100_u32);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_reentrancy_guard_clears_after_success() {
+        // Verify the Executing flag is cleared after a successful debit so
+        // sequential calls continue to work (the guard does not lock permanently).
+        let (env, client, owner) = setup();
+        let guardians: Vec<Address> = Vec::new(&env);
+        client.initialize(&owner, &guardians);
+
+        let asset = Address::generate(&env);
+        client.set_spend_limit(&asset, &1000_i128, &100_u32);
+
+        assert!(client.try_debit_spend(&asset, &100_i128).is_ok());
+        assert!(client.try_debit_spend(&asset, &100_i128).is_ok());
+    }
+
+    #[test]
+    fn test_overflow_in_spend_accumulation() {
+        // Verify that debiting i128::MAX does not silently wrap; it must return
+        // ArithmeticOverflow before SpendLimitExceeded is even evaluated.
+        let (env, client, owner) = setup();
+        let guardians: Vec<Address> = Vec::new(&env);
+        client.initialize(&owner, &guardians);
+
+        let asset = Address::generate(&env);
+        // Set a very large limit so SpendLimitExceeded would not trigger first.
+        client.set_spend_limit(&asset, &i128::MAX, &100_u32);
+
+        // First debit consumes i128::MAX - 1 of the allowance.
+        assert!(client.try_debit_spend(&asset, &(i128::MAX - 1)).is_ok());
+
+        // Second debit of 2 would overflow limit.spent + 2 beyond i128::MAX.
+        let result = client.try_debit_spend(&asset, &2_i128);
         assert!(result.is_err());
     }
 }

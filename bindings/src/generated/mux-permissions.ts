@@ -16,7 +16,6 @@ import {
   TransactionBuilder,
   xdr,
 } from "@stellar/stellar-sdk";
-import type { MuxPermissionsError } from "../types";
 
 export interface MuxPermissionsClientOptions {
   contractId: string;

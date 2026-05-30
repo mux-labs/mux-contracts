@@ -42,13 +42,16 @@ export type MuxAccountError =
   | "DelegateExpired"
   | "SpendLimitExceeded"
   | "InvalidAmount"
-  | "InvalidPeriod";
+  | "InvalidPeriod"
+  | "ReentrancyDetected"
+  | "ArithmeticOverflow";
 
 export type MuxBatcherError =
   | "EmptyBatch"
   | "BatchTooLarge"
   | "RequiredOperationFailed"
-  | "Unauthorized";
+  | "Unauthorized"
+  | "ReentrancyDetected";
 
 export type MuxPermissionsError =
   | "NotInitialized"

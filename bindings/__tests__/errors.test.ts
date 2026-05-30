@@ -27,6 +27,14 @@ describe("Error Mapping", () => {
       expect(ERROR_HTTP_MAP.AlreadyInitialized).toBe(409);
     });
 
+    it("maps security guard errors to 409", () => {
+      expect(ERROR_HTTP_MAP.ReentrancyDetected).toBe(409);
+    });
+
+    it("maps arithmetic overflow to 500", () => {
+      expect(ERROR_HTTP_MAP.ArithmeticOverflow).toBe(500);
+    });
+
     it("maps initialization errors to 500", () => {
       expect(ERROR_HTTP_MAP.NotInitialized).toBe(500);
     });
@@ -67,6 +75,8 @@ describe("Error Mapping", () => {
         "SpendLimitExceeded",
         "InvalidAmount",
         "InvalidPeriod",
+        "ReentrancyDetected",
+        "ArithmeticOverflow",
       ];
 
       accountErrors.forEach((error) => {
@@ -82,6 +92,7 @@ describe("Error Mapping", () => {
         "BatchTooLarge",
         "RequiredOperationFailed",
         "Unauthorized",
+        "ReentrancyDetected",
       ];
 
       batcherErrors.forEach((error) => {

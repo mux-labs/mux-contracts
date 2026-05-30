@@ -15,7 +15,7 @@ import {
   TransactionBuilder,
   xdr,
 } from "@stellar/stellar-sdk";
-import type { BatchResult, MuxBatcherError, Operation } from "../types";
+import type { BatchResult, Operation } from "../types";
 
 export interface MuxBatcherClientOptions {
   contractId: string;
@@ -63,7 +63,7 @@ export class MuxBatcherClient {
     }
     const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
     if (!retval) throw new Error("No return value");
-    const native = retval.value() as { success_count: number; failure_count: number };
+    const native = retval.value() as unknown as { success_count: number; failure_count: number };
     return { successCount: native.success_count, failureCount: native.failure_count };
   }
 

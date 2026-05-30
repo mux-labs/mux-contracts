@@ -77,8 +77,8 @@ Off-chain components (TypeScript SDK, frontend, deployment scripts) are out of s
 | # | Threat | STRIDE | Likelihood | Impact | Mitigation |
 |---|--------|--------|------------|--------|------------|
 | T-05 | Spend limit bypass via period reset manipulation | Elevation of Privilege | Low | High | Reset ledger set at initialization; only the contract increments it |
-| T-06 | Integer overflow in spend accounting | Tampering | Low | High | Rust's checked arithmetic in release; `overflow-checks = true` in Cargo profile |
-| T-07 | Re-entrancy via `debit_spend` | Elevation of Privilege | Low | Medium | Soroban does not allow re-entrant calls into the same contract instance |
+| T-06 | Integer overflow in spend accounting | Tampering | Low | High | `checked_add` in `debit_spend` returns `ArithmeticOverflow` error on overflow; `saturating_add` for ledger sequence arithmetic; `overflow-checks = true` in both dev and release Cargo profiles |
+| T-07 | Re-entrancy via `debit_spend` or `execute_batch` | Elevation of Privilege | Low | Medium | Defense-in-depth storage lock (`DataKey::Executing`) set on entry and cleared on success; Soroban VM also prevents recursive same-contract calls at the host level |
 
 ### 4.3 Batch Execution Abuse
 
@@ -111,7 +111,10 @@ Off-chain components (TypeScript SDK, frontend, deployment scripts) are out of s
 | Control | Where Applied |
 |---|---|
 | `require_auth()` on all write operations | All three contracts |
-| `overflow-checks = true` in release profile | Cargo.toml |
+| `overflow-checks = true` in dev and release profiles | Cargo.toml |
+| `checked_add` for spend accumulation | `mux-account::debit_spend` |
+| `saturating_add` for ledger sequence arithmetic | `mux-account::set_spend_limit`, `debit_spend` |
+| `DataKey::Executing` reentrancy guard | `mux-account::debit_spend`, `mux-batcher::execute_batch` |
 | `MAX_BATCH_SIZE` cap | `mux-batcher` |
 | Delegate `expiry_ledger` | `mux-account` |
 | Spend limit period reset via ledger sequence | `mux-account` |
@@ -135,3 +138,4 @@ Off-chain components (TypeScript SDK, frontend, deployment scripts) are out of s
 | Date | Version | Change |
 |---|---|---|
 | 2026-05-30 | 0.1.0 | Initial threat model |
+| 2026-05-30 | 0.2.0 | Added reentrancy guard (T-07 updated); added checked/saturating arithmetic (T-06 updated); overflow-checks enabled for dev profile |

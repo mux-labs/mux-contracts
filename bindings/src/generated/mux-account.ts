@@ -8,7 +8,6 @@
 import {
   Address,
   Contract,
-  ContractSpec,
   Keypair,
   nativeToScVal,
   scValToNative,
@@ -17,7 +16,6 @@ import {
   TransactionBuilder,
   xdr,
 } from "@stellar/stellar-sdk";
-import type { DelegateInfo, MuxAccountError, SpendLimit } from "../types";
 
 export interface MuxAccountClientOptions {
   contractId: string;
