@@ -20,6 +20,7 @@ pub enum DataKey {
     SpendLimit(Address),
     GuardianSet,
     Nonce,
+    Paused,
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -56,6 +57,7 @@ pub enum MuxAccountError {
     SpendLimitExceeded = 6,
     InvalidAmount = 7,
     InvalidPeriod = 8,
+    ContractPaused = 9,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -79,7 +81,30 @@ impl MuxAccount {
         env.storage().instance().set(&DataKey::GuardianSet, &guardians);
         env.storage().instance().set(&DataKey::Delegates, &Map::<Address, DelegateInfo>::new(&env));
         env.storage().instance().set(&DataKey::Nonce, &0_u64);
+        env.storage().instance().set(&DataKey::Paused, &false);
         Ok(())
+    }
+
+    /// Pause the contract — blocks all state-mutating operations.
+    pub fn pause(env: Env) -> Result<(), MuxAccountError> {
+        Self::require_owner(&env)?;
+        env.storage().instance().set(&DataKey::Paused, &true);
+        Ok(())
+    }
+
+    /// Unpause the contract — restores normal operation.
+    pub fn unpause(env: Env) -> Result<(), MuxAccountError> {
+        Self::require_owner(&env)?;
+        env.storage().instance().set(&DataKey::Paused, &false);
+        Ok(())
+    }
+
+    /// Return whether the contract is currently paused.
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     }
 
     /// Add or update a delegate with an expiry and spending permission flag.
@@ -89,6 +114,7 @@ impl MuxAccount {
         expiry_ledger: u32,
         can_spend: bool,
     ) -> Result<(), MuxAccountError> {
+        Self::require_not_paused(&env)?;
         Self::require_owner(&env)?;
         let mut delegates: Map<Address, DelegateInfo> = env
             .storage()
@@ -106,6 +132,7 @@ impl MuxAccount {
 
     /// Remove a delegate.
     pub fn remove_delegate(env: Env, delegate: Address) -> Result<(), MuxAccountError> {
+        Self::require_not_paused(&env)?;
         Self::require_owner(&env)?;
         let mut delegates: Map<Address, DelegateInfo> = env
             .storage()
@@ -128,6 +155,7 @@ impl MuxAccount {
         amount: i128,
         period_ledgers: u32,
     ) -> Result<(), MuxAccountError> {
+        Self::require_not_paused(&env)?;
         Self::require_owner(&env)?;
         if amount <= 0 {
             return Err(MuxAccountError::InvalidAmount);
@@ -148,6 +176,7 @@ impl MuxAccount {
 
     /// Check and debit a spend against the configured limit.
     pub fn debit_spend(env: Env, asset: Address, spend: i128) -> Result<(), MuxAccountError> {
+        Self::require_not_paused(&env)?;
         let caller = env.current_contract_address();
         caller.require_auth();
 
@@ -204,6 +233,18 @@ impl MuxAccount {
             .get(&DataKey::Owner)
             .ok_or(MuxAccountError::NotInitialized)?;
         owner.require_auth();
+        Ok(())
+    }
+
+    fn require_not_paused(env: &Env) -> Result<(), MuxAccountError> {
+        let paused: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false);
+        if paused {
+            return Err(MuxAccountError::ContractPaused);
+        }
         Ok(())
     }
 }
@@ -284,5 +325,40 @@ mod tests {
         let asset = Address::generate(&env);
         let result = client.try_set_spend_limit(&asset, &0_i128, &100_u32);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pause_blocks_operations() {
+        let (env, client, owner) = setup();
+        let guardians: Vec<Address> = Vec::new(&env);
+        client.initialize(&owner, &guardians);
+
+        assert!(!client.is_paused());
+        client.pause();
+        assert!(client.is_paused());
+
+        // State-mutating operations are blocked while paused
+        let delegate = Address::generate(&env);
+        assert!(client.try_set_delegate(&delegate, &1000_u32, &true).is_err());
+
+        let asset = Address::generate(&env);
+        assert!(client.try_set_spend_limit(&asset, &100_i128, &10_u32).is_err());
+    }
+
+    #[test]
+    fn test_unpause_restores_operations() {
+        let (env, client, owner) = setup();
+        let guardians: Vec<Address> = Vec::new(&env);
+        client.initialize(&owner, &guardians);
+
+        client.pause();
+        assert!(client.is_paused());
+
+        client.unpause();
+        assert!(!client.is_paused());
+
+        // Operations succeed again after unpause
+        let delegate = Address::generate(&env);
+        assert!(client.try_set_delegate(&delegate, &1000_u32, &true).is_ok());
     }
 }

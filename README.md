@@ -232,6 +232,7 @@ stellar contract deploy --wasm target/wasm32-unknown-unknown/release/mux_account
 
 - [Threat Model](docs/threat-model.md) — assets, trust boundaries, and mitigations
 - [Access Control Review Checklist](docs/access-control-checklist.md) — pre-deployment and pre-audit checklist
+- [security.txt](.well-known/security.txt) — machine-readable security contact (RFC 9116)
 
 To report a vulnerability, open a private security advisory on GitHub.
 
