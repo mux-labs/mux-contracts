@@ -34,6 +34,10 @@ pub enum DataKey {
     SpendLimit(Address),
     GuardianSet,
     Nonce,
+    /// Storage for session key record: DataKey::SessionKey(owner, session_key)
+    SessionKey(Address, Address),
+    /// Index of all session keys per owner: DataKey::SessionKeyIndex(owner)
+    SessionKeyIndex(Address),
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -54,6 +58,23 @@ pub struct DelegateInfo {
     pub address: Address,
     pub expiry_ledger: u32,
     pub can_spend: bool,
+}
+
+/// Represents the scope or capability of a session key.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Scope {
+    pub method: soroban_sdk::Symbol,
+}
+
+/// Session key record stored for each delegated session.
+/// Tracks expiration, allowed scopes, and revocation status.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct SessionKeyRecord {
+    pub expires_at: u64,
+    pub scopes: Vec<Scope>,
+    pub revoked: bool,
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────
