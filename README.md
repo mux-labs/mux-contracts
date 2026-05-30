@@ -233,11 +233,14 @@ stellar contract deploy --wasm target/wasm32-unknown-unknown/release/mux_account
 - [Account Abstraction Design](docs/account-abstraction.md) — Goals, architecture, session key design, and transaction flows
 - [Threat Model](docs/threat-model.md) — assets, trust boundaries, and mitigations
 - [Access Control Review Checklist](docs/access-control-checklist.md) — pre-deployment and pre-audit checklist
-- [Contributing Guide](CONTRIBUTING.md) — Commit message format, changelog template, testing requirements
-
-## Security
+- [Storage Griefing Notes](docs/storage-griefing.md) — collection caps, TTL management, keeper runbook
+- [External Audit Prep](docs/audit-prep.md) — scope, entry points, known limitations, auditor checklist
 
 To report a vulnerability, open a private security advisory on GitHub.
+
+## Contributing
+
+- [Breaking Change Policy](docs/BREAKING_CHANGES.md) — guidelines for backward compatibility, deprecation periods, and versioning
 
 ## License
 
