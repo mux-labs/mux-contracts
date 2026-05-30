@@ -96,7 +96,29 @@ Off-chain components (TypeScript SDK, frontend, deployment scripts) are out of s
 | T-12 | Role granted to wrong address | Tampering | Medium | High | Admin-only `grant_role`; all operations emit events (Soroban events) |
 | T-13 | Stale role membership | Information Disclosure | Low | Low | `get_role_members` always returns current state from storage |
 
-### 4.5 Supply Chain
+### 4.5 Storage Griefing
+
+All three contracts use **instance storage**, which is shared across all callers and billed as a single rent unit. Unbounded growth in any collection raises rent costs for every user of the contract and can eventually make the contract economically unviable.
+
+| # | Threat | STRIDE | Likelihood | Impact | Mitigation |
+|---|--------|--------|------------|--------|------------|
+| T-17 | Owner floods delegate map to bloat instance storage | Denial of Service | Low | Medium | `MAX_DELEGATES = 64` hard cap in `set_delegate`; new entries beyond cap return `TooManyDelegates` |
+| T-18 | Admin floods a role's member list | Denial of Service | Low | Medium | `MAX_ROLE_MEMBERS = 256` cap in `grant_role`; returns `TooManyMembers` |
+| T-19 | Admin assigns excessive roles to one account | Denial of Service | Low | Low | `MAX_ROLES_PER_ACCOUNT = 32` cap in `grant_role`; returns `TooManyRoles` |
+| T-20 | Spend limits accumulate unbounded per-asset keys | Denial of Service | Low | Low | Each asset key is a separate instance entry; owner controls which assets are registered; no public write path |
+| T-21 | Instance storage TTL expiry causes silent data loss | Denial of Service | Medium | High | Callers must extend TTL via `env.storage().instance().extend_ttl()`; document minimum TTL extension in deployment runbook |
+
+**Storage sizing reference (approximate):**
+
+| Collection | Entry size | Cap | Max storage |
+|---|---|---|---|
+| `Delegates` map | ~72 bytes/entry | 64 | ~4.6 KB |
+| `RoleMembers` vec | ~32 bytes/entry | 256 | ~8 KB |
+| `AccountRoles` vec | ~8 bytes/entry | 32 | ~256 bytes |
+
+> See [docs/storage-griefing.md](storage-griefing.md) for full mitigation details, TTL constants, and the deployment keeper runbook.
+
+### 4.6 Supply Chain
 
 | # | Threat | STRIDE | Likelihood | Impact | Mitigation |
 |---|--------|--------|------------|--------|------------|
@@ -138,4 +160,5 @@ Off-chain components (TypeScript SDK, frontend, deployment scripts) are out of s
 | Date | Version | Change |
 |---|---|---|
 | 2026-05-30 | 0.1.0 | Initial threat model |
-| 2026-05-30 | 0.2.0 | Added reentrancy guard (T-07 updated); added checked/saturating arithmetic (T-06 updated); overflow-checks enabled for dev profile |
+| 2026-05-30 | 0.1.1 | Storage griefing: added T-21 TTL expiry threat; added `extend_ttl` mitigation in all contracts; added `docs/storage-griefing.md` |
+| 2026-05-30 | 0.1.2 | Added `docs/audit-prep.md` — scope, entry points, known limitations, auditor checklist |

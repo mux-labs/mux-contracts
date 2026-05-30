@@ -15,7 +15,8 @@ import {
   TransactionBuilder,
   xdr,
 } from "@stellar/stellar-sdk";
-import type { BatchResult, Operation } from "../types";
+import type { BatchResult, MuxBatcherError, Operation } from "../types";
+import { pollTransaction } from "../horizon";
 
 export interface MuxBatcherClientOptions {
   contractId: string;
@@ -119,8 +120,9 @@ export class MuxBatcherClient {
     if (sendResult.status === "ERROR") {
       throw new Error(`Transaction failed: ${JSON.stringify(sendResult.errorResult)}`);
     }
-    const retval = (simResult as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+    const confirmed = await pollTransaction(this.server, sendResult.hash);
+    const retval = confirmed.returnValue;
     if (!retval) return {} as T;
-    return retval.value() as T;
+    return retval.value() as unknown as T;
   }
 }

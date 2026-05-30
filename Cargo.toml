@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "contracts/mux-account",
+    "contracts/mux-account-factory",
     "contracts/mux-batcher",
     "contracts/mux-permissions",
 ]
