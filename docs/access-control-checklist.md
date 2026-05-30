@@ -98,6 +98,20 @@ Legend:
 
 ---
 
+## 6a. Storage Griefing Caps
+
+See [docs/storage-griefing.md](storage-griefing.md) for full details.
+
+- [ ] `mux-account`: `set_delegate` enforces `MAX_DELEGATES = 64`; new entries beyond cap return `TooManyDelegates` (unit test: `test_delegate_cap_enforced`).
+- [ ] `mux-account`: updating an existing delegate at cap succeeds (unit test: `test_delegate_cap_allows_update`).
+- [ ] `mux-permissions`: `grant_role` enforces `MAX_ROLE_MEMBERS = 256` per role; returns `TooManyMembers` (unit test: `test_role_member_cap_enforced`).
+- [ ] `mux-permissions`: `grant_role` enforces `MAX_ROLES_PER_ACCOUNT = 32` per account; returns `TooManyRoles` (unit test: `test_roles_per_account_cap_enforced`).
+- [ ] All three contracts call `env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO)` on every write (T-21 mitigation).
+- [ ] TTL constants: `TTL_THRESHOLD = 17_280` (~1 day), `TTL_EXTEND_TO = 518_400` (~30 days).
+- [ ] Deployment runbook includes a keeper job that extends TTL at least every 25 days (see [docs/storage-griefing.md](storage-griefing.md#deployment-runbook--ttl-keeper)).
+
+---
+
 ## 7. Error Handling
 
 - [ ] All error types are `#[contracttype]` decorated enums with explicit `#[repr(u32)]` discriminants.

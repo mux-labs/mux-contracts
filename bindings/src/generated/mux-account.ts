@@ -8,7 +8,6 @@
 import {
   Address,
   Contract,
-  ContractSpec,
   Keypair,
   nativeToScVal,
   scValToNative,
@@ -18,6 +17,7 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import type { DelegateInfo, MuxAccountError, SpendLimit } from "../types";
+import { pollTransaction } from "../horizon";
 
 export interface MuxAccountClientOptions {
   contractId: string;
@@ -134,5 +134,6 @@ export class MuxAccountClient {
     if (sendResult.status === "ERROR") {
       throw new Error(`Transaction failed: ${JSON.stringify(sendResult.errorResult)}`);
     }
+    await pollTransaction(this.server, sendResult.hash);
   }
 }
