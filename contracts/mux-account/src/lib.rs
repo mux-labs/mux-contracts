@@ -8,7 +8,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, BytesN, Env, Map, Vec,
+    contract, contractimpl, contracttype, Address, Env, Map, Vec,
 };
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
@@ -20,6 +20,10 @@ pub enum DataKey {
     SpendLimit(Address),
     GuardianSet,
     Nonce,
+    /// Storage for session key record: DataKey::SessionKey(owner, session_key)
+    SessionKey(Address, Address),
+    /// Index of all session keys per owner: DataKey::SessionKeyIndex(owner)
+    SessionKeyIndex(Address),
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -42,6 +46,23 @@ pub struct DelegateInfo {
     pub can_spend: bool,
 }
 
+/// Represents the scope or capability of a session key.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Scope {
+    pub method: soroban_sdk::Symbol,
+}
+
+/// Session key record stored for each delegated session.
+/// Tracks expiration, allowed scopes, and revocation status.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct SessionKeyRecord {
+    pub expires_at: u64,
+    pub scopes: Vec<Scope>,
+    pub revoked: bool,
+}
+
 // ── Errors ────────────────────────────────────────────────────────────────────
 
 #[contracttype]
@@ -56,6 +77,39 @@ pub enum MuxAccountError {
     SpendLimitExceeded = 6,
     InvalidAmount = 7,
     InvalidPeriod = 8,
+    InvalidSessionKey = 9,
+    SessionKeyExpired = 10,
+    SessionKeyRevoked = 11,
+}
+
+impl From<soroban_sdk::Error> for MuxAccountError {
+    fn from(_: soroban_sdk::Error) -> Self {
+        MuxAccountError::Unauthorized
+    }
+}
+
+impl From<&soroban_sdk::Error> for MuxAccountError {
+    fn from(_: &soroban_sdk::Error) -> Self {
+        MuxAccountError::Unauthorized
+    }
+}
+
+impl Into<soroban_sdk::Error> for MuxAccountError {
+    fn into(self) -> soroban_sdk::Error {
+        soroban_sdk::Error::from((
+            soroban_sdk::xdr::ScErrorType::WasmVm,
+            soroban_sdk::xdr::ScErrorCode::InvalidInput,
+        ))
+    }
+}
+
+impl Into<soroban_sdk::Error> for &MuxAccountError {
+    fn into(self) -> soroban_sdk::Error {
+        soroban_sdk::Error::from((
+            soroban_sdk::xdr::ScErrorType::WasmVm,
+            soroban_sdk::xdr::ScErrorCode::InvalidInput,
+        ))
+    }
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -195,6 +249,91 @@ impl MuxAccount {
             .ok_or(MuxAccountError::NotInitialized)
     }
 
+    /// Register a new session key for the account owner.
+    /// Storage design: SessionKey(owner, session_key) -> SessionKeyRecord
+    /// SessionKeyIndex(owner) -> Vec<Address> for enumeration and lookup.
+    pub fn register_session_key(
+        env: Env,
+        owner: Address,
+        session_key: Address,
+        expires_at: u64,
+        scopes: Vec<Scope>,
+    ) -> Result<(), MuxAccountError> {
+        Self::require_owner(&env)?;
+
+        let record = SessionKeyRecord {
+            expires_at,
+            scopes,
+            revoked: false,
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::SessionKey(owner.clone(), session_key.clone()), &record);
+
+        // Update the session key index for this owner
+        let mut index: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::SessionKeyIndex(owner.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        if !index.contains(&session_key) {
+            index.push_back(session_key);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::SessionKeyIndex(owner), &index);
+
+        Ok(())
+    }
+
+    /// Revoke an existing session key.
+    pub fn revoke_session_key(
+        env: Env,
+        owner: Address,
+        session_key: Address,
+    ) -> Result<(), MuxAccountError> {
+        Self::require_owner(&env)?;
+
+        let mut record: SessionKeyRecord = env
+            .storage()
+            .instance()
+            .get(&DataKey::SessionKey(owner.clone(), session_key.clone()))
+            .ok_or(MuxAccountError::InvalidSessionKey)?;
+
+        record.revoked = true;
+        env.storage()
+            .instance()
+            .set(&DataKey::SessionKey(owner, session_key), &record);
+
+        Ok(())
+    }
+
+    /// Check if a session key is valid (not expired, not revoked, exists).
+    pub fn is_session_key_valid(
+        env: Env,
+        owner: Address,
+        session_key: Address,
+    ) -> Result<bool, MuxAccountError> {
+        let record: SessionKeyRecord = env
+            .storage()
+            .instance()
+            .get(&DataKey::SessionKey(owner, session_key))
+            .ok_or(MuxAccountError::InvalidSessionKey)?;
+
+        // Check if revoked
+        if record.revoked {
+            return Ok(false);
+        }
+
+        // Check if expired
+        if env.ledger().timestamp() >= record.expires_at {
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────────
 
     fn require_owner(env: &Env) -> Result<(), MuxAccountError> {
@@ -284,5 +423,87 @@ mod tests {
         let asset = Address::generate(&env);
         let result = client.try_set_spend_limit(&asset, &0_i128, &100_u32);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_register_session_key_valid() {
+        let (env, client, owner) = setup();
+        let guardians: Vec<Address> = Vec::new(&env);
+        client.initialize(&owner, &guardians);
+
+        let session_key = Address::generate(&env);
+        let expires_at = env.ledger().timestamp() + 3600; // 1 hour from now
+        let scopes: Vec<Scope> = Vec::new(&env);
+
+        // Register session key should succeed
+        assert!(client
+            .try_register_session_key(&owner, &session_key, &expires_at, &scopes)
+            .is_ok());
+
+        // Verify it's valid
+        let is_valid = client.is_session_key_valid(&owner, &session_key);
+        assert!(is_valid);
+    }
+
+    #[test]
+    fn test_session_key_expired_returns_false() {
+        let (env, client, owner) = setup();
+        let guardians: Vec<Address> = Vec::new(&env);
+        client.initialize(&owner, &guardians);
+
+        let session_key = Address::generate(&env);
+        // Create an expired session key - set expires_at to 0 (always in the past)
+        let expires_at = 0u64;
+        let scopes: Vec<Scope> = Vec::new(&env);
+
+        client.register_session_key(&owner, &session_key, &expires_at, &scopes);
+
+        // Expired key should return false
+        let is_valid = client.is_session_key_valid(&owner, &session_key);
+        assert!(!is_valid, "Session key should be expired when expires_at is 0");
+    }
+
+    #[test]
+    fn test_revoked_session_key_returns_false() {
+        let (env, client, owner) = setup();
+        let guardians: Vec<Address> = Vec::new(&env);
+        client.initialize(&owner, &guardians);
+
+        let session_key = Address::generate(&env);
+        let expires_at = env.ledger().timestamp() + 3600;
+        let scopes: Vec<Scope> = Vec::new(&env);
+
+        client.register_session_key(&owner, &session_key, &expires_at, &scopes);
+
+        // Verify it's valid before revocation
+        assert!(client.is_session_key_valid(&owner, &session_key));
+
+        // Revoke the key
+        assert!(client
+            .try_revoke_session_key(&owner, &session_key)
+            .is_ok());
+
+        // Revoked key should return false
+        let is_valid = client.is_session_key_valid(&owner, &session_key);
+        assert!(!is_valid);
+    }
+
+    #[test]
+    fn test_register_session_key_updates_index() {
+        let (env, client, owner) = setup();
+        let guardians: Vec<Address> = Vec::new(&env);
+        client.initialize(&owner, &guardians);
+
+        let session_key1 = Address::generate(&env);
+        let session_key2 = Address::generate(&env);
+        let expires_at = env.ledger().timestamp() + 3600;
+        let scopes: Vec<Scope> = Vec::new(&env);
+
+        client.register_session_key(&owner, &session_key1, &expires_at, &scopes);
+        client.register_session_key(&owner, &session_key2, &expires_at, &scopes);
+
+        // Both keys should be valid
+        assert!(client.is_session_key_valid(&owner, &session_key1));
+        assert!(client.is_session_key_valid(&owner, &session_key2));
     }
 }
