@@ -59,6 +59,37 @@ bash scripts/generate-bindings.sh
 cd bindings && npm ci && npm run build
 ```
 
+## Integration Tests
+
+Integration tests connect to a live Soroban RPC endpoint (localnet, testnet, or mainnet) and verify contract deployment.
+
+**Run integration tests:**
+
+```bash
+cd bindings
+
+# Against localnet (requires docker-compose to be running)
+SOROBAN_NETWORK=localnet npm test
+
+# Against testnet
+SOROBAN_NETWORK=testnet npm test
+
+# Tests gracefully skip if the network is unavailable
+npm test
+```
+
+**Configuration:**
+
+Network endpoints are configured in `bindings/src/network.ts` via environment variables:
+- `SOROBAN_NETWORK` - Which network to use (default: `localnet`)
+- `LOCALNET_RPC_URL` - RPC endpoint for localnet (default: `http://localhost:8000`)
+- `LOCALNET_NETWORK_PASSPHRASE` - Network ID for localnet
+- `LOCALNET_MUX_*_ID` - Contract addresses on localnet
+
+**Setting up localnet locally:**
+
+See [docker-compose.yml](docker-compose.yml) for spinning up a local Stellar/Soroban node.
+
 ## Security
 
 - [Threat Model](docs/threat-model.md) — assets, trust boundaries, and mitigations

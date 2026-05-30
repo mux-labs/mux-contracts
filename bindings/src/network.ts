@@ -9,6 +9,15 @@ export interface NetworkConfig {
 
 /** Well-known Mux Protocol contract deployments. */
 export const NETWORK_CONFIGS: Record<string, NetworkConfig> = {
+  localnet: {
+    rpcUrl: process.env.LOCALNET_RPC_URL || "http://localhost:8000",
+    networkPassphrase: process.env.LOCALNET_NETWORK_PASSPHRASE || "Standalone Network ; February 2025",
+    contracts: {
+      muxAccount: process.env.LOCALNET_MUX_ACCOUNT_ID || "",
+      muxBatcher: process.env.LOCALNET_MUX_BATCHER_ID || "",
+      muxPermissions: process.env.LOCALNET_MUX_PERMISSIONS_ID || "",
+    },
+  },
   testnet: {
     rpcUrl: "https://soroban-testnet.stellar.org",
     networkPassphrase: Networks.TESTNET,
