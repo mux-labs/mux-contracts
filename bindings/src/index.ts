@@ -13,3 +13,5 @@ export * from "./generated/mux-permissions";
 export * from "./types";
 export * from "./network";
 export * from "./errors";
+export * from "./addresses";
+export * from "./addresses-config";
