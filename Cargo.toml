@@ -1,4 +1,5 @@
 [workspace]
+# Add Cargo workspace members layout
 members = [
     "contracts/mux-account",
     "contracts/mux-account-factory",
@@ -8,7 +9,13 @@ members = [
 ]
 resolver = "2"
 
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+repository = "https://github.com/dami-drips/mux-contracts"
+
 [workspace.dependencies]
+# Initialize Soroban Rust workspace dependencies
 soroban-sdk = { version = "21.0.0", features = ["testutils"] }
 
 [profile.dev]
