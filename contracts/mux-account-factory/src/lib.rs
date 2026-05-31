@@ -127,6 +127,8 @@ impl MuxAccountFactory {
     }
 }
 
+pub mod wallet_factory_stub;
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
