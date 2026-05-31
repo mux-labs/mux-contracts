@@ -176,6 +176,14 @@ impl MuxBatcher {
         Ok(result)
     }
 
+    /// Return the maximum number of operations permitted in a single batch.
+    ///
+    /// Callers can query this before constructing a batch to avoid a
+    /// `BatchTooLarge` error at execution time.
+    pub fn max_batch_size(_env: Env) -> u32 {
+        MAX_BATCH_SIZE
+    }
+
     /// Simulate a batch without writing state — useful for preflight checks.
     pub fn simulate_batch(
         env: Env,
