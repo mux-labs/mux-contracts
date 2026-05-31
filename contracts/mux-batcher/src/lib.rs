@@ -76,6 +76,28 @@ const MAX_BATCH_SIZE: u32 = 50;
 const TTL_THRESHOLD: u32 = 17_280; // ~1 day
 const TTL_EXTEND_TO: u32 = 518_400; // ~30 days
 
+// ── Rollback semantics ────────────────────────────────────────────────────────
+//
+// Soroban provides two rollback paths for mux-batcher:
+//
+// 1. HOST-LEVEL TRAP (panic! / SDK panic): The Soroban host catches the trap,
+//    discards ALL storage writes made during the current contract invocation,
+//    and marks the transaction as failed.  No events are committed.
+//
+// 2. CONTRACT-LEVEL ERROR (return Err(...)): The contract function returns
+//    normally with an error value.  The Soroban host does NOT automatically
+//    roll back instance storage for contract-level errors — the contract must
+//    undo any side effects itself before returning.
+//
+// mux-batcher uses path 2 for `RequiredOperationFailed` so that callers can
+// inspect the error code.  The reentrancy guard (`DataKey::Executing`) is
+// therefore explicitly removed before each early-return error path.  All other
+// state in this contract is local to the invocation frame and needs no cleanup.
+//
+// Callers that need atomic all-or-nothing semantics should set
+// `require_success = true` on every operation; a single failure then surfaces
+// `RequiredOperationFailed` and the caller can treat that as a full rollback.
+
 // ── Contract ──────────────────────────────────────────────────────────────────
 
 #[contract]
