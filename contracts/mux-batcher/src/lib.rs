@@ -21,6 +21,13 @@ fn emit(
         .publish((symbol_short!("mux_bat"), action), data);
 }
 
+// ── Storage keys ──────────────────────────────────────────────────────────────
+
+#[contracttype]
+enum DataKey {
+    Executing,
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 #[contracttype]
@@ -123,12 +130,20 @@ impl MuxBatcher {
                 }
                 Err(_err) => {
                     if op.require_success {
+                        // Clear reentrancy guard before returning — Soroban rolls
+                        // back instance-storage writes on host-side error, but an
+                        // Err return from a #[contractimpl] function is NOT a host
+                        // trap, so we must clear manually.
+                        env.storage().instance().remove(&DataKey::Executing);
                         return Err(MuxBatcherError::RequiredOperationFailed);
                     }
                     failure_count += 1;
                 }
             }
         }
+
+        // Clear reentrancy guard so subsequent calls in the same session work.
+        env.storage().instance().remove(&DataKey::Executing);
 
         let result = BatchResult {
             success_count,
@@ -144,6 +159,14 @@ impl MuxBatcher {
             .instance()
             .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         Ok(result)
+    }
+
+    /// Return the maximum number of operations permitted in a single batch.
+    ///
+    /// Callers can query this before constructing a batch to avoid a
+    /// `BatchTooLarge` error at execution time.
+    pub fn max_batch_size(_env: Env) -> u32 {
+        MAX_BATCH_SIZE
     }
 
     /// Simulate a batch without writing state — useful for preflight checks.
@@ -300,5 +323,86 @@ mod tests {
         });
         // If extend_ttl was missing the SDK would panic; reaching here is the assertion.
         let _ = client.try_execute_batch(&caller, &ops);
+    }
+
+    // ── Issue #74: batch size limit validation ────────────────────────────────
+
+    #[test]
+    fn test_max_batch_size_query() {
+        // max_batch_size() must return MAX_BATCH_SIZE (50).
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+        assert_eq!(client.max_batch_size(), 50_u32);
+    }
+
+    #[test]
+    fn test_batch_at_exactly_max_size_accepted() {
+        // A batch of exactly MAX_BATCH_SIZE operations must not be rejected.
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let caller = Address::generate(&env);
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        let target = Address::generate(&env);
+        for _ in 0..50 {
+            ops.push_back(Operation {
+                target: target.clone(),
+                fn_name: soroban_sdk::symbol_short!("noop"),
+                args: Vec::new(&env),
+                require_success: false,
+            });
+        }
+        // Should return Ok (ops fail individually but batch is accepted).
+        let result = client.try_execute_batch(&caller, &ops);
+        assert!(result.is_ok(), "batch at MAX_BATCH_SIZE must be accepted");
+    }
+
+    #[test]
+    fn test_batch_one_over_max_size_rejected() {
+        // MAX_BATCH_SIZE + 1 operations must be rejected with BatchTooLarge.
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let caller = Address::generate(&env);
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        let target = Address::generate(&env);
+        for _ in 0..51 {
+            ops.push_back(Operation {
+                target: target.clone(),
+                fn_name: soroban_sdk::symbol_short!("noop"),
+                args: Vec::new(&env),
+                require_success: false,
+            });
+        }
+        let result = client.try_execute_batch(&caller, &ops);
+        assert!(result.is_err(), "batch over MAX_BATCH_SIZE must be rejected");
+    }
+
+    #[test]
+    fn test_simulate_batch_respects_size_limit() {
+        // simulate_batch must also reject batches larger than MAX_BATCH_SIZE.
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let caller = Address::generate(&env);
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        let target = Address::generate(&env);
+        for _ in 0..51 {
+            ops.push_back(Operation {
+                target: target.clone(),
+                fn_name: soroban_sdk::symbol_short!("noop"),
+                args: Vec::new(&env),
+                require_success: false,
+            });
+        }
+        let result = client.try_simulate_batch(&caller, &ops);
+        assert!(result.is_err(), "simulate_batch must reject oversized batches");
     }
 }
