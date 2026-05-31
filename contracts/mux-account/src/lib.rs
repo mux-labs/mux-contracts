@@ -564,3 +564,4 @@ mod tests {
         assert_eq!(client.owner(), owner);
     }
 }
+pub mod smart_wallet;
