@@ -15,7 +15,7 @@ import {
   TransactionBuilder,
   xdr,
 } from "@stellar/stellar-sdk";
-import type { BatchResult, MuxBatcherError, Operation } from "../types";
+import type { BatchOperationKind, BatchResult, MuxBatcherError, Operation } from "../types";
 import { pollTransaction } from "../horizon";
 
 export interface MuxBatcherClientOptions {
@@ -84,20 +84,26 @@ export class MuxBatcherClient {
   private operationToScVal(op: Operation): xdr.ScVal {
     return xdr.ScVal.scvMap([
       new xdr.ScMapEntry({
-        key: xdr.ScVal.scvSymbol("target"),
-        val: nativeToScVal(op.target.toString(), { type: "address" }),
+        key: xdr.ScVal.scvSymbol("args"),
+        val: xdr.ScVal.scvVec(op.args),
       }),
       new xdr.ScMapEntry({
         key: xdr.ScVal.scvSymbol("fn_name"),
         val: xdr.ScVal.scvSymbol(op.fnName),
       }),
       new xdr.ScMapEntry({
-        key: xdr.ScVal.scvSymbol("args"),
-        val: xdr.ScVal.scvVec(op.args),
+        key: xdr.ScVal.scvSymbol("kind"),
+        val: xdr.ScVal.scvVec([
+          xdr.ScVal.scvSymbol(op.kind),
+        ]),
       }),
       new xdr.ScMapEntry({
         key: xdr.ScVal.scvSymbol("require_success"),
         val: nativeToScVal(op.requireSuccess, { type: "bool" }),
+      }),
+      new xdr.ScMapEntry({
+        key: xdr.ScVal.scvSymbol("target"),
+        val: nativeToScVal(op.target.toString(), { type: "address" }),
       }),
     ]);
   }

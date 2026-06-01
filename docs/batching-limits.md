@@ -61,6 +61,47 @@ as a conservative upper bound that:
 
 ---
 
+## Operation kind
+
+Each `Operation` carries a `kind: BatchOperationKind` field that classifies its
+intent.  The batcher does **not** gate execution on the kind — it is purely
+informational metadata surfaced in events and available to off-chain indexers,
+analytic pipelines, and TypeScript clients.
+
+| Variant | Description |
+|---|---|
+| `Invoke` | Generic cross-contract function call (default / catch-all) |
+| `Transfer` | Asset transfer (e.g. SAC `transfer` call) |
+| `Approve` | Allowance / approval (e.g. SAC `approve` call) |
+
+**Rust usage:**
+
+```rust
+Operation {
+    target,
+    fn_name: symbol_short!("transfer"),
+    args,
+    require_success: true,
+    kind: BatchOperationKind::Transfer,
+}
+```
+
+**TypeScript usage:**
+
+```typescript
+import type { BatchOperationKind, Operation } from "@mux-protocol/contracts";
+
+const op: Operation = {
+  target: addr,
+  fnName: "transfer",
+  args: [],
+  requireSuccess: true,
+  kind: "Transfer",
+};
+```
+
+---
+
 ## Error codes
 
 | Code | Value | Condition |
