@@ -429,4 +429,165 @@ mod tests {
             assert_ne!(action_names.get(i).unwrap(), symbol_short!("bat_ok"));
         }
     }
+
+    // ── Issue #76: additional batch unit tests ────────────────────────────────
+
+    #[test]
+    fn test_max_batch_size_returns_50() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+        assert_eq!(client.max_batch_size(), 50u32);
+    }
+
+    #[test]
+    fn test_execute_batch_result_counts_failures() {
+        // A batch with one failing op (require_success=false) must report
+        // success_count=0 and failure_count=1.
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let caller = Address::generate(&env);
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        ops.push_back(Operation {
+            target: Address::generate(&env),
+            fn_name: symbol_short!("noop"),
+            args: Vec::new(&env),
+            require_success: false,
+        });
+        let result = client.try_execute_batch(&caller, &ops).unwrap().unwrap();
+        assert_eq!(result.success_count, 0);
+        assert_eq!(result.failure_count, 1);
+    }
+
+    #[test]
+    fn test_execute_batch_require_success_returns_error() {
+        // When require_success=true and the op fails, execute_batch must return
+        // RequiredOperationFailed.
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let caller = Address::generate(&env);
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        ops.push_back(Operation {
+            target: Address::generate(&env),
+            fn_name: symbol_short!("noop"),
+            args: Vec::new(&env),
+            require_success: true,
+        });
+        assert!(client.try_execute_batch(&caller, &ops).is_err());
+    }
+
+    #[test]
+    fn test_execute_batch_require_success_clears_reentrancy_guard() {
+        // After a RequiredOperationFailed the reentrancy guard must be cleared
+        // so a subsequent call does not get ReentrancyDetected.
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let caller = Address::generate(&env);
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        ops.push_back(Operation {
+            target: Address::generate(&env),
+            fn_name: symbol_short!("noop"),
+            args: Vec::new(&env),
+            require_success: true,
+        });
+        // First call fails due to require_success.
+        let _ = client.try_execute_batch(&caller, &ops);
+
+        // Second call with require_success=false must not get ReentrancyDetected.
+        let mut ops2: Vec<Operation> = Vec::new(&env);
+        ops2.push_back(Operation {
+            target: Address::generate(&env),
+            fn_name: symbol_short!("noop"),
+            args: Vec::new(&env),
+            require_success: false,
+        });
+        assert!(client.try_execute_batch(&caller, &ops2).is_ok());
+    }
+
+    #[test]
+    fn test_simulate_batch_returns_op_count_as_success() {
+        // simulate_batch must return success_count == ops.len() and failure_count == 0.
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let caller = Address::generate(&env);
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        for _ in 0..3 {
+            ops.push_back(Operation {
+                target: Address::generate(&env),
+                fn_name: symbol_short!("noop"),
+                args: Vec::new(&env),
+                require_success: false,
+            });
+        }
+        let result = client.simulate_batch(&caller, &ops);
+        assert_eq!(result.success_count, 3);
+        assert_eq!(result.failure_count, 0);
+    }
+
+    #[test]
+    fn test_simulate_batch_empty_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let caller = Address::generate(&env);
+        assert!(client.try_simulate_batch(&caller, &Vec::new(&env)).is_err());
+    }
+
+    #[test]
+    fn test_simulate_batch_too_large_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let caller = Address::generate(&env);
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        let target = Address::generate(&env);
+        for _ in 0..51 {
+            ops.push_back(Operation {
+                target: target.clone(),
+                fn_name: symbol_short!("noop"),
+                args: Vec::new(&env),
+                require_success: false,
+            });
+        }
+        assert!(client.try_simulate_batch(&caller, &ops).is_err());
+    }
+
+    #[test]
+    fn test_execute_batch_at_max_size_accepted() {
+        // A batch of exactly MAX_BATCH_SIZE ops must not be rejected.
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let caller = Address::generate(&env);
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        let target = Address::generate(&env);
+        for _ in 0..50 {
+            ops.push_back(Operation {
+                target: target.clone(),
+                fn_name: symbol_short!("noop"),
+                args: Vec::new(&env),
+                require_success: false,
+            });
+        }
+        // Should not return BatchTooLarge.
+        assert!(client.try_execute_batch(&caller, &ops).is_ok());
+    }
 }
