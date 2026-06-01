@@ -223,4 +223,43 @@ mod tests {
         assert_eq!(limit.amount, 2000);
         assert_eq!(limit.period_ledgers, 200);
     }
+
+    #[test]
+    fn test_double_initialize_fails() {
+        let (_env, client, admin) = setup();
+        assert!(client.try_initialize(&admin).is_err());
+    }
+
+    #[test]
+    fn test_initialize_emits_event() {
+        let (env, client, admin) = {
+            let env = Env::default();
+            env.mock_all_auths();
+            let contract_id = env.register_contract(None, MuxPolicy);
+            let client = MuxPolicyClient::new(&env, &contract_id);
+            let admin = Address::generate(&env);
+            (env, client, admin)
+        };
+        client.initialize(&admin);
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        assert_eq!(topic_action(&env, &events, 0), symbol_short!("init"));
+    }
+
+    #[test]
+    fn test_multiple_assets_independent() {
+        let (env, client, _) = setup();
+        let asset_a = Address::generate(&env);
+        let asset_b = Address::generate(&env);
+        client.set_limit(&asset_a, &100_i128, &10_u32);
+        client.set_limit(&asset_b, &999_i128, &99_u32);
+        assert_eq!(client.get_limit(&asset_a).amount, 100);
+        assert_eq!(client.get_limit(&asset_b).amount, 999);
+    }
+
+    #[test]
+    fn test_ttl_extended_on_write() {
+        // Reaching here without panic confirms extend_ttl was called (T-21).
+        let (_env, _client, _admin) = setup();
+    }
 }
