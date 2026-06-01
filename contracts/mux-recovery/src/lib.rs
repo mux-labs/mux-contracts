@@ -111,6 +111,126 @@ impl MuxRecovery {
         Ok(())
     }
 
+    /// Initiate a recovery request proposing `new_owner` as the replacement owner.
+    ///
+    /// The caller must be a member of the guardian set. Only one active recovery
+    /// request may exist at a time. The request enters `Pending` status and cannot
+    /// be executed until `RECOVERY_TIMELOCK` ledgers have elapsed, giving the
+    /// current owner time to cancel a fraudulent request.
+    pub fn initiate_recovery(
+        env: Env,
+        guardian: Address,
+        new_owner: Address,
+    ) -> Result<(), RecoveryError> {
+        guardian.require_auth();
+
+        // Verify caller is a guardian.
+        let guardians: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::GuardianSet)
+            .ok_or(RecoveryError::NotInitialized)?;
+        if !guardians.contains(&guardian) {
+            return Err(RecoveryError::Unauthorized);
+        }
+
+        // Reject if a pending request already exists.
+        if let Some(req) = env
+            .storage()
+            .instance()
+            .get::<DataKey, RecoveryRequest>(&DataKey::RecoveryRequest)
+        {
+            if req.status == RecoveryStatus::Pending {
+                return Err(RecoveryError::RecoveryAlreadyPending);
+            }
+        }
+
+        let initiated_at = env.ledger().sequence();
+        let executable_at = initiated_at.saturating_add(RECOVERY_TIMELOCK);
+        let request = RecoveryRequest {
+            new_owner: new_owner.clone(),
+            initiated_at,
+            executable_at,
+            status: RecoveryStatus::Pending,
+        };
+        env.storage().instance().set(&DataKey::RecoveryRequest, &request);
+        emit(&env, symbol_short!("rec_init"), (guardian, new_owner, executable_at));
+        Ok(())
+    }
+
+    /// Execute a pending recovery request after the timelock has expired.
+    ///
+    /// Any guardian may call this once `executable_at` has been reached.
+    /// Transfers ownership to the proposed `new_owner` and marks the request
+    /// as `Executed`.
+    pub fn execute_recovery(env: Env, guardian: Address) -> Result<(), RecoveryError> {
+        guardian.require_auth();
+
+        let guardians: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::GuardianSet)
+            .ok_or(RecoveryError::NotInitialized)?;
+        if !guardians.contains(&guardian) {
+            return Err(RecoveryError::Unauthorized);
+        }
+
+        let mut req: RecoveryRequest = env
+            .storage()
+            .instance()
+            .get(&DataKey::RecoveryRequest)
+            .ok_or(RecoveryError::NoActiveRecovery)?;
+
+        if req.status != RecoveryStatus::Pending {
+            return Err(RecoveryError::NoActiveRecovery);
+        }
+        if env.ledger().sequence() < req.executable_at {
+            return Err(RecoveryError::TimelockNotExpired);
+        }
+
+        let new_owner = req.new_owner.clone();
+        req.status = RecoveryStatus::Executed;
+        env.storage().instance().set(&DataKey::RecoveryRequest, &req);
+        env.storage().instance().set(&DataKey::Owner, &new_owner);
+        emit(&env, symbol_short!("rec_exec"), new_owner);
+        Ok(())
+    }
+
+    /// Cancel a pending recovery request. Only the current owner may cancel.
+    pub fn cancel_recovery(env: Env) -> Result<(), RecoveryError> {
+        let owner: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Owner)
+            .ok_or(RecoveryError::NotInitialized)?;
+        owner.require_auth();
+
+        let mut req: RecoveryRequest = env
+            .storage()
+            .instance()
+            .get(&DataKey::RecoveryRequest)
+            .ok_or(RecoveryError::NoActiveRecovery)?;
+
+        if req.status != RecoveryStatus::Pending {
+            return Err(RecoveryError::NoActiveRecovery);
+        }
+
+        req.status = RecoveryStatus::Cancelled;
+        env.storage().instance().set(&DataKey::RecoveryRequest, &req);
+        emit(&env, symbol_short!("rec_cncl"), owner);
+        Ok(())
+    }
+
+    /// Return the current recovery request status, or `RecoveryStatus::None`
+    /// if no request has ever been created.
+    pub fn recovery_status(env: Env) -> RecoveryStatus {
+        env.storage()
+            .instance()
+            .get::<DataKey, RecoveryRequest>(&DataKey::RecoveryRequest)
+            .map(|r| r.status)
+            .unwrap_or(RecoveryStatus::None)
+    }
+
     /// Return the current owner.
     pub fn owner(env: Env) -> Result<Address, RecoveryError> {
         env.storage()
