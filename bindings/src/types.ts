@@ -60,3 +60,15 @@ export type MuxPermissionsError =
   | "RoleNotFound"
   | "AccountNotInRole"
   | "PermissionNotFound";
+
+export type MuxAccountFactoryError =
+  | "Unauthorized"
+  | "InvalidAccount"
+  | "TooManyAccounts";
+
+export type MuxRegistryError =
+  | "NotInitialized"
+  | "AlreadyInitialized"
+  | "Unauthorized"
+  | "ContractNotFound"
+  | "TooManyContracts";
