@@ -1,0 +1,178 @@
+{
+  "description": "Mux Protocol test vectors for deterministic contract behaviour verification",
+  "version": "0.1.0",
+  "mux_account": {
+    "initialize": [
+      {
+        "id": "acct-init-ok",
+        "description": "Valid initialization succeeds",
+        "input": { "owner": "GABC1", "guardians": [] },
+        "expect": { "ok": true }
+      },
+      {
+        "id": "acct-init-duplicate",
+        "description": "Second initialization is rejected",
+        "input": { "owner": "GABC1", "guardians": [] },
+        "precondition": "already_initialized",
+        "expect": { "err": "AlreadyInitialized" }
+      }
+    ],
+    "set_delegate": [
+      {
+        "id": "acct-dlg-ok",
+        "description": "Owner adds a delegate within cap",
+        "input": {
+          "delegate": "GDEL1",
+          "expiry_ledger": 1000,
+          "can_spend": true
+        },
+        "expect": { "ok": true }
+      },
+      {
+        "id": "acct-dlg-cap",
+        "description": "Adding a 65th delegate is rejected (MAX_DELEGATES=64)",
+        "input": {
+          "delegate": "GDEL65",
+          "expiry_ledger": 1000,
+          "can_spend": false
+        },
+        "precondition": "delegates_at_cap",
+        "expect": { "err": "TooManyDelegates" }
+      }
+    ],
+    "spend_limit": [
+      {
+        "id": "acct-spend-ok",
+        "description": "Debit within limit succeeds",
+        "input": {
+          "asset": "USDC",
+          "limit": 1000,
+          "period_ledgers": 100,
+          "spend": 500
+        },
+        "expect": { "ok": true, "remaining": 500 }
+      },
+      {
+        "id": "acct-spend-exceeded",
+        "description": "Debit exceeding limit is rejected",
+        "input": {
+          "asset": "USDC",
+          "limit": 1000,
+          "period_ledgers": 100,
+          "spend": 1001
+        },
+        "expect": { "err": "SpendLimitExceeded" }
+      },
+      {
+        "id": "acct-spend-invalid-amount",
+        "description": "Zero amount is rejected",
+        "input": { "asset": "USDC", "amount": 0, "period_ledgers": 100 },
+        "expect": { "err": "InvalidAmount" }
+      },
+      {
+        "id": "acct-spend-invalid-period",
+        "description": "Zero period is rejected",
+        "input": { "asset": "USDC", "amount": 100, "period_ledgers": 0 },
+        "expect": { "err": "InvalidPeriod" }
+      }
+    ]
+  },
+  "mux_registry": {
+    "register": [
+      {
+        "id": "reg-register-ok",
+        "description": "Admin registers a contract version",
+        "input": { "name": "account", "version": "1.0.0" },
+        "expect": { "ok": true }
+      },
+      {
+        "id": "reg-get-unknown",
+        "description": "Getting an unregistered contract fails",
+        "input": { "name": "ghost" },
+        "expect": { "err": "ContractNotFound" }
+      },
+      {
+        "id": "reg-update-version",
+        "description": "Re-registering updates the version",
+        "input": { "name": "account", "version": "2.0.0" },
+        "precondition": "account_registered_v1",
+        "expect": { "ok": true, "version": "2.0.0" }
+      }
+    ],
+    "register_with_metadata": [
+      {
+        "id": "reg-meta-ok",
+        "description": "Admin registers contract with full metadata",
+        "input": {
+          "name": "account",
+          "version": "1.0.0",
+          "description": "Account abstraction contract",
+          "author": "mux-labs"
+        },
+        "expect": { "ok": true }
+      }
+    ]
+  },
+  "mux_permissions": {
+    "role_lifecycle": [
+      {
+        "id": "perm-grant-ok",
+        "description": "Admin grants a role to an account",
+        "input": {
+          "account": "GACC1",
+          "role": "operator",
+          "permissions": ["transfer"]
+        },
+        "expect": { "ok": true, "has_permission": true }
+      },
+      {
+        "id": "perm-revoke-ok",
+        "description": "Admin revokes a role from an account",
+        "input": { "account": "GACC1", "role": "operator" },
+        "precondition": "role_granted",
+        "expect": { "ok": true, "has_permission": false }
+      },
+      {
+        "id": "perm-grant-nonexistent-role",
+        "description": "Granting a non-existent role fails",
+        "input": { "account": "GACC1", "role": "ghost" },
+        "expect": { "err": "RoleNotFound" }
+      },
+      {
+        "id": "perm-member-cap",
+        "description": "Adding a 257th member to a role is rejected (MAX_ROLE_MEMBERS=256)",
+        "input": { "account": "GACC257", "role": "capped" },
+        "precondition": "role_at_member_cap",
+        "expect": { "err": "TooManyMembers" }
+      }
+    ]
+  },
+  "mux_batcher": {
+    "execute_batch": [
+      {
+        "id": "bat-empty",
+        "description": "Empty batch is rejected",
+        "input": { "ops": [] },
+        "expect": { "err": "EmptyBatch" }
+      },
+      {
+        "id": "bat-too-large",
+        "description": "Batch exceeding MAX_BATCH_SIZE=50 is rejected",
+        "input": { "ops_count": 51 },
+        "expect": { "err": "BatchTooLarge" }
+      },
+      {
+        "id": "bat-partial-failure",
+        "description": "Optional op failure increments failure_count without aborting",
+        "input": { "ops": [{ "require_success": false, "will_fail": true }] },
+        "expect": { "ok": true, "failure_count": 1, "success_count": 0 }
+      },
+      {
+        "id": "bat-required-failure",
+        "description": "Required op failure aborts the batch",
+        "input": { "ops": [{ "require_success": true, "will_fail": true }] },
+        "expect": { "err": "RequiredOperationFailed" }
+      }
+    ]
+  }
+}

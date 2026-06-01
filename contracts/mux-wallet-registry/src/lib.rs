@@ -1,52 +1,35 @@
 /*!
- * mux-wallet-registry: Wallet registration registry for Mux Protocol.
+ * mux-wallet-registry: Wallet registry contract for Mux Protocol.
  *
- * Tracks registered wallet addresses and their associated metadata.
+ * Allows an owner to register and look up wallet addresses by a symbolic name.
  */
 
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env};
-
-// ── Audit events ──────────────────────────────────────────────────────────────
-fn emit(env: &Env, action: soroban_sdk::Symbol, data: impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>) {
-    env.events()
-        .publish((symbol_short!("mux_wreg"), action), data);
-}
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol};
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
+/// Storage keys used by the wallet registry contract.
 #[contracttype]
 pub enum DataKey {
-    Admin,
-    Wallet(Address),
-}
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct WalletRecord {
-    pub owner: Address,
-    pub registered_at: u32,
+    /// The owner address authorised to register wallets.
+    Owner,
+    /// A registered wallet entry keyed by name: DataKey::Wallet(name).
+    Wallet(Symbol),
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────
 
-#[contracterror]
+#[contracttype]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
-pub enum MuxWalletRegistryError {
+pub enum WalletRegistryError {
     NotInitialized = 1,
     AlreadyInitialized = 2,
     Unauthorized = 3,
-    AlreadyRegistered = 4,
-    WalletNotFound = 5,
+    WalletNotFound = 4,
 }
-
-// ── Storage TTL ───────────────────────────────────────────────────────────────
-const TTL_THRESHOLD: u32 = 17_280;
-const TTL_EXTEND_TO: u32 = 518_400;
 
 // ── Contract ──────────────────────────────────────────────────────────────────
 
@@ -55,67 +38,47 @@ pub struct MuxWalletRegistry;
 
 #[contractimpl]
 impl MuxWalletRegistry {
-    /// Initialize the registry with an admin address.
-    pub fn initialize(env: Env, admin: Address) -> Result<(), MuxWalletRegistryError> {
-        if env.storage().instance().has(&DataKey::Admin) {
-            return Err(MuxWalletRegistryError::AlreadyInitialized);
+    /// Initialise the registry with an owner address.
+    pub fn initialize(env: Env, owner: Address) -> Result<(), WalletRegistryError> {
+        if env.storage().instance().has(&DataKey::Owner) {
+            return Err(WalletRegistryError::AlreadyInitialized);
         }
-        admin.require_auth();
-        env.storage().instance().set(&DataKey::Admin, &admin);
-        emit(&env, symbol_short!("init"), admin);
-        Self::extend_ttl(&env);
+        owner.require_auth();
+        env.storage().instance().set(&DataKey::Owner, &owner);
         Ok(())
     }
 
-    /// Register a wallet address. Admin only.
-    pub fn register(env: Env, wallet: Address) -> Result<(), MuxWalletRegistryError> {
-        Self::require_admin(&env)?;
-        if env.storage().persistent().has(&DataKey::Wallet(wallet.clone())) {
-            return Err(MuxWalletRegistryError::AlreadyRegistered);
-        }
-        let record = WalletRecord {
-            owner: wallet.clone(),
-            registered_at: env.ledger().sequence(),
-        };
+    /// Register (or update) a wallet address under `name`. Owner only.
+    pub fn register_wallet(
+        env: Env,
+        name: Symbol,
+        wallet: Address,
+    ) -> Result<(), WalletRegistryError> {
+        Self::require_owner(&env)?;
         env.storage()
-            .persistent()
-            .set(&DataKey::Wallet(wallet.clone()), &record);
-        emit(&env, symbol_short!("register"), wallet);
-        Self::extend_ttl(&env);
+            .instance()
+            .set(&DataKey::Wallet(name), &wallet);
         Ok(())
     }
 
-    /// Look up a registered wallet record.
-    pub fn get_wallet(env: Env, wallet: Address) -> Result<WalletRecord, MuxWalletRegistryError> {
+    /// Return the wallet address registered under `name`.
+    pub fn get_wallet(env: Env, name: Symbol) -> Result<Address, WalletRegistryError> {
         env.storage()
-            .persistent()
-            .get(&DataKey::Wallet(wallet))
-            .ok_or(MuxWalletRegistryError::WalletNotFound)
-    }
-
-    /// Check whether a wallet is registered.
-    pub fn is_registered(env: Env, wallet: Address) -> bool {
-        env.storage()
-            .persistent()
-            .has(&DataKey::Wallet(wallet))
+            .instance()
+            .get(&DataKey::Wallet(name))
+            .ok_or(WalletRegistryError::WalletNotFound)
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────
 
-    fn require_admin(env: &Env) -> Result<(), MuxWalletRegistryError> {
-        let admin: Address = env
+    fn require_owner(env: &Env) -> Result<(), WalletRegistryError> {
+        let owner: Address = env
             .storage()
             .instance()
-            .get(&DataKey::Admin)
-            .ok_or(MuxWalletRegistryError::NotInitialized)?;
-        admin.require_auth();
+            .get(&DataKey::Owner)
+            .ok_or(WalletRegistryError::NotInitialized)?;
+        owner.require_auth();
         Ok(())
-    }
-
-    fn extend_ttl(env: &Env) {
-        env.storage()
-            .instance()
-            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 }
 
@@ -124,16 +87,16 @@ impl MuxWalletRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::{symbol_short, testutils::Address as _, Env};
 
     fn setup() -> (Env, MuxWalletRegistryClient<'static>, Address) {
         let env = Env::default();
         env.mock_all_auths();
         let contract_id = env.register_contract(None, MuxWalletRegistry);
         let client = MuxWalletRegistryClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-        (env, client, admin)
+        let owner = Address::generate(&env);
+        client.initialize(&owner);
+        (env, client, owner)
     }
 
     #[test]
@@ -142,40 +105,38 @@ mod tests {
         env.mock_all_auths();
         let contract_id = env.register_contract(None, MuxWalletRegistry);
         let client = MuxWalletRegistryClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        assert!(client.try_initialize(&admin).is_ok());
-        assert!(client.try_initialize(&admin).is_err());
+        let owner = Address::generate(&env);
+        assert!(client.try_initialize(&owner).is_ok());
+        assert_eq!(
+            client.try_initialize(&owner),
+            Err(Ok(WalletRegistryError::AlreadyInitialized))
+        );
     }
 
     #[test]
-    fn test_register_and_get() {
+    fn test_register_and_get_wallet() {
         let (env, client, _) = setup();
+        let name = symbol_short!("alice");
         let wallet = Address::generate(&env);
-        client.register(&wallet);
-        assert!(client.is_registered(&wallet));
-        let record = client.get_wallet(&wallet);
-        assert_eq!(record.owner, wallet);
+        client.register_wallet(&name, &wallet);
+        assert_eq!(client.get_wallet(&name), wallet);
     }
 
     #[test]
-    fn test_double_register_fails() {
-        let (env, client, _) = setup();
-        let wallet = Address::generate(&env);
-        client.register(&wallet);
-        assert!(client.try_register(&wallet).is_err());
+    fn test_get_wallet_not_found() {
+        let (_, client, _) = setup();
+        let result = client.try_get_wallet(&symbol_short!("ghost"));
+        assert_eq!(result, Err(Ok(WalletRegistryError::WalletNotFound)));
     }
 
     #[test]
-    fn test_get_unregistered_fails() {
+    fn test_register_wallet_updates_existing() {
         let (env, client, _) = setup();
-        let wallet = Address::generate(&env);
-        assert!(client.try_get_wallet(&wallet).is_err());
-    }
-
-    #[test]
-    fn test_is_registered_false_for_unknown() {
-        let (env, client, _) = setup();
-        let wallet = Address::generate(&env);
-        assert!(!client.is_registered(&wallet));
+        let name = symbol_short!("bob");
+        let wallet1 = Address::generate(&env);
+        let wallet2 = Address::generate(&env);
+        client.register_wallet(&name, &wallet1);
+        client.register_wallet(&name, &wallet2);
+        assert_eq!(client.get_wallet(&name), wallet2);
     }
 }

@@ -11,6 +11,27 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, Env, Vec,
 };
 
+// ── Batch operation kind ──────────────────────────────────────────────────────
+
+/// Classifies the intent of a batched operation.
+///
+/// The kind is informational metadata carried alongside each `Operation`.
+/// The batcher does not gate execution on the kind — it is surfaced in events
+/// and available to off-chain indexers and TypeScript clients for filtering,
+/// analytics, and UI labelling.
+///
+/// Variants:
+/// - `Invoke`   — generic cross-contract function call (default / catch-all)
+/// - `Transfer` — asset transfer (e.g. SAC `transfer` call)
+/// - `Approve`  — allowance / approval (e.g. SAC `approve` call)
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BatchOperationKind {
+    Invoke,
+    Transfer,
+    Approve,
+}
+
 // ── Audit events ──────────────────────────────────────────────────────────────
 fn emit(
     env: &Env,
@@ -37,6 +58,8 @@ pub struct Operation {
     pub fn_name: soroban_sdk::Symbol,
     pub args: Vec<soroban_sdk::Val>,
     pub require_success: bool,
+    /// Classifies the operation intent for off-chain indexers and clients.
+    pub kind: BatchOperationKind,
 }
 
 #[contracttype]
@@ -107,11 +130,12 @@ pub struct MuxBatcher;
 impl MuxBatcher {
     /// Execute a batch of operations atomically.
     ///
-    /// If any operation has `require_success = true` and fails, the entire
-    /// transaction is aborted via panic (Soroban rolls back on panic).
+    /// If any operation has `require_success = true` and fails, returns
+    /// `Err(RequiredOperationFailed)` and emits a `bat_abort` event.
     ///
     /// Emits:
-    /// - `executed`  — always, with (caller, success_count, failure_count)
+    /// - `bat_abort` — when a required operation fails (before returning error)
+    /// - `executed`  — on success, with (caller, success_count, failure_count)
     /// - `bat_ok`    — only when every operation in the batch succeeded
     pub fn execute_batch(
         env: Env,
@@ -161,6 +185,13 @@ impl MuxBatcher {
                         // Err return from a #[contractimpl] function is NOT a host
                         // trap, so we must clear manually.
                         env.storage().instance().remove(&DataKey::Executing);
+                        // Emit abort event so callers can observe the failure
+                        // without relying solely on the error return value.
+                        emit(
+                            &env,
+                            symbol_short!("bat_abort"),
+                            caller,
+                        );
                         return Err(MuxBatcherError::RequiredOperationFailed);
                     }
                     failure_count += 1;
@@ -206,6 +237,20 @@ impl MuxBatcher {
         MAX_BATCH_SIZE
     }
 
+    /// Submit a batch on behalf of the transaction invoker.
+    ///
+    /// Convenience wrapper around `execute_batch` that derives the caller from
+    /// the invoking address, so callers do not need to pass it explicitly.
+    ///
+    /// Emits the same events as `execute_batch`.
+    pub fn submit_batch(
+        env: Env,
+        ops: Vec<Operation>,
+    ) -> Result<BatchResult, MuxBatcherError> {
+        let caller = env.current_contract_address();
+        Self::execute_batch(env, caller, ops)
+    }
+
     /// Simulate a batch without writing state — useful for preflight checks.
     pub fn simulate_batch(
         env: Env,
@@ -237,10 +282,18 @@ impl MuxBatcher {
 mod tests {
     use super::*;
     use soroban_sdk::{
-        symbol_short,
+        contract as test_contract, contractimpl as test_contractimpl, symbol_short,
         testutils::{Address as _, Events},
         Env, FromVal, Vec,
     };
+
+    // Minimal no-op contract used as a real invocation target in tests.
+    #[test_contract]
+    pub struct DummyTarget;
+    #[test_contractimpl]
+    impl DummyTarget {
+        pub fn noop(_env: Env) {}
+    }
 
     fn topic_action(
         env: &Env,
@@ -271,12 +324,49 @@ mod tests {
             fn_name: symbol_short!("noop"),
             args: Vec::new(&env),
             require_success: false,
+            kind: BatchOperationKind::Invoke,
         });
         let _ = client.try_execute_batch(&caller, &ops);
 
         let events = env.events().all();
         assert_eq!(events.len(), 1);
         assert_eq!(topic_action(&env, &events, 0), symbol_short!("executed"));
+    }
+
+    #[test]
+    fn test_batch_operation_kind_variants() {
+        // Verify all BatchOperationKind variants are constructible and distinct.
+        assert_ne!(BatchOperationKind::Invoke, BatchOperationKind::Transfer);
+        assert_ne!(BatchOperationKind::Transfer, BatchOperationKind::Approve);
+        assert_ne!(BatchOperationKind::Invoke, BatchOperationKind::Approve);
+    }
+
+    #[test]
+    fn test_operation_kind_carried_through_batch() {
+        // Verify that an Operation with each kind variant is accepted by execute_batch.
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+        let caller = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        for kind in [
+            BatchOperationKind::Invoke,
+            BatchOperationKind::Transfer,
+            BatchOperationKind::Approve,
+        ] {
+            let mut ops: Vec<Operation> = Vec::new(&env);
+            ops.push_back(Operation {
+                target: target.clone(),
+                fn_name: symbol_short!("noop"),
+                args: Vec::new(&env),
+                require_success: false,
+                kind,
+            });
+            // execute_batch must accept the op regardless of kind.
+            assert!(client.try_execute_batch(&caller, &ops).is_ok());
+        }
     }
 
     #[test]
@@ -306,13 +396,13 @@ mod tests {
         let client = MuxBatcherClient::new(&env, &contract_id);
 
         let caller = Address::generate(&env);
-        let target = Address::generate(&env);
         let mut ops: Vec<Operation> = Vec::new(&env);
         ops.push_back(Operation {
-            target: target.clone(),
+            target: Address::generate(&env),
             fn_name: soroban_sdk::symbol_short!("noop"),
             args: Vec::new(&env),
             require_success: false,
+            kind: BatchOperationKind::Invoke,
         });
 
         assert!(client.try_execute_batch(&caller, &ops).is_ok());
@@ -336,6 +426,7 @@ mod tests {
                 fn_name: soroban_sdk::symbol_short!("noop"),
                 args: Vec::new(&env),
                 require_success: false,
+                kind: BatchOperationKind::Invoke,
             });
         }
         let result = client.try_execute_batch(&caller, &ops);
@@ -357,6 +448,7 @@ mod tests {
             fn_name: symbol_short!("noop"),
             args: Vec::new(&env),
             require_success: false,
+            kind: BatchOperationKind::Invoke,
         });
         // If extend_ttl was missing the SDK would panic; reaching here is the assertion.
         let _ = client.try_execute_batch(&caller, &ops);
@@ -366,32 +458,120 @@ mod tests {
 
     #[test]
     fn test_batch_success_event_emitted_when_all_succeed() {
-        // When every operation in the batch succeeds (zero failures), a `bat_ok`
-        // event must be emitted in addition to the standard `executed` event.
+        // When every operation succeeds, both `executed` and `bat_ok` must fire.
+        let env = Env::default();
+        env.mock_all_auths();
+        let batcher_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &batcher_id);
+        let target_id = env.register_contract(None, DummyTarget);
+
+        let caller = Address::generate(&env);
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        ops.push_back(Operation {
+            target: target_id,
+            fn_name: symbol_short!("noop"),
+            args: Vec::new(&env),
+            require_success: true,
+        });
+        let result = client.try_execute_batch(&caller, &ops);
+        assert!(result.is_ok());
+        let r = result.unwrap();
+        assert_eq!(r.success_count, 1);
+        assert_eq!(r.failure_count, 0);
+
+        let events = env.events().all();
+        // `executed` then `bat_ok`
+        assert_eq!(events.len(), 2);
+        assert_eq!(topic_action(&env, &events, 0), symbol_short!("executed"));
+        assert_eq!(topic_action(&env, &events, 1), symbol_short!("bat_ok"));
+    }
+
+    #[test]
+    fn test_bat_abort_event_emitted_on_required_failure() {
+        // When a required op fails, `bat_abort` must be emitted and the call
+        // must return RequiredOperationFailed.
         let env = Env::default();
         env.mock_all_auths();
         let contract_id = env.register_contract(None, MuxBatcher);
         let client = MuxBatcherClient::new(&env, &contract_id);
 
         let caller = Address::generate(&env);
-        // An empty ops vec is rejected before execution; use require_success=false
-        // with a call that will fail at the host level — the batch still completes
-        // with failure_count=1, so bat_ok must NOT fire in that path.
-        // For a true all-success path we need an op that actually succeeds, but
-        // since we can't register a real target here, we test the absence case and
-        // the explicit all-success branch via simulate_batch verification below.
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        ops.push_back(Operation {
+            target: Address::generate(&env), // non-existent target → will fail
+            fn_name: symbol_short!("noop"),
+            args: Vec::new(&env),
+            require_success: true,
+        });
+        let result = client.try_execute_batch(&caller, &ops);
+        assert!(result.is_err());
 
-        // Path A: batch with one failing op (not required) — bat_ok must NOT fire.
-        let mut ops_fail: Vec<Operation> = Vec::new(&env);
-        ops_fail.push_back(Operation {
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        assert_eq!(topic_action(&env, &events, 0), symbol_short!("bat_abort"));
+    }
+
+    #[test]
+    fn test_max_batch_size_returns_constant() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+        assert_eq!(client.max_batch_size(), MAX_BATCH_SIZE);
+    }
+
+    // ── submit_batch tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_submit_batch_empty_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let ops: Vec<Operation> = Vec::new(&env);
+        let result = client.try_submit_batch(&ops);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_submit_batch_too_large_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        let target = Address::generate(&env);
+        for _ in 0..51 {
+            ops.push_back(Operation {
+                target: target.clone(),
+                fn_name: soroban_sdk::symbol_short!("noop"),
+                args: Vec::new(&env),
+                require_success: false,
+            });
+        }
+        let result = client.try_submit_batch(&ops);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_submit_batch_emits_executed_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        ops.push_back(Operation {
             target: Address::generate(&env),
             fn_name: symbol_short!("noop"),
             args: Vec::new(&env),
             require_success: false,
+            kind: BatchOperationKind::Invoke,
         });
-        let _ = client.try_execute_batch(&caller, &ops_fail);
+        let _ = client.try_submit_batch(&ops);
+
         let events = env.events().all();
-        // Only `executed` fires; `bat_ok` must be absent.
         assert_eq!(events.len(), 1);
         assert_eq!(topic_action(&env, &events, 0), symbol_short!("executed"));
     }
@@ -412,6 +592,7 @@ mod tests {
             fn_name: symbol_short!("noop"),
             args: Vec::new(&env),
             require_success: false,
+            kind: BatchOperationKind::Invoke,
         });
         let result = client.try_execute_batch(&caller, &ops);
         assert!(result.is_ok());

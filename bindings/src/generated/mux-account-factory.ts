@@ -2,7 +2,7 @@
  * AUTO-GENERATED — do not edit by hand.
  * Run `npm run generate` to regenerate from the compiled contract WASM.
  *
- * Contract: mux-batcher
+ * Contract: mux-account-factory
  */
 
 import {
@@ -15,98 +15,70 @@ import {
   TransactionBuilder,
   xdr,
 } from "@stellar/stellar-sdk";
-import type { BatchOperationKind, BatchResult, MuxBatcherError, Operation } from "../types";
 import { pollTransaction } from "../horizon";
 
-export interface MuxBatcherClientOptions {
+export interface MuxAccountFactoryClientOptions {
   contractId: string;
   networkPassphrase: string;
   rpcUrl: string;
 }
 
-export class MuxBatcherClient {
+export type MuxAccountFactoryError =
+  | "Unauthorized"
+  | "InvalidAccount"
+  | "TooManyAccounts";
+
+export class MuxAccountFactoryClient {
   private contract: Contract;
   private server: SorobanRpc.Server;
   private networkPassphrase: string;
 
-  constructor(opts: MuxBatcherClientOptions) {
+  constructor(opts: MuxAccountFactoryClientOptions) {
     this.contract = new Contract(opts.contractId);
     this.server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
     this.networkPassphrase = opts.networkPassphrase;
   }
 
-  async executeBatch(
+  async deployAccount(
     sourceKeypair: Keypair,
-    caller: Address,
-    ops: Operation[]
-  ): Promise<BatchResult> {
-    const opsVal = xdr.ScVal.scvVec(ops.map(this.operationToScVal));
-    const tx = await this.buildTx(sourceKeypair, "execute_batch", [
-      nativeToScVal(caller.toString(), { type: "address" }),
-      opsVal,
+    owner: Address,
+    accountAddress: Address
+  ): Promise<Address> {
+    const tx = await this.buildTx(sourceKeypair, "deploy_account", [
+      nativeToScVal(owner.toString(), { type: "address" }),
+      nativeToScVal(accountAddress.toString(), { type: "address" }),
     ]);
-    return this.submitAndRead<BatchResult>(tx, sourceKeypair);
+    return this.submitAndRead<Address>(tx, sourceKeypair);
   }
 
-  async maxBatchSize(sourceKeypair: Keypair): Promise<number> {
-    const tx = await this.buildTx(sourceKeypair, "max_batch_size", []);
-    const result = await this.server.simulateTransaction(tx);
-    if (SorobanRpc.Api.isSimulationError(result)) {
-      throw new Error(`Simulation failed: ${result.error}`);
-    }
-    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
-    if (!retval) throw new Error("No return value");
-    return retval.value() as number;
-  }
-
-  async simulateBatch(
+  async getAccounts(
     sourceKeypair: Keypair,
-    caller: Address,
-    ops: Operation[]
-  ): Promise<BatchResult> {
-    const opsVal = xdr.ScVal.scvVec(ops.map(this.operationToScVal));
-    const tx = await this.buildTx(sourceKeypair, "simulate_batch", [
-      nativeToScVal(caller.toString(), { type: "address" }),
-      opsVal,
+    owner: Address
+  ): Promise<Address[]> {
+    const tx = await this.buildTx(sourceKeypair, "get_accounts", [
+      nativeToScVal(owner.toString(), { type: "address" }),
     ]);
     const result = await this.server.simulateTransaction(tx);
     if (SorobanRpc.Api.isSimulationError(result)) {
       throw new Error(`Simulation failed: ${result.error}`);
     }
     const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
-    if (!retval) throw new Error("No return value");
-    const native = retval.value() as unknown as { success_count: number; failure_count: number };
-    return { successCount: native.success_count, failureCount: native.failure_count };
+    if (!retval) return [];
+    return retval.value() as unknown as Address[];
+  }
+
+  async accountCount(sourceKeypair: Keypair): Promise<bigint> {
+    const tx = await this.buildTx(sourceKeypair, "account_count", []);
+    const result = await this.server.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(result)) {
+      throw new Error(`Simulation failed: ${result.error}`);
+    }
+    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+    if (!retval) return 0n;
+    return retval.value() as unknown as bigint;
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────────
-
-  private operationToScVal(op: Operation): xdr.ScVal {
-    return xdr.ScVal.scvMap([
-      new xdr.ScMapEntry({
-        key: xdr.ScVal.scvSymbol("args"),
-        val: xdr.ScVal.scvVec(op.args),
-      }),
-      new xdr.ScMapEntry({
-        key: xdr.ScVal.scvSymbol("fn_name"),
-        val: xdr.ScVal.scvSymbol(op.fnName),
-      }),
-      new xdr.ScMapEntry({
-        key: xdr.ScVal.scvSymbol("kind"),
-        val: xdr.ScVal.scvVec([
-          xdr.ScVal.scvSymbol(op.kind),
-        ]),
-      }),
-      new xdr.ScMapEntry({
-        key: xdr.ScVal.scvSymbol("require_success"),
-        val: nativeToScVal(op.requireSuccess, { type: "bool" }),
-      }),
-      new xdr.ScMapEntry({
-        key: xdr.ScVal.scvSymbol("target"),
-        val: nativeToScVal(op.target.toString(), { type: "address" }),
-      }),
-    ]);
-  }
 
   private async buildTx(
     sourceKeypair: Keypair,
