@@ -187,4 +187,10 @@ mod tests {
         let result = client.try_check_spend(&Address::generate(&env), &Address::generate(&env), &1);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_spend_limit_exceeded_error_code() {
+        // Verify SpendLimitExceeded has the expected discriminant value (5)
+        assert_eq!(SpendingPolicyError::SpendLimitExceeded as u32, 5);
+    }
 }
