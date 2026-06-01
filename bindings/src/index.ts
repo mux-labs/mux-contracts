@@ -9,6 +9,7 @@
 
 export * from "./generated/mux-account";
 export * from "./generated/mux-batcher";
+export * from "./generated/mux-delegation";
 export * from "./generated/mux-permissions";
 export * from "./types";
 export * from "./network";
