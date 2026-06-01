@@ -247,3 +247,153 @@ impl MuxRecovery {
             .ok_or(RecoveryError::NotInitialized)
     }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        vec, Env,
+    };
+
+    fn setup() -> (Env, MuxRecoveryClient<'static>, Address, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxRecovery);
+        let client = MuxRecoveryClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let guardian = Address::generate(&env);
+        let guardians = vec![&env, guardian.clone()];
+        client.initialize(&owner, &guardians);
+        (env, client, owner, guardian)
+    }
+
+    // ── initialize ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_initialize_sets_owner_and_guardians() {
+        let (_env, client, owner, guardian) = setup();
+        assert_eq!(client.owner(), owner);
+        assert!(client.guardians().contains(&guardian));
+    }
+
+    #[test]
+    fn test_double_initialize_fails() {
+        let (env, client, owner, _) = setup();
+        let result = client.try_initialize(&owner, &vec![&env]);
+        assert!(result.is_err());
+    }
+
+    // ── recovery_status default ───────────────────────────────────────────────
+
+    #[test]
+    fn test_recovery_status_none_by_default() {
+        let (_env, client, _, _) = setup();
+        assert_eq!(client.recovery_status(), RecoveryStatus::None);
+    }
+
+    // ── initiate_recovery ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_initiate_recovery_sets_pending() {
+        let (env, client, _, guardian) = setup();
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&guardian, &new_owner);
+        assert_eq!(client.recovery_status(), RecoveryStatus::Pending);
+    }
+
+    #[test]
+    fn test_initiate_recovery_non_guardian_fails() {
+        let (env, client, _, _) = setup();
+        let stranger = Address::generate(&env);
+        let new_owner = Address::generate(&env);
+        let result = client.try_initiate_recovery(&stranger, &new_owner);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_initiate_recovery_duplicate_fails() {
+        let (env, client, _, guardian) = setup();
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&guardian, &new_owner);
+        let result = client.try_initiate_recovery(&guardian, &new_owner);
+        assert!(result.is_err());
+    }
+
+    // ── cancel_recovery ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_cancel_recovery_sets_cancelled() {
+        let (env, client, _, guardian) = setup();
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&guardian, &new_owner);
+        client.cancel_recovery();
+        assert_eq!(client.recovery_status(), RecoveryStatus::Cancelled);
+    }
+
+    #[test]
+    fn test_cancel_recovery_without_pending_fails() {
+        let (_env, client, _, _) = setup();
+        let result = client.try_cancel_recovery();
+        assert!(result.is_err());
+    }
+
+    // ── execute_recovery ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_execute_recovery_before_timelock_fails() {
+        let (env, client, _, guardian) = setup();
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&guardian, &new_owner);
+        let result = client.try_execute_recovery(&guardian);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_execute_recovery_after_timelock_transfers_ownership() {
+        let (env, client, _, guardian) = setup();
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&guardian, &new_owner);
+
+        // Advance ledger past the timelock.
+        env.ledger().with_mut(|l| {
+            l.sequence_number += RECOVERY_TIMELOCK + 1;
+        });
+
+        client.execute_recovery(&guardian);
+        assert_eq!(client.recovery_status(), RecoveryStatus::Executed);
+        assert_eq!(client.owner(), new_owner);
+    }
+
+    #[test]
+    fn test_execute_recovery_non_guardian_fails() {
+        let (env, client, _, guardian) = setup();
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&guardian, &new_owner);
+
+        env.ledger().with_mut(|l| {
+            l.sequence_number += RECOVERY_TIMELOCK + 1;
+        });
+
+        let stranger = Address::generate(&env);
+        let result = client.try_execute_recovery(&stranger);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_execute_cancelled_recovery_fails() {
+        let (env, client, _, guardian) = setup();
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&guardian, &new_owner);
+        client.cancel_recovery();
+
+        env.ledger().with_mut(|l| {
+            l.sequence_number += RECOVERY_TIMELOCK + 1;
+        });
+
+        let result = client.try_execute_recovery(&guardian);
+        assert!(result.is_err());
+    }
+}
