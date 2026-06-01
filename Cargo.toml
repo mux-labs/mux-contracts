@@ -7,7 +7,7 @@ members = [
     "contracts/mux-permissions",
     "contracts/mux-policy",
     "contracts/mux-registry",
-    "contracts/mux-spending-policy",
+    "contracts/mux-wallet-registry",
 ]
 resolver = "2"
 
