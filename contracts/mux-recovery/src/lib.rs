@@ -35,6 +35,35 @@ pub enum RecoveryStatus {
     Cancelled,
 }
 
+// ── Timelock ──────────────────────────────────────────────────────────────────
+
+/// Minimum number of ledgers that must pass between `initiate_recovery` and
+/// `execute_recovery`.
+///
+/// At ~5-second ledger close times:
+///   17_280 ledgers ≈ 24 hours
+///
+/// This gives the legitimate owner a window to cancel a fraudulent recovery
+/// before it can be executed.
+pub const RECOVERY_TIMELOCK: u32 = 17_280;
+
+// ── Recovery request ──────────────────────────────────────────────────────────
+
+/// An active recovery request stored on-chain.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct RecoveryRequest {
+    /// The proposed new owner address.
+    pub new_owner: Address,
+    /// The ledger sequence at which the request was initiated.
+    pub initiated_at: u32,
+    /// The earliest ledger at which `execute_recovery` may be called
+    /// (`initiated_at + RECOVERY_TIMELOCK`).
+    pub executable_at: u32,
+    /// Current lifecycle state.
+    pub status: RecoveryStatus,
+}
+
 // ── Errors ────────────────────────────────────────────────────────────────────
 
 #[contracterror]
