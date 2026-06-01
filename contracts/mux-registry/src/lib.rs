@@ -137,4 +137,46 @@ mod tests {
         let result = client.try_get_version(&symbol_short!("ghost"));
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_register_updates_version() {
+        let (env, client, _) = setup();
+        let name = symbol_short!("account");
+        client.register(&name, &String::from_str(&env, "1.0.0"));
+        client.register(&name, &String::from_str(&env, "2.0.0"));
+        assert_eq!(client.get_version(&name), String::from_str(&env, "2.0.0"));
+    }
+
+    #[test]
+    fn test_register_multiple_contracts() {
+        let (env, client, _) = setup();
+        let name_a = symbol_short!("account");
+        let name_b = symbol_short!("batcher");
+        client.register(&name_a, &String::from_str(&env, "1.0.0"));
+        client.register(&name_b, &String::from_str(&env, "1.1.0"));
+        assert_eq!(client.list_contracts().len(), 2);
+        assert_eq!(client.get_version(&name_a), String::from_str(&env, "1.0.0"));
+        assert_eq!(client.get_version(&name_b), String::from_str(&env, "1.1.0"));
+    }
+
+    #[test]
+    fn test_register_no_duplicate_names() {
+        let (env, client, _) = setup();
+        let name = symbol_short!("account");
+        client.register(&name, &String::from_str(&env, "1.0.0"));
+        client.register(&name, &String::from_str(&env, "1.0.1"));
+        // name should appear only once in the list
+        assert_eq!(client.list_contracts().len(), 1);
+    }
+
+    #[test]
+    fn test_register_not_initialized_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxRegistry);
+        let client = MuxRegistryClient::new(&env, &contract_id);
+        // register before initialize — should return NotInitialized error
+        let result = client.try_register(&symbol_short!("x"), &String::from_str(&env, "1.0.0"));
+        assert!(result.is_err());
+    }
 }
