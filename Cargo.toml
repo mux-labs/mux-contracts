@@ -5,6 +5,7 @@ members = [
     "contracts/mux-account-factory",
     "contracts/mux-batcher",
     "contracts/mux-permissions",
+    "contracts/mux-policy",
     "contracts/mux-registry",
     "contracts/mux-wallet-registry",
 ]

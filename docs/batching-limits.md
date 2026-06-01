@@ -23,7 +23,7 @@ that may be submitted in one batch.
 
 ### Enforcement
 
-Both `execute_batch` and `simulate_batch` check the limit before any operations
+Both `execute_batch`, `submit_batch`, and `simulate_batch` check the limit before any operations
 are invoked:
 
 ```rust
@@ -38,6 +38,16 @@ Callers can query the current limit at runtime without needing to hard-code it:
 let limit: u32 = batcher_client.max_batch_size();
 ```
 
+---
+
+## Entry points
+
+| Function | Caller arg | Description |
+|---|---|---|
+| `execute_batch(caller, ops)` | Explicit | Executes ops on behalf of `caller`; `caller.require_auth()` is enforced |
+| `submit_batch(ops)` | Derived from invoker | Convenience wrapper — derives caller from `env.current_contract_address()`; no explicit caller arg needed |
+| `simulate_batch(caller, ops)` | Explicit | Preflight estimate; no state written |
+
 ### Why 50?
 
 Soroban imposes per-transaction CPU instruction and memory budgets.  A batch of
@@ -48,6 +58,47 @@ as a conservative upper bound that:
 - Stays well within mainnet resource limits under worst-case argument sizes.
 - Prevents a single caller from monopolising ledger throughput.
 - Leaves headroom for future protocol-level instruction budget increases.
+
+---
+
+## Operation kind
+
+Each `Operation` carries a `kind: BatchOperationKind` field that classifies its
+intent.  The batcher does **not** gate execution on the kind — it is purely
+informational metadata surfaced in events and available to off-chain indexers,
+analytic pipelines, and TypeScript clients.
+
+| Variant | Description |
+|---|---|
+| `Invoke` | Generic cross-contract function call (default / catch-all) |
+| `Transfer` | Asset transfer (e.g. SAC `transfer` call) |
+| `Approve` | Allowance / approval (e.g. SAC `approve` call) |
+
+**Rust usage:**
+
+```rust
+Operation {
+    target,
+    fn_name: symbol_short!("transfer"),
+    args,
+    require_success: true,
+    kind: BatchOperationKind::Transfer,
+}
+```
+
+**TypeScript usage:**
+
+```typescript
+import type { BatchOperationKind, Operation } from "@mux-protocol/contracts";
+
+const op: Operation = {
+  target: addr,
+  fnName: "transfer",
+  args: [],
+  requireSuccess: true,
+  kind: "Transfer",
+};
+```
 
 ---
 
@@ -81,9 +132,10 @@ function has returned normally with an error value.  The Soroban host does
 **not** automatically roll back instance-storage writes for contract-level
 errors.  `mux-batcher` therefore:
 
-1. Emits a `bat_abort` event before returning so callers can observe the abort.
-2. Explicitly removes the reentrancy guard (`DataKey::Executing`) to leave the
+1. Explicitly removes the reentrancy guard (`DataKey::Executing`) to leave the
    contract in a clean state for subsequent calls.
+2. Emits a `bat_abort` event before returning so callers can observe the abort
+   without relying solely on the error return value.
 
 No `executed` event is emitted when the batch aborts.
 
@@ -142,6 +194,6 @@ outcome.
 
 | Threat ID | Description | Mitigation |
 |---|---|---|
-| T-BATCH-01 | Caller submits oversized batch to exhaust ledger resources | `MAX_BATCH_SIZE = 50` enforced on every entry point |
-| T-BATCH-02 | Batched op re-enters `execute_batch` | `DataKey::Executing` reentrancy guard |
+| T-BATCH-01 | Caller submits oversized batch to exhaust ledger resources | `MAX_BATCH_SIZE = 50` enforced on every entry point (`execute_batch`, `submit_batch`, `simulate_batch`) |
+| T-BATCH-02 | Batched op re-enters `execute_batch` or `submit_batch` | `DataKey::Executing` reentrancy guard |
 | T-21 | Instance storage TTL expiry | `extend_ttl` on every successful `execute_batch` call |
