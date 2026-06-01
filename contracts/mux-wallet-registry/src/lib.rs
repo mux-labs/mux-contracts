@@ -124,7 +124,24 @@ impl MuxWalletRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::{
+        symbol_short,
+        testutils::{Address as _, Events},
+        Env, FromVal,
+    };
+
+    fn topic_action(
+        env: &Env,
+        events: &soroban_sdk::Vec<(
+            soroban_sdk::Address,
+            soroban_sdk::Vec<soroban_sdk::Val>,
+            soroban_sdk::Val,
+        )>,
+        idx: u32,
+    ) -> soroban_sdk::Symbol {
+        let (_, topics, _) = events.get(idx).unwrap();
+        soroban_sdk::Symbol::from_val(env, &topics.get(1).unwrap())
+    }
 
     fn setup() -> (Env, MuxWalletRegistryClient<'static>, Address) {
         let env = Env::default();
@@ -145,6 +162,17 @@ mod tests {
         let admin = Address::generate(&env);
         assert!(client.try_initialize(&admin).is_ok());
         assert!(client.try_initialize(&admin).is_err());
+    }
+
+    #[test]
+    fn test_register_emits_event() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        client.register(&wallet);
+        let events = env.events().all();
+        // init + register
+        assert_eq!(events.len(), 2);
+        assert_eq!(topic_action(&env, &events, 1), symbol_short!("register"));
     }
 
     #[test]
