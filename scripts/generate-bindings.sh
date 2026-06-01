@@ -43,8 +43,10 @@ done
 
 CONTRACTS=(
   "mux-account"
+  "mux-account-factory"
   "mux-batcher"
   "mux-permissions"
+  "mux-registry"
 )
 
 if [[ "${SKIP_BUILD}" == "false" ]]; then

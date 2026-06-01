@@ -81,9 +81,10 @@ function has returned normally with an error value.  The Soroban host does
 **not** automatically roll back instance-storage writes for contract-level
 errors.  `mux-batcher` therefore:
 
-1. Emits a `bat_abort` event before returning so callers can observe the abort.
-2. Explicitly removes the reentrancy guard (`DataKey::Executing`) to leave the
+1. Explicitly removes the reentrancy guard (`DataKey::Executing`) to leave the
    contract in a clean state for subsequent calls.
+2. Emits a `bat_abort` event before returning so callers can observe the abort
+   without relying solely on the error return value.
 
 No `executed` event is emitted when the batch aborts.
 
