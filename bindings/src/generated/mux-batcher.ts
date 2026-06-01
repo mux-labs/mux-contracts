@@ -48,6 +48,15 @@ export class MuxBatcherClient {
     return this.submitAndRead<BatchResult>(tx, sourceKeypair);
   }
 
+  async submitBatch(
+    sourceKeypair: Keypair,
+    ops: Operation[]
+  ): Promise<BatchResult> {
+    const opsVal = xdr.ScVal.scvVec(ops.map(this.operationToScVal));
+    const tx = await this.buildTx(sourceKeypair, "submit_batch", [opsVal]);
+    return this.submitAndRead<BatchResult>(tx, sourceKeypair);
+  }
+
   async simulateBatch(
     sourceKeypair: Keypair,
     caller: Address,
