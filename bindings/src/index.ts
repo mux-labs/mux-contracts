@@ -8,8 +8,10 @@
  */
 
 export * from "./generated/mux-account";
+export * from "./generated/mux-account-factory";
 export * from "./generated/mux-batcher";
 export * from "./generated/mux-permissions";
+export * from "./generated/mux-registry";
 export * from "./types";
 export * from "./network";
 export * from "./horizon";

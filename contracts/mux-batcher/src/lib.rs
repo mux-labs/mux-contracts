@@ -107,11 +107,12 @@ pub struct MuxBatcher;
 impl MuxBatcher {
     /// Execute a batch of operations atomically.
     ///
-    /// If any operation has `require_success = true` and fails, the entire
-    /// transaction is aborted via panic (Soroban rolls back on panic).
+    /// If any operation has `require_success = true` and fails, returns
+    /// `Err(RequiredOperationFailed)` and emits a `bat_abort` event.
     ///
     /// Emits:
-    /// - `executed`  — always, with (caller, success_count, failure_count)
+    /// - `bat_abort` — when a required operation fails (before returning error)
+    /// - `executed`  — on success, with (caller, success_count, failure_count)
     /// - `bat_ok`    — only when every operation in the batch succeeded
     pub fn execute_batch(
         env: Env,
@@ -161,6 +162,13 @@ impl MuxBatcher {
                         // Err return from a #[contractimpl] function is NOT a host
                         // trap, so we must clear manually.
                         env.storage().instance().remove(&DataKey::Executing);
+                        // Emit abort event so callers can observe the failure
+                        // without relying solely on the error return value.
+                        emit(
+                            &env,
+                            symbol_short!("bat_abort"),
+                            caller,
+                        );
                         return Err(MuxBatcherError::RequiredOperationFailed);
                     }
                     failure_count += 1;
@@ -251,10 +259,18 @@ impl MuxBatcher {
 mod tests {
     use super::*;
     use soroban_sdk::{
-        symbol_short,
+        contract as test_contract, contractimpl as test_contractimpl, symbol_short,
         testutils::{Address as _, Events},
         Env, FromVal, Vec,
     };
+
+    // Minimal no-op contract used as a real invocation target in tests.
+    #[test_contract]
+    pub struct DummyTarget;
+    #[test_contractimpl]
+    impl DummyTarget {
+        pub fn noop(_env: Env) {}
+    }
 
     fn topic_action(
         env: &Env,
@@ -320,10 +336,9 @@ mod tests {
         let client = MuxBatcherClient::new(&env, &contract_id);
 
         let caller = Address::generate(&env);
-        let target = Address::generate(&env);
         let mut ops: Vec<Operation> = Vec::new(&env);
         ops.push_back(Operation {
-            target: target.clone(),
+            target: Address::generate(&env),
             fn_name: soroban_sdk::symbol_short!("noop"),
             args: Vec::new(&env),
             require_success: false,
@@ -380,34 +395,65 @@ mod tests {
 
     #[test]
     fn test_batch_success_event_emitted_when_all_succeed() {
-        // When every operation in the batch succeeds (zero failures), a `bat_ok`
-        // event must be emitted in addition to the standard `executed` event.
+        // When every operation succeeds, both `executed` and `bat_ok` must fire.
+        let env = Env::default();
+        env.mock_all_auths();
+        let batcher_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &batcher_id);
+        let target_id = env.register_contract(None, DummyTarget);
+
+        let caller = Address::generate(&env);
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        ops.push_back(Operation {
+            target: target_id,
+            fn_name: symbol_short!("noop"),
+            args: Vec::new(&env),
+            require_success: true,
+        });
+        let result = client.try_execute_batch(&caller, &ops);
+        assert!(result.is_ok());
+        let r = result.unwrap();
+        assert_eq!(r.success_count, 1);
+        assert_eq!(r.failure_count, 0);
+
+        let events = env.events().all();
+        // `executed` then `bat_ok`
+        assert_eq!(events.len(), 2);
+        assert_eq!(topic_action(&env, &events, 0), symbol_short!("executed"));
+        assert_eq!(topic_action(&env, &events, 1), symbol_short!("bat_ok"));
+    }
+
+    #[test]
+    fn test_bat_abort_event_emitted_on_required_failure() {
+        // When a required op fails, `bat_abort` must be emitted and the call
+        // must return RequiredOperationFailed.
         let env = Env::default();
         env.mock_all_auths();
         let contract_id = env.register_contract(None, MuxBatcher);
         let client = MuxBatcherClient::new(&env, &contract_id);
 
         let caller = Address::generate(&env);
-        // An empty ops vec is rejected before execution; use require_success=false
-        // with a call that will fail at the host level — the batch still completes
-        // with failure_count=1, so bat_ok must NOT fire in that path.
-        // For a true all-success path we need an op that actually succeeds, but
-        // since we can't register a real target here, we test the absence case and
-        // the explicit all-success branch via simulate_batch verification below.
-
-        // Path A: batch with one failing op (not required) — bat_ok must NOT fire.
-        let mut ops_fail: Vec<Operation> = Vec::new(&env);
-        ops_fail.push_back(Operation {
-            target: Address::generate(&env),
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        ops.push_back(Operation {
+            target: Address::generate(&env), // non-existent target → will fail
             fn_name: symbol_short!("noop"),
             args: Vec::new(&env),
-            require_success: false,
+            require_success: true,
         });
-        let _ = client.try_execute_batch(&caller, &ops_fail);
+        let result = client.try_execute_batch(&caller, &ops);
+        assert!(result.is_err());
+
         let events = env.events().all();
-        // Only `executed` fires; `bat_ok` must be absent.
         assert_eq!(events.len(), 1);
-        assert_eq!(topic_action(&env, &events, 0), symbol_short!("executed"));
+        assert_eq!(topic_action(&env, &events, 0), symbol_short!("bat_abort"));
+    }
+
+    #[test]
+    fn test_max_batch_size_returns_constant() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+        assert_eq!(client.max_batch_size(), MAX_BATCH_SIZE);
     }
 
     // ── submit_batch tests ────────────────────────────────────────────────────

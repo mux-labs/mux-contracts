@@ -2,11 +2,10 @@
  * AUTO-GENERATED — do not edit by hand.
  * Run `npm run generate` to regenerate from the compiled contract WASM.
  *
- * Contract: mux-batcher
+ * Contract: mux-registry
  */
 
 import {
-  Address,
   Contract,
   Keypair,
   nativeToScVal,
@@ -15,59 +14,54 @@ import {
   TransactionBuilder,
   xdr,
 } from "@stellar/stellar-sdk";
-import type { BatchResult, MuxBatcherError, Operation } from "../types";
 import { pollTransaction } from "../horizon";
 
-export interface MuxBatcherClientOptions {
+export interface MuxRegistryClientOptions {
   contractId: string;
   networkPassphrase: string;
   rpcUrl: string;
 }
 
-export class MuxBatcherClient {
+export type MuxRegistryError =
+  | "NotInitialized"
+  | "AlreadyInitialized"
+  | "Unauthorized"
+  | "ContractNotFound"
+  | "TooManyContracts";
+
+export class MuxRegistryClient {
   private contract: Contract;
   private server: SorobanRpc.Server;
   private networkPassphrase: string;
 
-  constructor(opts: MuxBatcherClientOptions) {
+  constructor(opts: MuxRegistryClientOptions) {
     this.contract = new Contract(opts.contractId);
     this.server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
     this.networkPassphrase = opts.networkPassphrase;
   }
 
-  async executeBatch(
-    sourceKeypair: Keypair,
-    caller: Address,
-    ops: Operation[]
-  ): Promise<BatchResult> {
-    const opsVal = xdr.ScVal.scvVec(ops.map(this.operationToScVal));
-    const tx = await this.buildTx(sourceKeypair, "execute_batch", [
-      nativeToScVal(caller.toString(), { type: "address" }),
-      opsVal,
+  async initialize(sourceKeypair: Keypair, admin: string): Promise<void> {
+    const tx = await this.buildTx(sourceKeypair, "initialize", [
+      nativeToScVal(admin, { type: "address" }),
     ]);
-    return this.submitAndRead<BatchResult>(tx, sourceKeypair);
+    await this.submitAndRead<void>(tx, sourceKeypair);
   }
 
-  async maxBatchSize(sourceKeypair: Keypair): Promise<number> {
-    const tx = await this.buildTx(sourceKeypair, "max_batch_size", []);
-    const result = await this.server.simulateTransaction(tx);
-    if (SorobanRpc.Api.isSimulationError(result)) {
-      throw new Error(`Simulation failed: ${result.error}`);
-    }
-    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
-    if (!retval) throw new Error("No return value");
-    return retval.value() as number;
-  }
-
-  async simulateBatch(
+  async register(
     sourceKeypair: Keypair,
-    caller: Address,
-    ops: Operation[]
-  ): Promise<BatchResult> {
-    const opsVal = xdr.ScVal.scvVec(ops.map(this.operationToScVal));
-    const tx = await this.buildTx(sourceKeypair, "simulate_batch", [
-      nativeToScVal(caller.toString(), { type: "address" }),
-      opsVal,
+    name: string,
+    version: string
+  ): Promise<void> {
+    const tx = await this.buildTx(sourceKeypair, "register", [
+      xdr.ScVal.scvSymbol(name),
+      nativeToScVal(version, { type: "string" }),
+    ]);
+    await this.submitAndRead<void>(tx, sourceKeypair);
+  }
+
+  async getVersion(sourceKeypair: Keypair, name: string): Promise<string> {
+    const tx = await this.buildTx(sourceKeypair, "get_version", [
+      xdr.ScVal.scvSymbol(name),
     ]);
     const result = await this.server.simulateTransaction(tx);
     if (SorobanRpc.Api.isSimulationError(result)) {
@@ -75,32 +69,21 @@ export class MuxBatcherClient {
     }
     const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
     if (!retval) throw new Error("No return value");
-    const native = retval.value() as unknown as { success_count: number; failure_count: number };
-    return { successCount: native.success_count, failureCount: native.failure_count };
+    return retval.value() as unknown as string;
+  }
+
+  async listContracts(sourceKeypair: Keypair): Promise<string[]> {
+    const tx = await this.buildTx(sourceKeypair, "list_contracts", []);
+    const result = await this.server.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(result)) {
+      throw new Error(`Simulation failed: ${result.error}`);
+    }
+    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+    if (!retval) return [];
+    return retval.value() as unknown as string[];
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────────
-
-  private operationToScVal(op: Operation): xdr.ScVal {
-    return xdr.ScVal.scvMap([
-      new xdr.ScMapEntry({
-        key: xdr.ScVal.scvSymbol("target"),
-        val: nativeToScVal(op.target.toString(), { type: "address" }),
-      }),
-      new xdr.ScMapEntry({
-        key: xdr.ScVal.scvSymbol("fn_name"),
-        val: xdr.ScVal.scvSymbol(op.fnName),
-      }),
-      new xdr.ScMapEntry({
-        key: xdr.ScVal.scvSymbol("args"),
-        val: xdr.ScVal.scvVec(op.args),
-      }),
-      new xdr.ScMapEntry({
-        key: xdr.ScVal.scvSymbol("require_success"),
-        val: nativeToScVal(op.requireSuccess, { type: "bool" }),
-      }),
-    ]);
-  }
 
   private async buildTx(
     sourceKeypair: Keypair,
@@ -133,7 +116,7 @@ export class MuxBatcherClient {
     }
     const confirmed = await pollTransaction(this.server, sendResult.hash);
     const retval = confirmed.returnValue;
-    if (!retval) return {} as T;
+    if (!retval) return undefined as unknown as T;
     return retval.value() as unknown as T;
   }
 }
