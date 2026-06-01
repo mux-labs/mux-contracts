@@ -1,0 +1,176 @@
+name: Deploy Contracts
+
+# Manually triggered with network and contract selection.
+# Requires DEPLOYER_SECRET_KEY repository secret to be set.
+#
+# Usage (GitHub UI):
+#   Actions → Deploy Contracts → Run workflow → fill inputs
+#
+# Usage (CLI):
+#   gh workflow run deploy.yml -f network=testnet -f dry_run=true
+
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "Target network"
+        required: true
+        default: "testnet"
+        type: choice
+        options:
+          - testnet
+          - mainnet
+          - localnet
+      contract:
+        description: "Contract to deploy (leave empty to deploy all)"
+        required: false
+        default: ""
+        type: string
+      dry_run:
+        description: "Dry run — log actions without submitting transactions"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      skip_build:
+        description: "Skip cargo build (use pre-built WASMs from cache)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+concurrency:
+  # Only one deployment per network at a time
+  group: deploy-${{ inputs.network }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── Safety gate: require explicit mainnet confirmation ───────────────────────
+  mainnet-guard:
+    name: Mainnet safety check
+    runs-on: ubuntu-latest
+    if: inputs.network == 'mainnet' && inputs.dry_run == 'false'
+    steps:
+      - name: Warn on mainnet live deploy
+        run: |
+          echo "::warning::You are about to deploy to MAINNET with live transactions."
+          echo "::warning::Ensure you have completed the mainnet deploy checklist:"
+          echo "::warning::  https://github.com/mux-labs/mux-contracts/blob/main/docs/mainnet-deploy-checklist.md"
+
+  # ── Build contracts ──────────────────────────────────────────────────────────
+  build:
+    name: Build WASM artifacts
+    runs-on: ubuntu-latest
+    if: inputs.skip_build == 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-deploy-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-deploy-
+
+      - name: Build release WASMs
+        run: |
+          cargo build \
+            --target wasm32-unknown-unknown \
+            --release \
+            --workspace
+
+      - name: Upload WASMs
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-wasms-${{ github.run_id }}
+          path: target/wasm32-unknown-unknown/release/*.wasm
+          retention-days: 1
+
+  # ── Deploy ───────────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy to ${{ inputs.network }}${{ inputs.dry_run == 'true' && ' (dry run)' || '' }}
+    runs-on: ubuntu-latest
+    needs: [build]
+    # Run even if build was skipped (when skip_build=true)
+    if: always() && (needs.build.result == 'success' || needs.build.result == 'skipped')
+    environment:
+      name: ${{ inputs.network }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download WASMs (if built in this run)
+        if: inputs.skip_build == 'false'
+        uses: actions/download-artifact@v4
+        with:
+          name: deploy-wasms-${{ github.run_id }}
+          path: target/wasm32-unknown-unknown/release/
+
+      - name: Install Stellar CLI
+        run: |
+          curl -fsSL \
+            https://github.com/stellar/stellar-cli/releases/download/v21.4.0/stellar-cli-21.4.0-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xz -C /usr/local/bin stellar
+          stellar --version
+
+      - name: Deploy contracts
+        env:
+          DEPLOYER_SECRET_KEY: ${{ secrets.DEPLOYER_SECRET_KEY }}
+        run: |
+          DRY_FLAG=""
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+            DRY_FLAG="--dry-run"
+          fi
+
+          CONTRACT_FLAG=""
+          if [[ -n "${{ inputs.contract }}" ]]; then
+            CONTRACT_FLAG="--contract ${{ inputs.contract }}"
+          fi
+
+          SKIP_BUILD_FLAG=""
+          if [[ "${{ inputs.skip_build }}" == "true" ]]; then
+            SKIP_BUILD_FLAG="--skip-build"
+          fi
+
+          bash scripts/deploy.sh \
+            --network "${{ inputs.network }}" \
+            ${DRY_FLAG} \
+            ${SKIP_BUILD_FLAG} \
+            ${CONTRACT_FLAG}
+
+      - name: Print deployment summary
+        if: inputs.dry_run == 'false'
+        run: |
+          echo "## Deployment Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Network | ${{ inputs.network }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Contract(s) | ${{ inputs.contract || 'all' }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Triggered by | @${{ github.actor }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Commit | ${{ github.sha }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> Update \`config/addresses.json\` with deployed contract IDs and open a PR." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Print dry-run summary
+        if: inputs.dry_run == 'true'
+        run: |
+          echo "## Dry Run Complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "No transactions were submitted. Review the logs above to verify the planned actions." >> "$GITHUB_STEP_SUMMARY"
