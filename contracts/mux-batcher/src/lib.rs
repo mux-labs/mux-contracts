@@ -69,6 +69,10 @@ pub enum MuxBatcherError {
 // monopolising ledger capacity.
 const MAX_BATCH_SIZE: u32 = 50;
 
+/// Base fee (in stroops) charged per operation in a batch.
+/// Used by `estimate_fees` to give callers a conservative preflight estimate.
+const FEE_PER_OP: u32 = 100;
+
 // ── Storage TTL ───────────────────────────────────────────────────────────────
 // STORAGE-GRIEFING (T-21): mux-batcher holds no growing collections, but its
 // instance storage (contract metadata) must stay live.  Extend TTL on every
@@ -204,6 +208,24 @@ impl MuxBatcher {
     /// `BatchTooLarge` error at execution time.
     pub fn max_batch_size(_env: Env) -> u32 {
         MAX_BATCH_SIZE
+    }
+
+    /// Return a conservative fee estimate (in stroops) for executing a batch
+    /// of `op_count` operations.
+    ///
+    /// Returns `Err(EmptyBatch)` for zero ops and `Err(BatchTooLarge)` when
+    /// `op_count` exceeds `MAX_BATCH_SIZE`.  This is a pure read — no state
+    /// is written and no auth is required.
+    pub fn estimate_fees(_env: Env, op_count: u32) -> Result<u32, MuxBatcherError> {
+        if op_count == 0 {
+            return Err(MuxBatcherError::EmptyBatch);
+        }
+        if op_count > MAX_BATCH_SIZE {
+            return Err(MuxBatcherError::BatchTooLarge);
+        }
+        Ok(op_count
+            .checked_mul(FEE_PER_OP)
+            .unwrap_or(u32::MAX))
     }
 
     /// Simulate a batch without writing state — useful for preflight checks.
@@ -428,5 +450,36 @@ mod tests {
         for i in 0..action_names.len() {
             assert_ne!(action_names.get(i).unwrap(), symbol_short!("bat_ok"));
         }
+    }
+
+    // ── Issue #79: estimate_fees ───────────────────────────────────────────────
+
+    #[test]
+    fn test_estimate_fees_returns_fee_per_op_times_count() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        assert_eq!(client.estimate_fees(&1), Ok(100));
+        assert_eq!(client.estimate_fees(&10), Ok(1_000));
+        assert_eq!(client.estimate_fees(&50), Ok(5_000));
+    }
+
+    #[test]
+    fn test_estimate_fees_zero_ops_rejected() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        assert!(client.try_estimate_fees(&0).is_err());
+    }
+
+    #[test]
+    fn test_estimate_fees_over_max_rejected() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        assert!(client.try_estimate_fees(&51).is_err());
     }
 }
