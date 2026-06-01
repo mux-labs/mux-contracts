@@ -44,3 +44,11 @@ jobs:
           key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
       - name: cargo test
         run: cargo test --workspace --all-features
+
+  version-sync:
+    name: Version sync check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check bindings version matches Cargo workspace version
+        run: bash scripts/sync-versions.sh --check
