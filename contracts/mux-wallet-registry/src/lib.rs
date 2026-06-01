@@ -114,7 +114,18 @@ mod tests {
     }
 
     #[test]
-    fn test_register_and_get_wallet() {
+    fn test_register_emits_event() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        client.register(&wallet);
+        let events = env.events().all();
+        // init + register
+        assert_eq!(events.len(), 2);
+        assert_eq!(topic_action(&env, &events, 1), symbol_short!("register"));
+    }
+
+    #[test]
+    fn test_register_and_get() {
         let (env, client, _) = setup();
         let name = symbol_short!("alice");
         let wallet = Address::generate(&env);
