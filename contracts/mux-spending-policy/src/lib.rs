@@ -36,6 +36,7 @@ pub enum SpendingPolicyError {
     AlreadyInitialized = 2,
     Unauthorized = 3,
     PolicyNotFound = 4,
+    SpendLimitExceeded = 5,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -79,6 +80,26 @@ impl MuxSpendingPolicy {
             .instance()
             .get(&DataKey::SpendLimit(account, asset))
             .ok_or(SpendingPolicyError::PolicyNotFound)
+    }
+
+    /// Check whether `amount` is within the policy limit for `account`/`asset`.
+    /// Returns Ok(()) if allowed, Err(SpendLimitExceeded) if over limit,
+    /// or Err(PolicyNotFound) if no policy is set.
+    pub fn check_spend(
+        env: Env,
+        account: Address,
+        asset: Address,
+        amount: i128,
+    ) -> Result<(), SpendingPolicyError> {
+        let policy: SpendLimit = env
+            .storage()
+            .instance()
+            .get(&DataKey::SpendLimit(account, asset))
+            .ok_or(SpendingPolicyError::PolicyNotFound)?;
+        if amount > policy.limit {
+            return Err(SpendingPolicyError::SpendLimitExceeded);
+        }
+        Ok(())
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────
@@ -137,6 +158,33 @@ mod tests {
     fn test_get_policy_not_found() {
         let (env, client, _) = setup();
         let result = client.try_get_policy(&Address::generate(&env), &Address::generate(&env));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_check_spend_within_limit() {
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        client.set_policy(&account, &asset, &1000);
+        assert!(client.try_check_spend(&account, &asset, &500).is_ok());
+        assert!(client.try_check_spend(&account, &asset, &1000).is_ok());
+    }
+
+    #[test]
+    fn test_check_spend_exceeds_limit() {
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        client.set_policy(&account, &asset, &1000);
+        let result = client.try_check_spend(&account, &asset, &1001);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_check_spend_no_policy() {
+        let (env, client, _) = setup();
+        let result = client.try_check_spend(&Address::generate(&env), &Address::generate(&env), &1);
         assert!(result.is_err());
     }
 }
