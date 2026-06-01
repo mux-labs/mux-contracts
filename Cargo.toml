@@ -5,6 +5,7 @@ members = [
     "contracts/mux-account-factory",
     "contracts/mux-batcher",
     "contracts/mux-permissions",
+    "contracts/mux-policy",
     "contracts/mux-registry",
 ]
 resolver = "2"
@@ -17,6 +18,15 @@ repository = "https://github.com/dami-drips/mux-contracts"
 [workspace.dependencies]
 # Initialize Soroban Rust workspace dependencies
 soroban-sdk = { version = "21.0.0", features = ["testutils"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
 
 [profile.dev]
 overflow-checks = true

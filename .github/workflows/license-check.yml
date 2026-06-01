@@ -1,0 +1,22 @@
+name: License Verification
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+
+jobs:
+  verify-license:
+    name: Verify LICENSE File
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Check if LICENSE exists
+        run: |
+          if [ ! -f "LICENSE" ]; then
+            echo "::error::LICENSE file is missing from the repository root"
+            exit 1
+          fi
+          echo "LICENSE file found."
