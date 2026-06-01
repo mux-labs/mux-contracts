@@ -214,6 +214,20 @@ impl MuxBatcher {
         MAX_BATCH_SIZE
     }
 
+    /// Submit a batch on behalf of the transaction invoker.
+    ///
+    /// Convenience wrapper around `execute_batch` that derives the caller from
+    /// the invoking address, so callers do not need to pass it explicitly.
+    ///
+    /// Emits the same events as `execute_batch`.
+    pub fn submit_batch(
+        env: Env,
+        ops: Vec<Operation>,
+    ) -> Result<BatchResult, MuxBatcherError> {
+        let caller = env.current_contract_address();
+        Self::execute_batch(env, caller, ops)
+    }
+
     /// Simulate a batch without writing state — useful for preflight checks.
     pub fn simulate_batch(
         env: Env,
@@ -440,6 +454,62 @@ mod tests {
         let contract_id = env.register_contract(None, MuxBatcher);
         let client = MuxBatcherClient::new(&env, &contract_id);
         assert_eq!(client.max_batch_size(), MAX_BATCH_SIZE);
+    }
+
+    // ── submit_batch tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_submit_batch_empty_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let ops: Vec<Operation> = Vec::new(&env);
+        let result = client.try_submit_batch(&ops);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_submit_batch_too_large_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        let target = Address::generate(&env);
+        for _ in 0..51 {
+            ops.push_back(Operation {
+                target: target.clone(),
+                fn_name: soroban_sdk::symbol_short!("noop"),
+                args: Vec::new(&env),
+                require_success: false,
+            });
+        }
+        let result = client.try_submit_batch(&ops);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_submit_batch_emits_executed_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        ops.push_back(Operation {
+            target: Address::generate(&env),
+            fn_name: symbol_short!("noop"),
+            args: Vec::new(&env),
+            require_success: false,
+        });
+        let _ = client.try_submit_batch(&ops);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        assert_eq!(topic_action(&env, &events, 0), symbol_short!("executed"));
     }
 
     #[test]

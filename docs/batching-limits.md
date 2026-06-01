@@ -23,7 +23,7 @@ that may be submitted in one batch.
 
 ### Enforcement
 
-Both `execute_batch` and `simulate_batch` check the limit before any operations
+Both `execute_batch`, `submit_batch`, and `simulate_batch` check the limit before any operations
 are invoked:
 
 ```rust
@@ -37,6 +37,16 @@ Callers can query the current limit at runtime without needing to hard-code it:
 ```rust
 let limit: u32 = batcher_client.max_batch_size();
 ```
+
+---
+
+## Entry points
+
+| Function | Caller arg | Description |
+|---|---|---|
+| `execute_batch(caller, ops)` | Explicit | Executes ops on behalf of `caller`; `caller.require_auth()` is enforced |
+| `submit_batch(ops)` | Derived from invoker | Convenience wrapper — derives caller from `env.current_contract_address()`; no explicit caller arg needed |
+| `simulate_batch(caller, ops)` | Explicit | Preflight estimate; no state written |
 
 ### Why 50?
 
@@ -143,6 +153,6 @@ outcome.
 
 | Threat ID | Description | Mitigation |
 |---|---|---|
-| T-BATCH-01 | Caller submits oversized batch to exhaust ledger resources | `MAX_BATCH_SIZE = 50` enforced on every entry point |
-| T-BATCH-02 | Batched op re-enters `execute_batch` | `DataKey::Executing` reentrancy guard |
+| T-BATCH-01 | Caller submits oversized batch to exhaust ledger resources | `MAX_BATCH_SIZE = 50` enforced on every entry point (`execute_batch`, `submit_batch`, `simulate_batch`) |
+| T-BATCH-02 | Batched op re-enters `execute_batch` or `submit_batch` | `DataKey::Executing` reentrancy guard |
 | T-21 | Instance storage TTL expiry | `extend_ttl` on every successful `execute_batch` call |
