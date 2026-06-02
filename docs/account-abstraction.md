@@ -37,6 +37,7 @@ The factory contract manages the lifecycle of account instances:
 - **Deploys Account Contracts** — Creates a new contract instance for each user
 - **Maintains Registry** — Tracks all deployed accounts and their owners
 - **Enables Discovery** — Allows applications to locate a user's account
+- **Links Delegation State to Registry** — Accounts are registered on-chain so delegate-enabled contracts can discover account metadata through the shared registry
 
 #### Account Contract (`mux-account`)
 
