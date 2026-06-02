@@ -11,6 +11,27 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, Env, Vec,
 };
 
+// ── Batch operation kind ──────────────────────────────────────────────────────
+
+/// Classifies the intent of a batched operation.
+///
+/// The kind is informational metadata carried alongside each `Operation`.
+/// The batcher does not gate execution on the kind — it is surfaced in events
+/// and available to off-chain indexers and TypeScript clients for filtering,
+/// analytics, and UI labelling.
+///
+/// Variants:
+/// - `Invoke`   — generic cross-contract function call (default / catch-all)
+/// - `Transfer` — asset transfer (e.g. SAC `transfer` call)
+/// - `Approve`  — allowance / approval (e.g. SAC `approve` call)
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BatchOperationKind {
+    Invoke,
+    Transfer,
+    Approve,
+}
+
 // ── Audit events ──────────────────────────────────────────────────────────────
 fn emit(
     env: &Env,
@@ -37,6 +58,8 @@ pub struct Operation {
     pub fn_name: soroban_sdk::Symbol,
     pub args: Vec<soroban_sdk::Val>,
     pub require_success: bool,
+    /// Classifies the operation intent for off-chain indexers and clients.
+    pub kind: BatchOperationKind,
 }
 
 #[contracttype]
@@ -68,6 +91,10 @@ pub enum MuxBatcherError {
 // the ledger's resource budget.  The cap prevents a single caller from
 // monopolising ledger capacity.
 const MAX_BATCH_SIZE: u32 = 50;
+
+/// Base fee (in stroops) charged per operation in a batch.
+/// Used by `estimate_fees` to give callers a conservative preflight estimate.
+const FEE_PER_OP: u32 = 100;
 
 // ── Storage TTL ───────────────────────────────────────────────────────────────
 // STORAGE-GRIEFING (T-21): mux-batcher holds no growing collections, but its
@@ -301,12 +328,49 @@ mod tests {
             fn_name: symbol_short!("noop"),
             args: Vec::new(&env),
             require_success: false,
+            kind: BatchOperationKind::Invoke,
         });
         let _ = client.try_execute_batch(&caller, &ops);
 
         let events = env.events().all();
         assert_eq!(events.len(), 1);
         assert_eq!(topic_action(&env, &events, 0), symbol_short!("executed"));
+    }
+
+    #[test]
+    fn test_batch_operation_kind_variants() {
+        // Verify all BatchOperationKind variants are constructible and distinct.
+        assert_ne!(BatchOperationKind::Invoke, BatchOperationKind::Transfer);
+        assert_ne!(BatchOperationKind::Transfer, BatchOperationKind::Approve);
+        assert_ne!(BatchOperationKind::Invoke, BatchOperationKind::Approve);
+    }
+
+    #[test]
+    fn test_operation_kind_carried_through_batch() {
+        // Verify that an Operation with each kind variant is accepted by execute_batch.
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+        let caller = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        for kind in [
+            BatchOperationKind::Invoke,
+            BatchOperationKind::Transfer,
+            BatchOperationKind::Approve,
+        ] {
+            let mut ops: Vec<Operation> = Vec::new(&env);
+            ops.push_back(Operation {
+                target: target.clone(),
+                fn_name: symbol_short!("noop"),
+                args: Vec::new(&env),
+                require_success: false,
+                kind,
+            });
+            // execute_batch must accept the op regardless of kind.
+            assert!(client.try_execute_batch(&caller, &ops).is_ok());
+        }
     }
 
     #[test]
@@ -342,6 +406,7 @@ mod tests {
             fn_name: soroban_sdk::symbol_short!("noop"),
             args: Vec::new(&env),
             require_success: false,
+            kind: BatchOperationKind::Invoke,
         });
 
         assert!(client.try_execute_batch(&caller, &ops).is_ok());
@@ -365,6 +430,7 @@ mod tests {
                 fn_name: soroban_sdk::symbol_short!("noop"),
                 args: Vec::new(&env),
                 require_success: false,
+                kind: BatchOperationKind::Invoke,
             });
         }
         let result = client.try_execute_batch(&caller, &ops);
@@ -386,6 +452,7 @@ mod tests {
             fn_name: symbol_short!("noop"),
             args: Vec::new(&env),
             require_success: false,
+            kind: BatchOperationKind::Invoke,
         });
         // If extend_ttl was missing the SDK would panic; reaching here is the assertion.
         let _ = client.try_execute_batch(&caller, &ops);
@@ -504,6 +571,7 @@ mod tests {
             fn_name: symbol_short!("noop"),
             args: Vec::new(&env),
             require_success: false,
+            kind: BatchOperationKind::Invoke,
         });
         let _ = client.try_submit_batch(&ops);
 
@@ -528,6 +596,7 @@ mod tests {
             fn_name: symbol_short!("noop"),
             args: Vec::new(&env),
             require_success: false,
+            kind: BatchOperationKind::Invoke,
         });
         let result = client.try_execute_batch(&caller, &ops);
         assert!(result.is_ok());
@@ -544,5 +613,36 @@ mod tests {
         for i in 0..action_names.len() {
             assert_ne!(action_names.get(i).unwrap(), symbol_short!("bat_ok"));
         }
+    }
+
+    // ── Issue #79: estimate_fees ───────────────────────────────────────────────
+
+    #[test]
+    fn test_estimate_fees_returns_fee_per_op_times_count() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        assert_eq!(client.estimate_fees(&1), Ok(100));
+        assert_eq!(client.estimate_fees(&10), Ok(1_000));
+        assert_eq!(client.estimate_fees(&50), Ok(5_000));
+    }
+
+    #[test]
+    fn test_estimate_fees_zero_ops_rejected() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        assert!(client.try_estimate_fees(&0).is_err());
+    }
+
+    #[test]
+    fn test_estimate_fees_over_max_rejected() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        assert!(client.try_estimate_fees(&51).is_err());
     }
 }

@@ -3,6 +3,7 @@ import {
   getActiveNetwork,
   getNetworkConfig,
 } from "../src/network";
+import type { BatchOperationKind, Operation } from "../src/types";
 
 describe("NETWORK_CONFIGS", () => {
   it("defines localnet config", () => {
@@ -100,5 +101,35 @@ describe("Network selection", () => {
     } else {
       delete process.env.SOROBAN_NETWORK;
     }
+  });
+});
+
+describe("BatchOperationKind", () => {
+  const validKinds: BatchOperationKind[] = ["Invoke", "Transfer", "Approve"];
+
+  it("has exactly three variants", () => {
+    expect(validKinds).toHaveLength(3);
+  });
+
+  it("all variants are distinct strings", () => {
+    const unique = new Set(validKinds);
+    expect(unique.size).toBe(3);
+  });
+
+  it("Operation accepts each kind variant", () => {
+    const { Address, xdr } = require("@stellar/stellar-sdk");
+    const addr = Address.fromString(
+      "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN"
+    );
+    validKinds.forEach((kind) => {
+      const op: Operation = {
+        target: addr,
+        fnName: "transfer",
+        args: [] as xdr.ScVal[],
+        requireSuccess: true,
+        kind,
+      };
+      expect(op.kind).toBe(kind);
+    });
   });
 });
