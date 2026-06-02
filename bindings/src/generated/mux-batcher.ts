@@ -79,6 +79,24 @@ export class MuxBatcherClient {
     return { successCount: native.success_count, failureCount: native.failure_count };
   }
 
+  /**
+   * Return a conservative fee estimate (in stroops) for a batch of `opCount`
+   * operations. Throws if `opCount` is 0 or exceeds the contract's
+   * `MAX_BATCH_SIZE`. Pure read — no transaction is submitted.
+   */
+  async estimateFees(sourceKeypair: Keypair, opCount: number): Promise<number> {
+    const tx = await this.buildTx(sourceKeypair, "estimate_fees", [
+      xdr.ScVal.scvU32(opCount),
+    ]);
+    const result = await this.server.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(result)) {
+      throw new Error(`Simulation failed: ${result.error}`);
+    }
+    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+    if (!retval) throw new Error("No return value");
+    return retval.value() as number;
+  }
+
   // ── Private helpers ──────────────────────────────────────────────────────────
 
   private operationToScVal(op: Operation): xdr.ScVal {
