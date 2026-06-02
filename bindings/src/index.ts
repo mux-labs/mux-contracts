@@ -13,6 +13,7 @@ export * from "./generated/mux-batcher";
 export * from "./generated/mux-delegation";
 export * from "./generated/mux-permissions";
 export * from "./generated/mux-registry";
+export * from "./generated/mux-spending-policy";
 export * from "./types";
 export * from "./network";
 export * from "./horizon";

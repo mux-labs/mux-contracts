@@ -3,6 +3,7 @@ import {
   getActiveNetwork,
   getNetworkConfig,
 } from "../src/network";
+import { MuxSpendingPolicyClient } from "../src/index";
 import type { BatchOperationKind, Operation } from "../src/types";
 
 describe("NETWORK_CONFIGS", () => {
@@ -131,5 +132,20 @@ describe("BatchOperationKind", () => {
       };
       expect(op.kind).toBe(kind);
     });
+  });
+});
+
+describe("MuxSpendingPolicyClient export", () => {
+  it("is exported from the package index", () => {
+    expect(typeof MuxSpendingPolicyClient).toBe("function");
+  });
+
+  it("exposes checkSpend method", () => {
+    expect(typeof MuxSpendingPolicyClient.prototype.checkSpend).toBe("function");
+  });
+
+  it("exposes setPolicy and getPolicy methods", () => {
+    expect(typeof MuxSpendingPolicyClient.prototype.setPolicy).toBe("function");
+    expect(typeof MuxSpendingPolicyClient.prototype.getPolicy).toBe("function");
   });
 });

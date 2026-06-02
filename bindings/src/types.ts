@@ -84,3 +84,15 @@ export type MuxRegistryError =
   | "Unauthorized"
   | "ContractNotFound"
   | "TooManyContracts";
+
+export interface SpendingPolicyLimit {
+  asset: Address;
+  limit: bigint;
+}
+
+export type SpendingPolicyError =
+  | "NotInitialized"
+  | "AlreadyInitialized"
+  | "Unauthorized"
+  | "PolicyNotFound"
+  | "SpendLimitExceeded";
