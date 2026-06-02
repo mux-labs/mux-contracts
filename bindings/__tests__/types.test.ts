@@ -5,6 +5,7 @@ import {
 } from "../src/network";
 import { MuxSpendingPolicyClient } from "../src/index";
 import type { BatchOperationKind, Operation } from "../src/types";
+import { MuxWalletRegistryClient } from "../src/index";
 
 describe("NETWORK_CONFIGS", () => {
   it("defines localnet config", () => {
