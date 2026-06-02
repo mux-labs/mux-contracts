@@ -167,6 +167,7 @@ export async function executeBatch(
     fnName: string;
     args: import("@stellar/stellar-sdk").xdr.ScVal[];
     requireSuccess: boolean;
+    kind: import("..").BatchOperationKind;
   }>
 ) {
   const { MuxBatcherClient } = await import("../generated/mux-batcher");
@@ -184,6 +185,7 @@ export async function executeBatch(
     fnName: op.fnName,
     args: op.args,
     requireSuccess: op.requireSuccess,
+    kind: op.kind,
   }));
 
   try {

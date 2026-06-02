@@ -3,6 +3,9 @@ import {
   getActiveNetwork,
   getNetworkConfig,
 } from "../src/network";
+import { MuxSpendingPolicyClient } from "../src/index";
+import type { BatchOperationKind, Operation } from "../src/types";
+import { MuxWalletRegistryClient } from "../src/index";
 
 describe("NETWORK_CONFIGS", () => {
   it("defines localnet config", () => {
@@ -100,5 +103,50 @@ describe("Network selection", () => {
     } else {
       delete process.env.SOROBAN_NETWORK;
     }
+  });
+});
+
+describe("BatchOperationKind", () => {
+  const validKinds: BatchOperationKind[] = ["Invoke", "Transfer", "Approve"];
+
+  it("has exactly three variants", () => {
+    expect(validKinds).toHaveLength(3);
+  });
+
+  it("all variants are distinct strings", () => {
+    const unique = new Set(validKinds);
+    expect(unique.size).toBe(3);
+  });
+
+  it("Operation accepts each kind variant", () => {
+    const { Address, xdr } = require("@stellar/stellar-sdk");
+    const addr = Address.fromString(
+      "GATPLJWD4WKPGXT5FVVHO6RXYIBUE6RUHBOBGLAWVE4WDMTBX23EL54Q"
+    );
+    validKinds.forEach((kind) => {
+      const op: Operation = {
+        target: addr,
+        fnName: "transfer",
+        args: [] as xdr.ScVal[],
+        requireSuccess: true,
+        kind,
+      };
+      expect(op.kind).toBe(kind);
+    });
+  });
+});
+
+describe("MuxSpendingPolicyClient export", () => {
+  it("is exported from the package index", () => {
+    expect(typeof MuxSpendingPolicyClient).toBe("function");
+  });
+
+  it("exposes checkSpend method", () => {
+    expect(typeof MuxSpendingPolicyClient.prototype.checkSpend).toBe("function");
+  });
+
+  it("exposes setPolicy and getPolicy methods", () => {
+    expect(typeof MuxSpendingPolicyClient.prototype.setPolicy).toBe("function");
+    expect(typeof MuxSpendingPolicyClient.prototype.getPolicy).toBe("function");
   });
 });

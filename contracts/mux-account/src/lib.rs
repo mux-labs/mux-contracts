@@ -8,7 +8,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Map, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, Env, Map,
+    Vec,
 };
 
 // ── Audit events ──────────────────────────────────────────────────────────────
@@ -38,6 +39,8 @@ pub enum DataKey {
     SessionKey(Address, Address),
     /// Index of all session keys per owner: DataKey::SessionKeyIndex(owner)
     SessionKeyIndex(Address),
+    Paused,
+    Executing,
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -91,9 +94,11 @@ pub enum MuxAccountError {
     SpendLimitExceeded = 6,
     InvalidAmount = 7,
     InvalidPeriod = 8,
+    TooManyDelegates = 9,
+    ReentrancyDetected = 10,
+    ArithmeticOverflow = 11,
     // STORAGE-GRIEFING: unbounded delegate map would let the owner bloat instance
     // storage indefinitely, increasing rent fees for all users of this contract.
-    TooManyDelegates = 9,
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -309,10 +314,34 @@ impl MuxAccount {
 
     /// Return all active delegates.
     pub fn delegates(env: Env) -> Result<Map<Address, DelegateInfo>, MuxAccountError> {
-        env.storage()
+        let delegates: Map<Address, DelegateInfo> = env
+            .storage()
             .instance()
             .get(&DataKey::Delegates)
-            .ok_or(MuxAccountError::NotInitialized)
+            .ok_or(MuxAccountError::NotInitialized)?;
+        let mut active_delegates: Map<Address, DelegateInfo> = Map::new(&env);
+        for (delegate, info) in delegates.iter() {
+            if !Self::is_delegate_expired(&info, env.ledger().sequence()) {
+                active_delegates.set(delegate, info);
+            }
+        }
+        Ok(active_delegates)
+    }
+
+    /// Return delegate information if the delegate is currently active.
+    pub fn get_delegate(env: Env, delegate: Address) -> Result<DelegateInfo, MuxAccountError> {
+        let delegates: Map<Address, DelegateInfo> = env
+            .storage()
+            .instance()
+            .get(&DataKey::Delegates)
+            .ok_or(MuxAccountError::NotInitialized)?;
+        let info = delegates
+            .get(delegate.clone())
+            .ok_or(MuxAccountError::DelegateNotFound)?;
+        if Self::is_delegate_expired(&info, env.ledger().sequence()) {
+            return Err(MuxAccountError::DelegateExpired);
+        }
+        Ok(info)
     }
 
     /// Return the guardian set.
@@ -369,6 +398,22 @@ impl MuxAccount {
         Ok(())
     }
 
+    fn require_not_paused(env: &Env) -> Result<(), MuxAccountError> {
+        let paused: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false);
+        if paused {
+            return Err(MuxAccountError::Unauthorized);
+        }
+        Ok(())
+    }
+
+    fn is_delegate_expired(info: &DelegateInfo, current_ledger: u32) -> bool {
+        current_ledger >= info.expiry_ledger
+    }
+
     /// Extend instance-storage TTL on every write to prevent silent data loss (T-21).
     fn extend_ttl(env: &Env) {
         env.storage()
@@ -384,7 +429,7 @@ mod tests {
     use super::*;
     use soroban_sdk::{
         symbol_short,
-        testutils::{Address as _, Events},
+        testutils::{Address as _, Events, Ledger as _},
         Env, FromVal, Vec,
     };
 
@@ -520,6 +565,57 @@ mod tests {
         client.remove_delegate(&delegate);
         let delegates_after = client.delegates();
         assert!(!delegates_after.contains_key(delegate));
+    }
+
+    #[test]
+    fn test_get_delegate_returns_active_delegate_info() {
+        let (env, client, owner) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let delegate = Address::generate(&env);
+        client.set_delegate(&delegate, &1000_u32, &true);
+
+        let info = client.get_delegate(&delegate);
+        assert_eq!(info.address, delegate);
+        assert!(info.can_spend);
+        assert_eq!(info.expiry_ledger, 1000_u32);
+    }
+
+    #[test]
+    fn test_get_delegate_fails_for_unauthorized_delegate() {
+        let (env, client, _owner) = setup();
+        client.initialize(&_owner, &Vec::new(&env));
+        let delegate = Address::generate(&env);
+
+        let result = client.try_get_delegate(&delegate);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_delegate_fails_when_delegate_expired() {
+        let (env, client, owner) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let delegate = Address::generate(&env);
+        let current = env.ledger().sequence();
+        let expiry = current + 1;
+        client.set_delegate(&delegate, &expiry, &true);
+        env.ledger().set_sequence_number(expiry);
+
+        let result = client.try_get_delegate(&delegate);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_delegates_filters_expired_delegates() {
+        let (env, client, owner) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let delegate = Address::generate(&env);
+        let current = env.ledger().sequence();
+        let expiry = current + 1;
+        client.set_delegate(&delegate, &expiry, &true);
+        env.ledger().set_sequence_number(expiry);
+
+        let active = client.delegates();
+        assert!(!active.contains_key(delegate));
     }
 
     #[test]
