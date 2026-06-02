@@ -47,6 +47,10 @@ Contract tag: `mux_perm`
 | `role_crt` | `create_role` succeeds | `role: Symbol` |
 | `role_grt` | `grant_role` succeeds | `(account: Address, role: Symbol)` |
 | `role_rev` | `revoke_role` succeeds | `(account: Address, role: Symbol)` |
+| `adm_thr` | `set_admin_threshold` succeeds | `threshold: u32` |
+| `adm_prp` | `propose_admin` adds a new candidate | `new_admin: Address` |
+| `adm_apr` | `approve_admin` records an approval (threshold not yet reached) | `(approver: Address, new_admin: Address)` |
+| `adm_prm` | `approve_admin` promotes a candidate (threshold reached) | `new_admin: Address` |
 
 ---
 
@@ -57,6 +61,7 @@ Contract tag: `mux_bat`
 | Action | Trigger | Data payload |
 |---|---|---|
 | `executed` | `execute_batch` completes (success or partial failure) | `(caller: Address, success_count: u32, failure_count: u32)` |
+| `bat_ok` | `execute_batch` completes with zero failures | `(caller: Address, success_count: u32)` |
 
 > `simulate_batch` does not emit events — it is a read-only preflight and writes no state.
 
