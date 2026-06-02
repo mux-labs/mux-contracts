@@ -4,6 +4,19 @@
   "description": "TypeScript bindings for Mux Protocol Soroban smart contracts",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mux-labs/mux-contracts.git",
+    "directory": "bindings"
+  },
   "files": [
     "dist"
   ],
