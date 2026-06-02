@@ -1,0 +1,13 @@
+[package]
+name = "soroban-test-helpers"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Shared test utilities for mux-contracts Soroban contracts"
+
+[lib]
+# rlib only — this crate is never compiled to WASM
+crate-type = ["rlib"]
+
+[dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

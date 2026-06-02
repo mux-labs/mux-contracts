@@ -3,6 +3,7 @@ import {
   getActiveNetwork,
   getNetworkConfig,
 } from "../src/network";
+import { MuxSpendingPolicyClient } from "../src/index";
 import type { BatchOperationKind, Operation } from "../src/types";
 import { MuxWalletRegistryClient } from "../src/index";
 
@@ -135,16 +136,17 @@ describe("BatchOperationKind", () => {
   });
 });
 
-describe("MuxWalletRegistryClient export", () => {
+describe("MuxSpendingPolicyClient export", () => {
   it("is exported from the package index", () => {
-    expect(typeof MuxWalletRegistryClient).toBe("function");
+    expect(typeof MuxSpendingPolicyClient).toBe("function");
   });
 
-  it("exposes registerWallet method", () => {
-    expect(typeof MuxWalletRegistryClient.prototype.registerWallet).toBe("function");
+  it("exposes checkSpend method", () => {
+    expect(typeof MuxSpendingPolicyClient.prototype.checkSpend).toBe("function");
   });
 
-  it("exposes getWallet method", () => {
-    expect(typeof MuxWalletRegistryClient.prototype.getWallet).toBe("function");
+  it("exposes setPolicy and getPolicy methods", () => {
+    expect(typeof MuxSpendingPolicyClient.prototype.setPolicy).toBe("function");
+    expect(typeof MuxSpendingPolicyClient.prototype.getPolicy).toBe("function");
   });
 });
