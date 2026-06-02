@@ -33,6 +33,8 @@ export function loadContractAddresses(
       process.env[`${envPrefix}_MUX_ACCOUNT_ID`] || networkConfig.muxAccount,
     muxBatcher:
       process.env[`${envPrefix}_MUX_BATCHER_ID`] || networkConfig.muxBatcher,
+    muxDelegation:
+      process.env[`${envPrefix}_MUX_DELEGATION_ID`] || networkConfig.muxDelegation,
     muxPermissions:
       process.env[`${envPrefix}_MUX_PERMISSIONS_ID`] ||
       networkConfig.muxPermissions,
@@ -56,6 +58,9 @@ export function validateAddresses(
   }
   if (!addresses.muxBatcher) {
     missing.push("muxBatcher");
+  }
+  if (!addresses.muxDelegation) {
+    missing.push("muxDelegation");
   }
   if (!addresses.muxPermissions) {
     missing.push("muxPermissions");

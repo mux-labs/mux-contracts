@@ -5,6 +5,7 @@ export type NetworkPassphrase = string;
 export interface MuxContractIds {
   muxAccount: string;
   muxBatcher: string;
+  muxDelegation: string;
   muxPermissions: string;
 }
 
@@ -57,6 +58,12 @@ export type MuxBatcherError =
   | "RequiredOperationFailed"
   | "Unauthorized"
   | "ReentrancyDetected";
+
+export type MuxDelegationError =
+  | "Unauthorized"
+  | "DelegateNotFound"
+  | "DelegateExpired"
+  | "TooManyDelegates";
 
 export type MuxPermissionsError =
   | "NotInitialized"
