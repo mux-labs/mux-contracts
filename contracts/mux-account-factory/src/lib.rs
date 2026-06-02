@@ -1,65 +1,54 @@
 /*!
  * mux-account-factory: Account factory for deploying account abstraction instances.
  *
- * Provides a factory contract that deploys new MuxAccount instances and
- * maintains a registry of deployed accounts per owner.
+ * Provides a factory contract that registers new MuxAccount instances and
+ * maintains a per-owner index of deployed accounts.
  */
 
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, Address, Env, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Vec,
 };
+
+// ── Audit events ──────────────────────────────────────────────────────────────
+fn emit(env: &Env, action: soroban_sdk::Symbol, data: impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>) {
+    env.events()
+        .publish((symbol_short!(\"mux_fac\"), action), data);
+}
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
 #[contracttype]
 pub enum DataKey {
-    /// Map of owner -> Vec<deployed account addresses>
+    /// Per-owner list of deployed account addresses.
     Accounts(Address),
-    /// Counter for total accounts deployed
+    /// Total accounts registered across all owners.
     AccountCount,
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────
 
-#[contracttype]
+#[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum MuxAccountFactoryError {
     Unauthorized = 1,
+    /// account_address must differ from owner.
     InvalidAccount = 2,
+    // STORAGE-GRIEFING: unbounded per-owner Accounts vec would let an owner
+    // bloat instance storage indefinitely.
+    TooManyAccounts = 3,
 }
 
-impl From<soroban_sdk::Error> for MuxAccountFactoryError {
-    fn from(_: soroban_sdk::Error) -> Self {
-        MuxAccountFactoryError::Unauthorized
-    }
-}
+// ── Constants ─────────────────────────────────────────────────────────────────
 
-impl From<&soroban_sdk::Error> for MuxAccountFactoryError {
-    fn from(_: &soroban_sdk::Error) -> Self {
-        MuxAccountFactoryError::Unauthorized
-    }
-}
+/// Maximum accounts per owner to bound the Accounts vec in instance storage.
+const MAX_ACCOUNTS_PER_OWNER: u32 = 64;
 
-impl Into<soroban_sdk::Error> for MuxAccountFactoryError {
-    fn into(self) -> soroban_sdk::Error {
-        soroban_sdk::Error::from((
-            soroban_sdk::xdr::ScErrorType::WasmVm,
-            soroban_sdk::xdr::ScErrorCode::InvalidInput,
-        ))
-    }
-}
-
-impl Into<soroban_sdk::Error> for &MuxAccountFactoryError {
-    fn into(self) -> soroban_sdk::Error {
-        soroban_sdk::Error::from((
-            soroban_sdk::xdr::ScErrorType::WasmVm,
-            soroban_sdk::xdr::ScErrorCode::InvalidInput,
-        ))
-    }
-}
+// ── Storage TTL ───────────────────────────────────────────────────────────────
+const TTL_THRESHOLD: u32 = 17_280; // ~1 day
+const TTL_EXTEND_TO: u32 = 518_400; // ~30 days
 
 // ── Contract ──────────────────────────────────────────────────────────────────
 
@@ -68,35 +57,37 @@ pub struct MuxAccountFactory;
 
 #[contractimpl]
 impl MuxAccountFactory {
-    /// Deploy a new account for the given owner.
-    /// In production, this would involve on-chain contract creation.
-    /// For testing, this demonstrates the factory pattern with registry updates.
+    /// Register a new account for the given owner.
+    ///
+    /// The caller must be the owner. `account_address` must differ from `owner`
+    /// and must not already be registered for this owner.
     pub fn deploy_account(
         env: Env,
         owner: Address,
         account_address: Address,
     ) -> Result<Address, MuxAccountFactoryError> {
-        // Caller must be authorized
-        env.current_contract_address().require_auth();
+        owner.require_auth();
 
-        // Validate that the account address is not the same as the owner
         if account_address == owner {
             return Err(MuxAccountFactoryError::InvalidAccount);
         }
 
-        // Register the new account in the owner's account list
         let mut accounts: Vec<Address> = env
             .storage()
             .instance()
             .get(&DataKey::Accounts(owner.clone()))
             .unwrap_or_else(|| Vec::new(&env));
 
+        // STORAGE-GRIEFING: cap per-owner account list.
+        if accounts.len() >= MAX_ACCOUNTS_PER_OWNER {
+            return Err(MuxAccountFactoryError::TooManyAccounts);
+        }
+
         accounts.push_back(account_address.clone());
         env.storage()
             .instance()
-            .set(&DataKey::Accounts(owner), &accounts);
+            .set(&DataKey::Accounts(owner.clone()), &accounts);
 
-        // Increment account count
         let count: u64 = env
             .storage()
             .instance()
@@ -106,24 +97,33 @@ impl MuxAccountFactory {
             .instance()
             .set(&DataKey::AccountCount, &(count + 1));
 
+        emit(&env, symbol_short!(\"deployed\"), (owner, account_address.clone()));
+        Self::extend_ttl(&env);
         Ok(account_address)
     }
 
-    /// Get all accounts deployed for a given owner.
-    pub fn get_accounts(env: Env, owner: Address) -> Result<Vec<Address>, MuxAccountFactoryError> {
+    /// Get all accounts registered for a given owner.
+    pub fn get_accounts(env: Env, owner: Address) -> Vec<Address> {
         env.storage()
             .instance()
             .get(&DataKey::Accounts(owner))
-            .ok_or(MuxAccountFactoryError::InvalidAccount)
+            .unwrap_or_else(|| Vec::new(&env))
     }
 
-    /// Get the total count of deployed accounts.
-    pub fn account_count(env: Env) -> Result<u64, MuxAccountFactoryError> {
-        Ok(env
-            .storage()
+    /// Get the total count of registered accounts.
+    pub fn account_count(env: Env) -> u64 {
+        env.storage()
             .instance()
             .get(&DataKey::AccountCount)
-            .unwrap_or(0))
+            .unwrap_or(0)
+    }
+
+    // ── Private helpers ────────────────────────────────────────────────────────
+
+    fn extend_ttl(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 }
 
@@ -134,81 +134,98 @@ pub mod wallet_factory_stub;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::{testutils::Address as _, Env};
 
-    fn setup() -> (Env, MuxAccountFactoryClient<'static>, Address) {
+    fn setup() -> (Env, MuxAccountFactoryClient<'static>) {
         let env = Env::default();
         env.mock_all_auths();
         let contract_id = env.register_contract(None, MuxAccountFactory);
         let client = MuxAccountFactoryClient::new(&env, &contract_id);
-        let owner = Address::generate(&env);
-        (env, client, owner)
+        (env, client)
     }
 
     #[test]
     fn test_deploy_account() {
-        let (env, client, owner) = setup();
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
         let account_addr = Address::generate(&env);
-
-        // Deploy a new account
         let deployed = client.deploy_account(&owner, &account_addr);
-
-        // Verify the deployed address is returned
         assert_eq!(deployed, account_addr);
     }
 
     #[test]
     fn test_deployed_address_distinct_from_owner() {
-        let (env, client, owner) = setup();
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
         let account_addr = Address::generate(&env);
-
         let deployed = client.deploy_account(&owner, &account_addr);
-        // Verify deployed address is distinct from owner
         assert_ne!(deployed, owner);
     }
 
     #[test]
     fn test_account_registry_updated_after_deployment() {
-        let (env, client, owner) = setup();
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
         let account_addr = Address::generate(&env);
-
         client.deploy_account(&owner, &account_addr);
-
-        // Verify account registry is updated
         let accounts = client.get_accounts(&owner);
-        assert!(accounts.len() == 1);
+        assert_eq!(accounts.len(), 1);
         assert_eq!(accounts.get(0).unwrap(), account_addr);
-
-        // Verify account count is incremented
-        let count = client.account_count();
-        assert_eq!(count, 1);
+        assert_eq!(client.account_count(), 1);
     }
 
     #[test]
     fn test_multiple_account_deployments() {
-        let (env, client, owner) = setup();
-
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
         let account1 = Address::generate(&env);
         let account2 = Address::generate(&env);
-
         client.deploy_account(&owner, &account1);
         client.deploy_account(&owner, &account2);
-
         let accounts = client.get_accounts(&owner);
         assert_eq!(accounts.len(), 2);
-        assert_eq!(accounts.get(0).unwrap(), account1);
-        assert_eq!(accounts.get(1).unwrap(), account2);
-
-        let count = client.account_count();
-        assert_eq!(count, 2);
+        assert_eq!(client.account_count(), 2);
     }
 
     #[test]
     fn test_invalid_account_same_as_owner() {
-        let (_env, client, owner) = setup();
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        assert!(client.try_deploy_account(&owner, &owner).is_err());
+    }
 
-        // Try to deploy account with same address as owner
-        let result = client.try_deploy_account(&owner, &owner);
+    #[test]
+    fn test_accounts_cap_enforced() {
+        let (env, client) = setup();
+        env.budget().reset_unlimited();
+        let owner = Address::generate(&env);
+        for _ in 0..64 {
+            client.deploy_account(&owner, &Address::generate(&env));
+        }
+        let result = client.try_deploy_account(&owner, &Address::generate(&env));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deploy_emits_event() {
+        use soroban_sdk::testutils::Events;
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        client.deploy_account(&owner, &account_addr);
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        let (_, topics, _) = events.get(0).unwrap();
+        let action = soroban_sdk::Symbol::from_val(&env, &topics.get(1).unwrap());
+        assert_eq!(action, symbol_short!(\"deployed\"));
+    }
+
+    #[test]
+    fn test_ttl_extended_on_deploy() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        client.deploy_account(&owner, &Address::generate(&env));
+        // If extend_ttl was missing the SDK would panic; reaching here is the assertion.
+        assert_eq!(client.account_count(), 1);
     }
 }

@@ -2,6 +2,8 @@ import type {
   MuxAccountError,
   MuxBatcherError,
   MuxPermissionsError,
+  MuxAccountFactoryError,
+  MuxRegistryError,
 } from "./types";
 
 export interface HttpErrorResponse {
@@ -10,7 +12,12 @@ export interface HttpErrorResponse {
   errorType: string;
 }
 
-type ContractError = MuxAccountError | MuxBatcherError | MuxPermissionsError;
+type ContractError =
+  | MuxAccountError
+  | MuxBatcherError
+  | MuxPermissionsError
+  | MuxAccountFactoryError
+  | MuxRegistryError;
 
 /**
  * Maps contract error variants to HTTP status codes.
@@ -29,6 +36,7 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   RoleNotFound: 404,
   AccountNotInRole: 404,
   PermissionNotFound: 404,
+  ContractNotFound: 404,
 
   // Validation/Constraint errors → 400
   InvalidAmount: 400,
@@ -37,12 +45,17 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   DelegateExpired: 400,
   EmptyBatch: 400,
   BatchTooLarge: 400,
+  InvalidAccount: 400,
 
   // State conflict → 409
   AlreadyInitialized: 409,
 
   // Security guard violations → 409 Conflict (concurrent/reentrant call)
   ReentrancyDetected: 409,
+
+  // Capacity limits → 409 Conflict
+  TooManyAccounts: 409,
+  TooManyContracts: 409,
 
   // Internal/Uninitialized → 500
   NotInitialized: 500,
