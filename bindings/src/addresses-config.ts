@@ -4,16 +4,19 @@ export const DEFAULT_ADDRESSES = {
   localnet: {
     muxAccount: "",
     muxBatcher: "",
+    muxDelegation: "",
     muxPermissions: "",
   },
   testnet: {
     muxAccount: "",
     muxBatcher: "",
+    muxDelegation: "",
     muxPermissions: "",
   },
   mainnet: {
     muxAccount: "",
     muxBatcher: "",
+    muxDelegation: "",
     muxPermissions: "",
   },
 };

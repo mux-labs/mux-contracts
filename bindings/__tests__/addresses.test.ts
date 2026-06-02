@@ -59,6 +59,7 @@ describe("Contract Address Configuration", () => {
       const addresses = {
         muxAccount: "CAcc1",
         muxBatcher: "CBatch1",
+        muxDelegation: "CDel1",
         muxPermissions: "CPerms1",
       };
 
@@ -71,6 +72,7 @@ describe("Contract Address Configuration", () => {
       const addresses = {
         muxAccount: "",
         muxBatcher: "CBatch1",
+        muxDelegation: "CDel1",
         muxPermissions: "CPerms1",
       };
 
@@ -86,6 +88,7 @@ describe("Contract Address Configuration", () => {
       const addresses = {
         muxAccount: "",
         muxBatcher: "",
+        muxDelegation: "CDel1",
         muxPermissions: "CPerms1",
       };
 
@@ -101,6 +104,7 @@ describe("Contract Address Configuration", () => {
       const addresses = {
         muxAccount: "",
         muxBatcher: "",
+        muxDelegation: "",
         muxPermissions: "",
       };
 
@@ -116,23 +120,27 @@ describe("Contract Address Configuration", () => {
         localnet: {
           muxAccount: "CLoc1",
           muxBatcher: "CLoc2",
-          muxPermissions: "CLoc3",
+          muxDelegation: "CLoc3",
+          muxPermissions: "CLoc4",
         },
         testnet: {
           muxAccount: "CTest1",
           muxBatcher: "CTest2",
-          muxPermissions: "CTest3",
+          muxDelegation: "CTest3",
+          muxPermissions: "CTest4",
         },
         mainnet: {
           muxAccount: "",
           muxBatcher: "",
+          muxDelegation: "",
           muxPermissions: "",
         },
       });
 
       expect(addresses.muxAccount).toBe("CTest1");
       expect(addresses.muxBatcher).toBe("CTest2");
-      expect(addresses.muxPermissions).toBe("CTest3");
+      expect(addresses.muxDelegation).toBe("CTest3");
+      expect(addresses.muxPermissions).toBe("CTest4");
     });
 
     it("throws if validation fails", () => {
@@ -153,6 +161,7 @@ describe("Contract Address Configuration", () => {
       Object.values(DEFAULT_ADDRESSES).forEach((networkAddresses) => {
         expect(networkAddresses).toHaveProperty("muxAccount");
         expect(networkAddresses).toHaveProperty("muxBatcher");
+        expect(networkAddresses).toHaveProperty("muxDelegation");
         expect(networkAddresses).toHaveProperty("muxPermissions");
       });
     });
