@@ -230,6 +230,10 @@ stellar contract deploy --wasm target/wasm32-unknown-unknown/release/mux_account
 
 ## Documentation
 
+- [Contract IDs](CONTRACT_IDS.md) — Per-network program addresses, update process, and upgrade authority
+
+## Documentation (Extended)
+
 - [Architecture Overview](docs/architecture-overview.md) — High-level diagram and system components
 - [Policy Semantics](docs/policy-semantics.md) — Per-wallet daily spend limit design, reset logic, and error codes
 - [Account Abstraction Design](docs/account-abstraction.md) — Goals, architecture, session key design, and transaction flows
