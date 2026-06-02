@@ -121,7 +121,7 @@ describe("BatchOperationKind", () => {
   it("Operation accepts each kind variant", () => {
     const { Address, xdr } = require("@stellar/stellar-sdk");
     const addr = Address.fromString(
-      "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN"
+      "GATPLJWD4WKPGXT5FVVHO6RXYIBUE6RUHBOBGLAWVE4WDMTBX23EL54Q"
     );
     validKinds.forEach((kind) => {
       const op: Operation = {
