@@ -1,0 +1,47 @@
+# config/networks.toml
+#
+# Network configuration for Mux Protocol Soroban deployments.
+#
+# Each section defines a Stellar network environment.
+# Use the `network` key when invoking deploy and verification scripts.
+#
+# Usage in shell scripts:
+#   source scripts/network-config.sh
+#   load_network_config testnet
+#   echo $NETWORK_PASSPHRASE
+
+# ── Testnet ────────────────────────────────────────────────────────────────────
+[testnet]
+# Standard Stellar testnet
+passphrase          = "Test SDF Network ; September 2015"
+rpc_url             = "https://soroban-testnet.stellar.org"
+horizon_url         = "https://horizon-testnet.stellar.org"
+friendbot_url       = "https://friendbot.stellar.org"
+native_asset_issuer = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+
+# ── Mainnet (Public) ───────────────────────────────────────────────────────────
+[mainnet]
+# Production Stellar public network — use with extreme care
+passphrase          = "Public Global Stellar Network ; September 2015"
+rpc_url             = "https://mainnet.stellar.validationcloud.io/v1/xycl7T9PGtSJBu8K7pPL9F47SxHgGPJG"
+horizon_url         = "https://horizon.stellar.org"
+friendbot_url       = ""
+native_asset_issuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+
+# ── Futurenet ──────────────────────────────────────────────────────────────────
+[futurenet]
+# Stellar Futurenet — cutting-edge protocol features (unstable)
+passphrase          = "Test SDF Future Network ; October 2022"
+rpc_url             = "https://rpc-futurenet.stellar.org"
+horizon_url         = "https://horizon-futurenet.stellar.org"
+friendbot_url       = "https://friendbot-futurenet.stellar.org/friendbot"
+native_asset_issuer = "GDXJHJHWN6GRNOQELSITZIQNWUQsota64UAAM5TFAM3PUNYB5OQAJUN3"
+
+# ── Local (standalone) ─────────────────────────────────────────────────────────
+[local]
+# Local Stellar Quickstart node: docker run stellar/quickstart --standalone
+passphrase          = "Standalone Network ; February 2017"
+rpc_url             = "http://localhost:8000/soroban/rpc"
+horizon_url         = "http://localhost:8000"
+friendbot_url       = "http://localhost:8000/friendbot"
+native_asset_issuer = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
