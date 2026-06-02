@@ -1,4 +1,4 @@
-.PHONY: all build test clean fmt lint clippy
+.PHONY: all build test clean fmt lint clippy wasm check-sizes
 
 all: fmt lint build test
 
@@ -18,3 +18,9 @@ lint: clippy
 
 clippy:
 	cargo clippy --workspace --all-targets -- -D warnings
+
+wasm:
+	bash scripts/build-wasm.sh --release
+
+check-sizes: wasm
+	bash scripts/check-contract-sizes.sh

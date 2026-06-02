@@ -1,16 +1,16 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, Env, Address, BytesN};
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
 
 #[contract]
 pub struct WalletFactoryStub;
 
 #[contractimpl]
 impl WalletFactoryStub {
-    /// Deploy a new wallet stub instance.
-    pub fn deploy_wallet(env: Env, owner: Address, salt: BytesN<32>) -> Address {
-        // Factory deployment logic stub
+    /// Stub entry point — real deployment is handled by the Stellar CLI / host.
+    /// Returns the provided `owner` address as a placeholder until on-chain
+    /// contract-creation primitives are available in the Soroban SDK.
+    pub fn deploy_wallet(_env: Env, owner: Address, _salt: BytesN<32>) -> Address {
         owner.require_auth();
-        // Return dummy address for now
-        Address::generate(&env)
+        owner
     }
 }
