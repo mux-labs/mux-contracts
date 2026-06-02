@@ -231,6 +231,7 @@ stellar contract deploy --wasm target/wasm32-unknown-unknown/release/mux_account
 ## Documentation
 
 - [Architecture Overview](docs/architecture-overview.md) — High-level diagram and system components
+- [Policy Semantics](docs/policy-semantics.md) — Per-wallet daily spend limit design, reset logic, and error codes
 - [Account Abstraction Design](docs/account-abstraction.md) — Goals, architecture, session key design, and transaction flows
 - [Backend Orchestrator Integration](docs/aa-backend-orchestrator.md) — Scope and architecture for relayer integration
 - [Threat Model](docs/threat-model.md) — assets, trust boundaries, and mitigations
