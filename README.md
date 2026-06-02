@@ -34,6 +34,24 @@ bash scripts/generate-bindings.sh
 
 The CI pipeline ([`.github/workflows/bindings.yml`](.github/workflows/bindings.yml)) regenerates, type-checks, and tests bindings on every PR and publishes to npm on tagged releases.
 
+### Usage example
+
+See [`examples/bindings-usage.ts`](examples/bindings-usage.ts) for a working end-to-end example showing `check_spend` and `register_wallet`:
+
+```ts
+import {
+  MuxSpendingPolicyClient,
+  MuxWalletRegistryClient,
+} from "@mux-protocol/contracts";
+
+const spendingClient = new MuxSpendingPolicyClient({ contractId, networkPassphrase, rpcUrl });
+await spendingClient.checkSpend(signer, account, asset, 500n);
+
+const walletClient = new MuxWalletRegistryClient({ contractId, networkPassphrase, rpcUrl });
+await walletClient.registerWallet(signer, "treasury", walletAddress);
+const addr = await walletClient.getWallet(signer, "treasury");
+```
+
 ## Tech Stack
 - Soroban smart contracts (Rust)
 - Stellar Soroban SDK v21
@@ -59,6 +77,18 @@ bash scripts/generate-bindings.sh
 # Build TypeScript package
 cd bindings && npm ci && npm run build
 ```
+
+## Deploying Contracts
+
+Copy the deployment environment template and fill in your values before running any deploy script:
+
+```bash
+cp .env.deploy.example .env.deploy
+# edit .env.deploy with your network, keypair, and RPC endpoint
+source .env.deploy && bash scripts/generate-bindings.sh
+```
+
+See [`.env.deploy.example`](.env.deploy.example) for the full list of required and optional variables.
 
 ## Integration Tests
 
@@ -251,6 +281,10 @@ stellar contract deploy --wasm target/wasm32-unknown-unknown/release/mux_account
 ```
 
 ## Documentation
+
+- [Contract IDs](CONTRACT_IDS.md) — Per-network program addresses, update process, and upgrade authority
+
+## Documentation (Extended)
 
 - [Architecture Overview](docs/architecture-overview.md) — High-level diagram and system components
 - [Policy Semantics](docs/policy-semantics.md) — Per-wallet daily spend limit design, reset logic, and error codes

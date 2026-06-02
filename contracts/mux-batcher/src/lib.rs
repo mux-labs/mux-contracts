@@ -92,6 +92,10 @@ pub enum MuxBatcherError {
 // monopolising ledger capacity.
 const MAX_BATCH_SIZE: u32 = 50;
 
+/// Base fee (in stroops) charged per operation in a batch.
+/// Used by `estimate_fees` to give callers a conservative preflight estimate.
+const FEE_PER_OP: u32 = 100;
+
 // ── Storage TTL ───────────────────────────────────────────────────────────────
 // STORAGE-GRIEFING (T-21): mux-batcher holds no growing collections, but its
 // instance storage (contract metadata) must stay live.  Extend TTL on every
@@ -609,5 +613,36 @@ mod tests {
         for i in 0..action_names.len() {
             assert_ne!(action_names.get(i).unwrap(), symbol_short!("bat_ok"));
         }
+    }
+
+    // ── Issue #79: estimate_fees ───────────────────────────────────────────────
+
+    #[test]
+    fn test_estimate_fees_returns_fee_per_op_times_count() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        assert_eq!(client.estimate_fees(&1), Ok(100));
+        assert_eq!(client.estimate_fees(&10), Ok(1_000));
+        assert_eq!(client.estimate_fees(&50), Ok(5_000));
+    }
+
+    #[test]
+    fn test_estimate_fees_zero_ops_rejected() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        assert!(client.try_estimate_fees(&0).is_err());
+    }
+
+    #[test]
+    fn test_estimate_fees_over_max_rejected() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        assert!(client.try_estimate_fees(&51).is_err());
     }
 }

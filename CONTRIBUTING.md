@@ -160,6 +160,35 @@ Example breaking change:
   **Migration:** See [migration guide](docs/migration-v2.md)
 ```
 
+## Generating TypeScript Bindings
+
+TypeScript bindings are auto-generated from compiled contract WASMs using the Stellar CLI. Two scripts are available:
+
+**Shell script** (CI-friendly, no Node.js required):
+```bash
+bash scripts/generate-bindings.sh [--network testnet] [--skip-build]
+# or via npm
+cd bindings && npm run generate
+```
+
+**TypeScript script** (richer flags, programmatic use):
+```bash
+npx ts-node scripts/generate-bindings.ts [options]
+# or via npm
+cd bindings && npm run generate:bindings
+```
+
+Options for the TypeScript script:
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--network <name>` | Stellar network (`testnet`\|`mainnet`\|`localnet`) | `testnet` |
+| `--skip-build` | Skip `cargo build`; use pre-built WASMs | false |
+| `--contract <name>` | Generate bindings for a single contract | all contracts |
+| `--dry-run` | Print commands without executing | false |
+
+Generated files are written to `bindings/src/generated/` and should not be edited by hand. Re-run either script after changing contract interfaces.
+
 ## Documentation
 
 - **README.md** — Main entry point; keep concise and updated

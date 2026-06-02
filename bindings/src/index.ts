@@ -10,20 +10,11 @@
 export * from "./generated/mux-account";
 export * from "./generated/mux-account-factory";
 export * from "./generated/mux-batcher";
+export * from "./generated/mux-delegation";
 export * from "./generated/mux-permissions";
 export * from "./generated/mux-registry";
-export type {
-  NetworkPassphrase,
-  MuxContractIds,
-  SpendLimit,
-  DelegateInfo,
-  Operation,
-  BatchOperationKind,
-  BatchResult,
-  MuxAccountError,
-  MuxBatcherError,
-  MuxPermissionsError,
-} from "./types";
+export * from "./generated/mux-spending-policy";
+export * from "./types";
 export * from "./network";
 export * from "./horizon";
 export * from "./errors";

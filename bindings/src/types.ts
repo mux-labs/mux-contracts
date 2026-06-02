@@ -5,6 +5,7 @@ export type NetworkPassphrase = string;
 export interface MuxContractIds {
   muxAccount: string;
   muxBatcher: string;
+  muxDelegation: string;
   muxPermissions: string;
 }
 
@@ -58,6 +59,12 @@ export type MuxBatcherError =
   | "Unauthorized"
   | "ReentrancyDetected";
 
+export type MuxDelegationError =
+  | "Unauthorized"
+  | "DelegateNotFound"
+  | "DelegateExpired"
+  | "TooManyDelegates";
+
 export type MuxPermissionsError =
   | "NotInitialized"
   | "AlreadyInitialized"
@@ -77,3 +84,15 @@ export type MuxRegistryError =
   | "Unauthorized"
   | "ContractNotFound"
   | "TooManyContracts";
+
+export interface SpendingPolicyLimit {
+  asset: Address;
+  limit: bigint;
+}
+
+export type SpendingPolicyError =
+  | "NotInitialized"
+  | "AlreadyInitialized"
+  | "Unauthorized"
+  | "PolicyNotFound"
+  | "SpendLimitExceeded";
