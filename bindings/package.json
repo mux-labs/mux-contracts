@@ -12,6 +12,7 @@
     "lint": "eslint src --ext .ts",
     "test": "jest --passWithNoTests",
     "generate": "bash ../scripts/generate-bindings.sh",
+    "local-invoke": "npm run build && node dist/local-invoke.js",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

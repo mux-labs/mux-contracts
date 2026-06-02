@@ -216,6 +216,28 @@ cp .env.localnet.example .env.localnet
 # Edit .env.localnet and set contract addresses after deployment
 ```
 
+**Local contract invocation helper:**
+
+A local invoke helper is available through the bindings package and can be run from the repo root:
+
+```bash
+bash scripts/local-invoke.sh --contract-name mux-account --function owner --secret-key S... --arg true
+```
+
+Supported options:
+- `--network <network>` — `localnet|testnet|mainnet` (default: `localnet`)
+- `--contract-id <id>` or `--contract-name <name>` — contract to call
+- `--function <name>` — contract function to invoke
+- `--secret-key <secret>` — signer secret key for the transaction
+- `--arg <value>` — argument values; repeatable
+- `--simulate-only` — simulate without submitting
+
+If dependencies are not installed, run:
+
+```bash
+cd bindings && npm ci
+```
+
 **Deploying Contracts to Localnet:**
 
 After starting the localnet, build and deploy contracts:
