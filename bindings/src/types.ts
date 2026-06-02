@@ -28,7 +28,12 @@ export interface Operation {
   fnName: string;
   args: xdr.ScVal[];
   requireSuccess: boolean;
+  /** Classifies the operation intent for indexers and UI. */
+  kind: BatchOperationKind;
 }
+
+/** Mirrors the on-chain `BatchOperationKind` enum. */
+export type BatchOperationKind = "Invoke" | "Transfer" | "Approve";
 
 export interface BatchResult {
   successCount: number;
@@ -67,3 +72,15 @@ export type MuxPermissionsError =
   | "RoleNotFound"
   | "AccountNotInRole"
   | "PermissionNotFound";
+
+export type MuxAccountFactoryError =
+  | "Unauthorized"
+  | "InvalidAccount"
+  | "TooManyAccounts";
+
+export type MuxRegistryError =
+  | "NotInitialized"
+  | "AlreadyInitialized"
+  | "Unauthorized"
+  | "ContractNotFound"
+  | "TooManyContracts";

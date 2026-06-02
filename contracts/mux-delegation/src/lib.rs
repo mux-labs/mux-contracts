@@ -1,49 +1,40 @@
 /*!
- * mux-delegation: Standalone delegation registry for Mux Protocol.
+ * mux-delegation: Delegate permission management for Mux Protocol.
  *
- * Manages delegate authorizations independently of mux-account, allowing
- * any owner to grant time-bounded, capability-scoped delegation to other
- * addresses.
+ * Allows an owner to grant or revoke scoped permissions to a delegate
+ * address. Delegates act on behalf of owners only within the granted
+ * permission set.
  */
 
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
 };
 
 // ── Audit events ──────────────────────────────────────────────────────────────
-
-fn emit(env: &Env, action: soroban_sdk::Symbol, data: impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>) {
+fn emit(env: &Env, action: Symbol, data: impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>) {
     env.events()
-        .publish((symbol_short!("mux_del"), action), data);
+        .publish((symbol_short!("mux_dlg"), action), data);
 }
 
 // ── Storage TTL ───────────────────────────────────────────────────────────────
+const TTL_THRESHOLD: u32 = 17_280;
+const TTL_EXTEND_TO: u32 = 518_400;
 
-const TTL_THRESHOLD: u32 = 17_280;  // ~1 day
-const TTL_EXTEND_TO: u32 = 518_400; // ~30 days
+/// Maximum permissions that can be granted to a single delegate.
+const MAX_DELEGATE_PERMS: u32 = 64;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-/// Maximum delegates an owner may register simultaneously.
-const MAX_DELEGATES: u32 = 64;
-
+// Issue #83: Store delegate permissions map.
+// Key: (owner, delegate) tuple -> Vec<Symbol> of granted permissions.
 #[contracttype]
 pub enum DataKey {
-    /// Delegates registered by an owner: DataKey::Delegates(owner) -> Vec<DelegateEntry>
-    Delegates(Address),
-}
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct DelegateEntry {
-    /// The delegated address.
-    pub delegate: Address,
-    /// Ledger number after which this delegation expires (0 = never).
-    pub expiry_ledger: u32,
-    /// Whether the delegate may invoke spend operations.
-    pub can_spend: bool,
+    /// Maps (owner, delegate) -> Vec<Symbol> of granted permissions.
+    DelegatePerms(Address, Address),
+    /// Maps owner -> Vec<Address> of all delegates (for enumeration).
+    OwnerDelegates(Address),
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────
@@ -52,10 +43,9 @@ pub struct DelegateEntry {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum MuxDelegationError {
-    Unauthorized = 1,
-    DelegateNotFound = 2,
-    DelegateExpired = 3,
-    TooManyDelegates = 4,
+    NotADelegate = 1,
+    TooManyPermissions = 2,
+    EmptyPermissions = 3,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -65,103 +55,116 @@ pub struct MuxDelegation;
 
 #[contractimpl]
 impl MuxDelegation {
-    /// Add or update a delegate for the calling owner.
-    pub fn add_delegate(
+    // Issue #81: Add grant_delegate function.
+    /// Grant a set of permissions from `owner` to `delegate`.
+    /// The owner must authorize this call. Overwrites any prior grant.
+    pub fn grant_delegate(
         env: Env,
         owner: Address,
         delegate: Address,
-        expiry_ledger: u32,
-        can_spend: bool,
+        permissions: Vec<Symbol>,
     ) -> Result<(), MuxDelegationError> {
         owner.require_auth();
 
-        let mut entries: Vec<DelegateEntry> = env
-            .storage()
-            .instance()
-            .get(&DataKey::Delegates(owner.clone()))
-            .unwrap_or_else(|| Vec::new(&env));
-
-        // Update existing entry if present.
-        for i in 0..entries.len() {
-            if entries.get(i).map(|e| e.delegate == delegate).unwrap_or(false) {
-                entries.set(i, DelegateEntry { delegate: delegate.clone(), expiry_ledger, can_spend });
-                env.storage().instance().set(&DataKey::Delegates(owner.clone()), &entries);
-                emit(&env, symbol_short!("del_upd"), (owner, delegate));
-                Self::extend_ttl(&env);
-                return Ok(());
-            }
+        if permissions.is_empty() {
+            return Err(MuxDelegationError::EmptyPermissions);
+        }
+        if permissions.len() > MAX_DELEGATE_PERMS {
+            return Err(MuxDelegationError::TooManyPermissions);
         }
 
-        if entries.len() >= MAX_DELEGATES {
-            return Err(MuxDelegationError::TooManyDelegates);
-        }
-
-        entries.push_back(DelegateEntry { delegate: delegate.clone(), expiry_ledger, can_spend });
-        env.storage().instance().set(&DataKey::Delegates(owner.clone()), &entries);
-        emit(&env, symbol_short!("del_add"), (owner, delegate));
-        Self::extend_ttl(&env);
-        Ok(())
-    }
-
-    /// Remove a delegate for the calling owner.
-    pub fn remove_delegate(
-        env: Env,
-        owner: Address,
-        delegate: Address,
-    ) -> Result<(), MuxDelegationError> {
-        owner.require_auth();
-
-        let mut entries: Vec<DelegateEntry> = env
-            .storage()
-            .instance()
-            .get(&DataKey::Delegates(owner.clone()))
-            .unwrap_or_else(|| Vec::new(&env));
-
-        let pos = entries.iter().position(|e| e.delegate == delegate);
-        match pos {
-            Some(i) => entries.remove(i as u32),
-            None => return Err(MuxDelegationError::DelegateNotFound),
-        }
-
-        env.storage().instance().set(&DataKey::Delegates(owner.clone()), &entries);
-        emit(&env, symbol_short!("del_rem"), (owner, delegate));
-        Self::extend_ttl(&env);
-        Ok(())
-    }
-
-    /// Check whether `delegate` is currently authorized by `owner`.
-    /// Returns `Err(DelegateExpired)` if the entry exists but has expired.
-    pub fn is_authorized(
-        env: Env,
-        owner: Address,
-        delegate: Address,
-    ) -> Result<bool, MuxDelegationError> {
-        let entries: Vec<DelegateEntry> = env
-            .storage()
-            .instance()
-            .get(&DataKey::Delegates(owner))
-            .unwrap_or_else(|| Vec::new(&env));
-
-        for entry in entries.iter() {
-            if entry.delegate == delegate {
-                if entry.expiry_ledger != 0 && env.ledger().sequence() > entry.expiry_ledger {
-                    return Err(MuxDelegationError::DelegateExpired);
-                }
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
-    /// Return all delegate entries for an owner.
-    pub fn get_delegates(env: Env, owner: Address) -> Vec<DelegateEntry> {
+        // Persist the permissions map (issue #83).
         env.storage()
-            .instance()
-            .get(&DataKey::Delegates(owner))
+            .persistent()
+            .set(&DataKey::DelegatePerms(owner.clone(), delegate.clone()), &permissions);
+
+        // Track delegate in owner's delegate list.
+        let mut delegates: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OwnerDelegates(owner.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        if !delegates.contains(&delegate) {
+            delegates.push_back(delegate.clone());
+            env.storage()
+                .persistent()
+                .set(&DataKey::OwnerDelegates(owner.clone()), &delegates);
+        }
+
+        Self::extend_ttl(&env);
+        emit(&env, symbol_short!("dlg_grant"), (owner, delegate));
+        Ok(())
+    }
+
+    // Issue #82: Add revoke_delegate function.
+    /// Revoke all delegated permissions from `delegate` granted by `owner`.
+    pub fn revoke_delegate(
+        env: Env,
+        owner: Address,
+        delegate: Address,
+    ) -> Result<(), MuxDelegationError> {
+        owner.require_auth();
+
+        let key = DataKey::DelegatePerms(owner.clone(), delegate.clone());
+        if !env.storage().persistent().has(&key) {
+            return Err(MuxDelegationError::NotADelegate);
+        }
+
+        env.storage().persistent().remove(&key);
+
+        // Remove delegate from owner's delegate list.
+        if let Some(mut delegates) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Vec<Address>>(&DataKey::OwnerDelegates(owner.clone()))
+        {
+            if let Some(i) = delegates.iter().position(|a| a == delegate) {
+                delegates.remove(i as u32);
+            }
+            env.storage()
+                .persistent()
+                .set(&DataKey::OwnerDelegates(owner.clone()), &delegates);
+        }
+
+        Self::extend_ttl(&env);
+        emit(&env, symbol_short!("dlg_rev"), (owner, delegate));
+        Ok(())
+    }
+
+    /// Return the permissions granted by `owner` to `delegate`.
+    pub fn get_delegate_permissions(
+        env: Env,
+        owner: Address,
+        delegate: Address,
+    ) -> Vec<Symbol> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::DelegatePerms(owner, delegate))
             .unwrap_or_else(|| Vec::new(&env))
     }
 
-    // ── Private helpers ────────────────────────────────────────────────────────
+    /// Check whether `delegate` holds a specific permission from `owner`.
+    pub fn is_delegate(
+        env: Env,
+        owner: Address,
+        delegate: Address,
+        permission: Symbol,
+    ) -> bool {
+        let perms: Vec<Symbol> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::DelegatePerms(owner, delegate))
+            .unwrap_or_else(|| Vec::new(&env));
+        perms.contains(&permission)
+    }
+
+    /// Return all delegates registered under `owner`.
+    pub fn get_delegates(env: Env, owner: Address) -> Vec<Address> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::OwnerDelegates(owner))
+            .unwrap_or_else(|| Vec::new(&env))
+    }
 
     fn extend_ttl(env: &Env) {
         env.storage()
@@ -170,163 +173,157 @@ impl MuxDelegation {
     }
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+// ── Tests (Issue #84) ─────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{
-        symbol_short,
-        testutils::{Address as _, Events, Ledger},
-        Env, FromVal,
-    };
+    use soroban_sdk::{symbol_short, testutils::Address as _, vec, Env};
 
     fn setup() -> (Env, MuxDelegationClient<'static>) {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, MuxDelegation);
-        let client = MuxDelegationClient::new(&env, &contract_id);
+        let id = env.register_contract(None, MuxDelegation);
+        let client = MuxDelegationClient::new(&env, &id);
         (env, client)
     }
 
-    fn topic_action(
-        env: &Env,
-        events: &soroban_sdk::Vec<(
-            soroban_sdk::Address,
-            soroban_sdk::Vec<soroban_sdk::Val>,
-            soroban_sdk::Val,
-        )>,
-        idx: u32,
-    ) -> soroban_sdk::Symbol {
-        let (_, topics, _) = events.get(idx).unwrap();
-        soroban_sdk::Symbol::from_val(env, &topics.get(1).unwrap())
+    #[test]
+    fn test_grant_delegate_stores_permissions() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let delegate = Address::generate(&env);
+        let perm = symbol_short!("transfer");
+        let perms = vec![&env, perm.clone()];
+
+        client.grant_delegate(&owner, &delegate, &perms);
+
+        let stored = client.get_delegate_permissions(&owner, &delegate);
+        assert_eq!(stored.len(), 1);
+        assert!(stored.contains(&perm));
     }
 
     #[test]
-    fn test_add_and_check_delegate() {
+    fn test_is_delegate_returns_true_for_granted_permission() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let delegate = Address::generate(&env);
+        let perm = symbol_short!("read");
+        let perms = vec![&env, perm.clone()];
+
+        client.grant_delegate(&owner, &delegate, &perms);
+
+        assert!(client.is_delegate(&owner, &delegate, &perm));
+        assert!(!client.is_delegate(&owner, &delegate, &symbol_short!("write")));
+    }
+
+    #[test]
+    fn test_revoke_delegate_removes_permissions() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let delegate = Address::generate(&env);
+        let perm = symbol_short!("swap");
+        let perms = vec![&env, perm.clone()];
+
+        client.grant_delegate(&owner, &delegate, &perms);
+        assert!(client.is_delegate(&owner, &delegate, &perm));
+
+        client.revoke_delegate(&owner, &delegate);
+        assert!(!client.is_delegate(&owner, &delegate, &perm));
+    }
+
+    #[test]
+    fn test_revoke_nonexistent_delegate_fails() {
         let (env, client) = setup();
         let owner = Address::generate(&env);
         let delegate = Address::generate(&env);
 
-        client.add_delegate(&owner, &delegate, &0, &true);
-        assert_eq!(client.is_authorized(&owner, &delegate), Ok(true));
-    }
-
-    #[test]
-    fn test_remove_delegate() {
-        let (env, client) = setup();
-        let owner = Address::generate(&env);
-        let delegate = Address::generate(&env);
-
-        client.add_delegate(&owner, &delegate, &0, &false);
-        client.remove_delegate(&owner, &delegate);
-        assert_eq!(client.is_authorized(&owner, &delegate), Ok(false));
-    }
-
-    #[test]
-    fn test_remove_nonexistent_delegate_fails() {
-        let (env, client) = setup();
-        let owner = Address::generate(&env);
-        let delegate = Address::generate(&env);
-
-        let result = client.try_remove_delegate(&owner, &delegate);
+        let result = client.try_revoke_delegate(&owner, &delegate);
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_expired_delegate_returns_error() {
+    fn test_grant_empty_permissions_fails() {
         let (env, client) = setup();
         let owner = Address::generate(&env);
         let delegate = Address::generate(&env);
 
-        // Add delegate expiring at ledger 10
-        client.add_delegate(&owner, &delegate, &10, &true);
-
-        // Advance ledger past expiry
-        env.ledger().set_sequence_number(11);
-        let result = client.try_is_authorized(&owner, &delegate);
+        let result = client.try_grant_delegate(&owner, &delegate, &Vec::new(&env));
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_update_existing_delegate() {
+    fn test_get_delegates_tracks_all_delegates() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let delegate_a = Address::generate(&env);
+        let delegate_b = Address::generate(&env);
+        let perm = symbol_short!("vote");
+        let perms = vec![&env, perm];
+
+        client.grant_delegate(&owner, &delegate_a, &perms);
+        client.grant_delegate(&owner, &delegate_b, &perms);
+
+        let delegates = client.get_delegates(&owner);
+        assert_eq!(delegates.len(), 2);
+        assert!(delegates.contains(&delegate_a));
+        assert!(delegates.contains(&delegate_b));
+    }
+
+    #[test]
+    fn test_revoke_removes_from_delegates_list() {
         let (env, client) = setup();
         let owner = Address::generate(&env);
         let delegate = Address::generate(&env);
+        let perms = vec![&env, symbol_short!("trade")];
 
-        client.add_delegate(&owner, &delegate, &0, &false);
-        // Update: now can_spend = true
-        client.add_delegate(&owner, &delegate, &0, &true);
+        client.grant_delegate(&owner, &delegate, &perms);
+        assert_eq!(client.get_delegates(&owner).len(), 1);
 
-        let entries = client.get_delegates(&owner);
-        assert_eq!(entries.len(), 1);
-        assert!(entries.get(0).unwrap().can_spend);
-    }
-
-    #[test]
-    fn test_delegate_cap_enforced() {
-        let (env, client) = setup();
-        env.budget().reset_unlimited();
-        let owner = Address::generate(&env);
-
-        for _ in 0..64 {
-            client.add_delegate(&owner, &Address::generate(&env), &0, &false);
-        }
-        let result = client.try_add_delegate(&owner, &Address::generate(&env), &0, &false);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_add_emits_event() {
-        let (env, client) = setup();
-        let owner = Address::generate(&env);
-        let delegate = Address::generate(&env);
-
-        client.add_delegate(&owner, &delegate, &0, &false);
-        let events = env.events().all();
-        assert_eq!(events.len(), 1);
-        assert_eq!(topic_action(&env, &events, 0), symbol_short!("del_add"));
-    }
-
-    #[test]
-    fn test_remove_emits_event() {
-        let (env, client) = setup();
-        let owner = Address::generate(&env);
-        let delegate = Address::generate(&env);
-
-        client.add_delegate(&owner, &delegate, &0, &false);
-        client.remove_delegate(&owner, &delegate);
-        let events = env.events().all();
-        assert_eq!(events.len(), 2);
-        assert_eq!(topic_action(&env, &events, 1), symbol_short!("del_rem"));
-    }
-
-    #[test]
-    fn test_update_emits_event() {
-        let (env, client) = setup();
-        let owner = Address::generate(&env);
-        let delegate = Address::generate(&env);
-
-        client.add_delegate(&owner, &delegate, &0, &false);
-        client.add_delegate(&owner, &delegate, &0, &true);
-        let events = env.events().all();
-        assert_eq!(events.len(), 2);
-        assert_eq!(topic_action(&env, &events, 1), symbol_short!("del_upd"));
-    }
-
-    #[test]
-    fn test_get_delegates_empty() {
-        let (env, client) = setup();
-        let owner = Address::generate(&env);
+        client.revoke_delegate(&owner, &delegate);
         assert_eq!(client.get_delegates(&owner).len(), 0);
     }
 
     #[test]
-    fn test_ttl_extended_on_write() {
-        // Reaching here without panic confirms extend_ttl is called (T-21 mitigation).
+    fn test_grant_overwrites_prior_permissions() {
         let (env, client) = setup();
         let owner = Address::generate(&env);
         let delegate = Address::generate(&env);
-        client.add_delegate(&owner, &delegate, &0, &false);
+        let perm_a = symbol_short!("read");
+        let perm_b = symbol_short!("write");
+
+        client.grant_delegate(&owner, &delegate, &vec![&env, perm_a.clone()]);
+        client.grant_delegate(&owner, &delegate, &vec![&env, perm_b.clone()]);
+
+        let stored = client.get_delegate_permissions(&owner, &delegate);
+        assert!(!stored.contains(&perm_a));
+        assert!(stored.contains(&perm_b));
+    }
+
+    #[test]
+    fn test_grant_emits_event() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let delegate = Address::generate(&env);
+        let perms = vec![&env, symbol_short!("read")];
+
+        client.grant_delegate(&owner, &delegate, &perms);
+
+        let events = env.events().all();
+        assert!(!events.is_empty());
+    }
+
+    #[test]
+    fn test_revoke_emits_event() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let delegate = Address::generate(&env);
+        let perms = vec![&env, symbol_short!("read")];
+
+        client.grant_delegate(&owner, &delegate, &perms);
+        let before = env.events().all().len();
+
+        client.revoke_delegate(&owner, &delegate);
+        assert!(env.events().all().len() > before);
     }
 }

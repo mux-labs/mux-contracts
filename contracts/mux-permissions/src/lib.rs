@@ -56,6 +56,8 @@ pub enum MuxPermissionsError {
     // every caller that touches this contract.
     TooManyMembers = 7,
     TooManyRoles = 8,
+    AdminNotFound = 9,
+    AlreadyApproved = 10,
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -248,6 +250,8 @@ impl MuxPermissions {
         env.storage()
             .instance()
             .set(&DataKey::AdminThreshold, &threshold);
+        emit(&env, symbol_short!("adm_thr"), threshold);
+        Self::extend_ttl(&env);
         Ok(())
     }
 
@@ -266,9 +270,11 @@ impl MuxPermissions {
                 .set(&DataKey::PendingAdmins, &pending);
             // Initialize approvals list for this candidate
             env.storage().instance().set(
-                &DataKey::AdminApprovals(new_admin),
+                &DataKey::AdminApprovals(new_admin.clone()),
                 &Vec::<Address>::new(&env),
             );
+            emit(&env, symbol_short!("adm_prp"), new_admin);
+            Self::extend_ttl(&env);
         }
         Ok(())
     }
@@ -301,7 +307,7 @@ impl MuxPermissions {
         if approvals.contains(&approver) {
             return Err(MuxPermissionsError::AlreadyApproved);
         }
-        approvals.push_back(approver);
+        approvals.push_back(approver.clone());
         env.storage()
             .instance()
             .set(&DataKey::AdminApprovals(new_admin.clone()), &approvals);
@@ -327,8 +333,11 @@ impl MuxPermissions {
             env.storage()
                 .instance()
                 .set(&DataKey::PendingAdmins, &updated_pending);
+            emit(&env, symbol_short!("adm_prm"), new_admin.clone());
+        } else {
+            emit(&env, symbol_short!("adm_apr"), (approver, new_admin));
         }
-
+        Self::extend_ttl(&env);
         Ok(())
     }
 
@@ -529,5 +538,86 @@ mod tests {
         // setup() calls initialize; if extend_ttl was missing the SDK would
         // panic when TTL_EXTEND_TO > remaining TTL.  Reaching here is the assertion.
         let (_env, _client, _admin) = setup();
+    }
+
+    #[test]
+    fn test_set_admin_threshold_emits_event() {
+        let (env, client, _admin) = setup();
+        client.set_admin_threshold(&2_u32);
+        let events = env.events().all();
+        // init + adm_thr
+        assert_eq!(events.len(), 2);
+        assert_eq!(topic_action(&env, &events, 1), symbol_short!("adm_thr"));
+    }
+
+    #[test]
+    fn test_propose_admin_emits_event() {
+        let (env, client, _admin) = setup();
+        let candidate = Address::generate(&env);
+        client.propose_admin(&candidate);
+        let events = env.events().all();
+        // init + adm_prp
+        assert_eq!(events.len(), 2);
+        assert_eq!(topic_action(&env, &events, 1), symbol_short!("adm_prp"));
+    }
+
+    #[test]
+    fn test_propose_admin_idempotent_no_duplicate_event() {
+        let (env, client, _admin) = setup();
+        let candidate = Address::generate(&env);
+        client.propose_admin(&candidate);
+        // Proposing the same candidate again must not emit a second event.
+        client.propose_admin(&candidate);
+        let events = env.events().all();
+        // init + adm_prp (only once)
+        assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn test_approve_admin_emits_approval_event() {
+        let (env, client, admin) = setup();
+        // threshold=2 so first approval does not promote
+        client.set_admin_threshold(&2_u32);
+        let candidate = Address::generate(&env);
+        client.propose_admin(&candidate);
+        client.approve_admin(&admin, &candidate);
+        let events = env.events().all();
+        // init + adm_thr + adm_prp + adm_apr
+        assert_eq!(events.len(), 4);
+        assert_eq!(topic_action(&env, &events, 3), symbol_short!("adm_apr"));
+    }
+
+    #[test]
+    fn test_approve_admin_emits_promotion_event() {
+        let (env, client, admin) = setup();
+        // threshold=1 so the first approval immediately promotes
+        client.set_admin_threshold(&1_u32);
+        let candidate = Address::generate(&env);
+        client.propose_admin(&candidate);
+        client.approve_admin(&admin, &candidate);
+        let events = env.events().all();
+        // init + adm_thr + adm_prp + adm_prm
+        assert_eq!(events.len(), 4);
+        assert_eq!(topic_action(&env, &events, 3), symbol_short!("adm_prm"));
+    }
+
+    #[test]
+    fn test_approve_admin_duplicate_approver_fails() {
+        let (env, client, admin) = setup();
+        client.set_admin_threshold(&2_u32);
+        let candidate = Address::generate(&env);
+        client.propose_admin(&candidate);
+        client.approve_admin(&admin, &candidate);
+        // Same approver a second time must fail.
+        let result = client.try_approve_admin(&admin, &candidate);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_approve_nonexistent_pending_admin_fails() {
+        let (env, client, admin) = setup();
+        let ghost = Address::generate(&env);
+        let result = client.try_approve_admin(&admin, &ghost);
+        assert!(result.is_err());
     }
 }
