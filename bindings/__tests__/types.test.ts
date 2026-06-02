@@ -4,6 +4,7 @@ import {
   getNetworkConfig,
 } from "../src/network";
 import type { BatchOperationKind, Operation } from "../src/types";
+import { MuxWalletRegistryClient } from "../src/index";
 
 describe("NETWORK_CONFIGS", () => {
   it("defines localnet config", () => {
@@ -131,5 +132,19 @@ describe("BatchOperationKind", () => {
       };
       expect(op.kind).toBe(kind);
     });
+  });
+});
+
+describe("MuxWalletRegistryClient export", () => {
+  it("is exported from the package index", () => {
+    expect(typeof MuxWalletRegistryClient).toBe("function");
+  });
+
+  it("exposes registerWallet method", () => {
+    expect(typeof MuxWalletRegistryClient.prototype.registerWallet).toBe("function");
+  });
+
+  it("exposes getWallet method", () => {
+    expect(typeof MuxWalletRegistryClient.prototype.getWallet).toBe("function");
   });
 });

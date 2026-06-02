@@ -77,3 +77,9 @@ export type MuxRegistryError =
   | "Unauthorized"
   | "ContractNotFound"
   | "TooManyContracts";
+
+export type WalletRegistryError =
+  | "NotInitialized"
+  | "AlreadyInitialized"
+  | "Unauthorized"
+  | "WalletNotFound";
