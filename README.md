@@ -78,6 +78,18 @@ bash scripts/generate-bindings.sh
 cd bindings && npm ci && npm run build
 ```
 
+## Deploying Contracts
+
+Copy the deployment environment template and fill in your values before running any deploy script:
+
+```bash
+cp .env.deploy.example .env.deploy
+# edit .env.deploy with your network, keypair, and RPC endpoint
+source .env.deploy && bash scripts/generate-bindings.sh
+```
+
+See [`.env.deploy.example`](.env.deploy.example) for the full list of required and optional variables.
+
 ## Integration Tests
 
 Integration tests connect to a live Soroban RPC endpoint (localnet, testnet, or mainnet) and verify contract deployment.
