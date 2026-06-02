@@ -118,6 +118,36 @@ describe("Error Mapping", () => {
         expect(response.statusCode).toBeLessThan(600);
       });
     });
+
+    it("handles all MuxAccountFactoryError variants", () => {
+      const factoryErrors: string[] = [
+        "Unauthorized",
+        "InvalidAccount",
+        "TooManyAccounts",
+      ];
+
+      factoryErrors.forEach((error) => {
+        const response = contractErrorToHttp(error);
+        expect(response.statusCode).toBeGreaterThanOrEqual(400);
+        expect(response.statusCode).toBeLessThan(600);
+      });
+    });
+
+    it("handles all MuxRegistryError variants", () => {
+      const registryErrors: string[] = [
+        "NotInitialized",
+        "AlreadyInitialized",
+        "Unauthorized",
+        "ContractNotFound",
+        "TooManyContracts",
+      ];
+
+      registryErrors.forEach((error) => {
+        const response = contractErrorToHttp(error);
+        expect(response.statusCode).toBeGreaterThanOrEqual(400);
+        expect(response.statusCode).toBeLessThan(600);
+      });
+    });
   });
 
   describe("isContractError", () => {
