@@ -23,6 +23,8 @@ fn emit(env: &Env, action: soroban_sdk::Symbol, data: impl soroban_sdk::IntoVal<
 #[contracttype]
 pub enum DataKey {
     Admin,
+    /// The address of the mux-registry contract this policy is linked to.
+    RegistryId,
     /// Per-wallet daily spend limit record.
     WalletLimit(Address),
 }
@@ -69,13 +71,18 @@ pub struct MuxPolicy;
 
 #[contractimpl]
 impl MuxPolicy {
-    /// Initialize the policy contract with an admin address.
-    pub fn initialize(env: Env, admin: Address) -> Result<(), MuxPolicyError> {
+    /// Initialize the policy contract with an admin address and a registry ID.
+    ///
+    /// `registry_id` is the address of the deployed `mux-registry` contract
+    /// that this policy is linked to. It is stored immutably and can be
+    /// retrieved via [`MuxPolicy::get_registry_id`].
+    pub fn initialize(env: Env, admin: Address, registry_id: Address) -> Result<(), MuxPolicyError> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(MuxPolicyError::AlreadyInitialized);
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage().instance().set(&DataKey::RegistryId, &registry_id);
         emit(&env, symbol_short!("init"), admin);
         Self::extend_ttl(&env);
         Ok(())
@@ -172,6 +179,17 @@ impl MuxPolicy {
         Ok(())
     }
 
+    /// Return the registry contract address this policy is linked to.
+    ///
+    /// # Errors
+    /// * [`MuxPolicyError::NotInitialized`] — if the contract has not been initialised.
+    pub fn get_registry_id(env: Env) -> Result<Address, MuxPolicyError> {
+        env.storage()
+            .instance()
+            .get(&DataKey::RegistryId)
+            .ok_or(MuxPolicyError::NotInitialized)
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────────
 
     fn require_admin(env: &Env) -> Result<(), MuxPolicyError> {
@@ -221,7 +239,8 @@ mod tests {
         let contract_id = env.register_contract(None, MuxPolicy);
         let client = MuxPolicyClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let registry_id = Address::generate(&env);
+        client.initialize(&admin, &registry_id);
         (env, client, admin)
     }
 
@@ -232,7 +251,8 @@ mod tests {
         let contract_id = env.register_contract(None, MuxPolicy);
         let client = MuxPolicyClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        let registry_id = Address::generate(&env);
+        client.initialize(&admin, &registry_id);
         let events = env.events().all();
         assert_eq!(events.len(), 1);
         assert_eq!(topic_action(&env, &events, 0), symbol_short!("init"));
@@ -241,7 +261,8 @@ mod tests {
     #[test]
     fn test_double_initialize_fails() {
         let (env, client, admin) = setup();
-        assert!(client.try_initialize(&admin).is_err());
+        let registry_id = Address::generate(&env);
+        assert!(client.try_initialize(&admin, &registry_id).is_err());
     }
 
     #[test]
@@ -321,41 +342,20 @@ mod tests {
     }
 
     #[test]
-    fn test_double_initialize_fails() {
-        let (_env, client, admin) = setup();
-        assert!(client.try_initialize(&admin).is_err());
-    }
-
-    #[test]
-    fn test_initialize_emits_event() {
-        let (env, client, admin) = {
-            let env = Env::default();
-            env.mock_all_auths();
-            let contract_id = env.register_contract(None, MuxPolicy);
-            let client = MuxPolicyClient::new(&env, &contract_id);
-            let admin = Address::generate(&env);
-            (env, client, admin)
-        };
-        client.initialize(&admin);
-        let events = env.events().all();
-        assert_eq!(events.len(), 1);
-        assert_eq!(topic_action(&env, &events, 0), symbol_short!("init"));
-    }
-
-    #[test]
-    fn test_multiple_assets_independent() {
-        let (env, client, _) = setup();
-        let asset_a = Address::generate(&env);
-        let asset_b = Address::generate(&env);
-        client.set_limit(&asset_a, &100_i128, &10_u32);
-        client.set_limit(&asset_b, &999_i128, &99_u32);
-        assert_eq!(client.get_limit(&asset_a).amount, 100);
-        assert_eq!(client.get_limit(&asset_b).amount, 999);
-    }
-
-    #[test]
     fn test_ttl_extended_on_write() {
         // Reaching here without panic confirms extend_ttl was called (T-21).
         let (_env, _client, _admin) = setup();
+    }
+
+    #[test]
+    fn test_get_registry_id() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxPolicy);
+        let client = MuxPolicyClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let registry_id = Address::generate(&env);
+        client.initialize(&admin, &registry_id);
+        assert_eq!(client.get_registry_id(), registry_id);
     }
 }
