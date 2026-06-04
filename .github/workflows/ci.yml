@@ -45,8 +45,18 @@ jobs:
       - name: cargo test
         run: cargo test --workspace --all-features
 
-  contract-size:
-    name: Contract Size Check
+  security-audit:
+    name: Security Audit (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked --version 0.16.4
+      - name: Run cargo-deny
+        run: cargo deny check advisories licenses sources
+
+  wasm-size:
+    name: WASM Size Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
