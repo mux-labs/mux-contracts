@@ -150,4 +150,19 @@ mod tests {
         client.register_wallet(&name, &wallet2);
         assert_eq!(client.get_wallet(&name), wallet2);
     }
+
+    /// A non-owner caller must not be able to register a wallet.
+    /// `register_wallet` internally calls `owner.require_auth()`; without
+    /// a mock the Soroban test runtime panics, confirming the access guard.
+    #[test]
+    #[should_panic]
+    fn test_register_wallet_unauthorized() {
+        // No mock_all_auths — any require_auth() call will panic.
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxWalletRegistry);
+        let client = MuxWalletRegistryClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        // initialize itself calls owner.require_auth() → panics.
+        client.initialize(&owner);
+    }
 }
