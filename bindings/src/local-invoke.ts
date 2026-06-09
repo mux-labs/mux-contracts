@@ -8,10 +8,7 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { NETWORK_CONFIGS } from "./network";
-import {
-  loadContractAddresses,
-  validateAddresses,
-} from "./addresses";
+import { loadContractAddresses } from "./addresses";
 import { DEFAULT_ADDRESSES } from "./addresses-config";
 import { pollTransaction } from "./horizon";
 
