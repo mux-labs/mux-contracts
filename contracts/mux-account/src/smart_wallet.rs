@@ -1,5 +1,4 @@
-#![no_std]
-use soroban_sdk::{contract, contractimpl, Address, BytesN, Env};
+use soroban_sdk::{contract, contractimpl, Address, Env};
 
 #[contract]
 pub struct SmartWallet;
@@ -15,7 +14,7 @@ impl SmartWallet {
     }
 
     /// Execute a transaction payload.
-    pub fn execute(env: Env, target: Address, payload: soroban_sdk::Bytes) {
+    pub fn execute(env: Env, _target: Address, _payload: soroban_sdk::Bytes) {
         let owner: Address = env
             .storage()
             .instance()

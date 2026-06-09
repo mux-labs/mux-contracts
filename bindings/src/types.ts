@@ -73,18 +73,6 @@ export type MuxPermissionsError =
   | "AccountNotInRole"
   | "PermissionNotFound";
 
-export type MuxAccountFactoryError =
-  | "Unauthorized"
-  | "InvalidAccount"
-  | "TooManyAccounts";
-
-export type MuxRegistryError =
-  | "NotInitialized"
-  | "AlreadyInitialized"
-  | "Unauthorized"
-  | "ContractNotFound"
-  | "TooManyContracts";
-
 export interface SpendingPolicyLimit {
   asset: Address;
   limit: bigint;

@@ -130,6 +130,18 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "Executing"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "bool": true
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "GuardianSet"
                             }
                           ]
@@ -231,7 +243,7 @@
             },
             "ext": "v0"
           },
-          4095
+          518400
         ]
       ],
       [
@@ -351,7 +363,7 @@
             },
             "ext": "v0"
           },
-          4095
+          518400
         ]
       ]
     ]
@@ -384,6 +396,29 @@
                   "vec": []
                 }
               ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "mux_acct"
+              },
+              {
+                "symbol": "init"
+              }
+            ],
+            "data": {
+              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
             }
           }
         }
@@ -454,6 +489,42 @@
       "event": {
         "ext": "v0",
         "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "mux_acct"
+              },
+              {
+                "symbol": "lmt_set"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                },
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 1000
+                  }
+                },
+                {
+                  "u32": 100
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
         "type_": "diagnostic",
         "body": {
           "v0": {
@@ -487,6 +558,39 @@
               },
               {
                 "symbol": "debit_spend"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                },
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 500
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "mux_acct"
+              },
+              {
+                "symbol": "debited"
               }
             ],
             "data": {
@@ -581,7 +685,7 @@
             ],
             "data": {
               "error": {
-                "wasm_vm": "invalid_input"
+                "contract": 10
               }
             }
           }
@@ -602,21 +706,12 @@
               },
               {
                 "error": {
-                  "context": "invalid_action"
+                  "contract": 10
                 }
               }
             ],
             "data": {
-              "vec": [
-                {
-                  "string": "frame-exit with Ok(Error) carrying a non-ScErrorType::Contract Error"
-                },
-                {
-                  "error": {
-                    "wasm_vm": "invalid_input"
-                  }
-                }
-              ]
+              "string": "escalating Ok(ScErrorType::Contract) frame-exit to Err"
             }
           }
         }
@@ -636,7 +731,7 @@
               },
               {
                 "error": {
-                  "context": "invalid_action"
+                  "contract": 10
                 }
               }
             ],

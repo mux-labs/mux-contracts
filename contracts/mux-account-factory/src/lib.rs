@@ -14,7 +14,7 @@ use soroban_sdk::{
 // ── Audit events ──────────────────────────────────────────────────────────────
 fn emit(env: &Env, action: soroban_sdk::Symbol, data: impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>) {
     env.events()
-        .publish((symbol_short!(\"mux_fac\"), action), data);
+        .publish((symbol_short!("mux_fac"), action), data);
 }
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
@@ -97,7 +97,7 @@ impl MuxAccountFactory {
             .instance()
             .set(&DataKey::AccountCount, &(count + 1));
 
-        emit(&env, symbol_short!(\"deployed\"), (owner, account_address.clone()));
+        emit(&env, symbol_short!("deployed"), (owner, account_address.clone()));
         Self::extend_ttl(&env);
         Ok(account_address)
     }
@@ -134,7 +134,7 @@ pub mod wallet_factory_stub;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::{testutils::Address as _, Env, FromVal};
 
     fn setup() -> (Env, MuxAccountFactoryClient<'static>) {
         let env = Env::default();
@@ -217,7 +217,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         let (_, topics, _) = events.get(0).unwrap();
         let action = soroban_sdk::Symbol::from_val(&env, &topics.get(1).unwrap());
-        assert_eq!(action, symbol_short!(\"deployed\"));
+        assert_eq!(action, symbol_short!("deployed"));
     }
 
     #[test]

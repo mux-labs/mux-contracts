@@ -255,6 +255,19 @@ impl MuxBatcher {
         Self::execute_batch(env, caller, ops)
     }
 
+    /// Estimate the fee (in stroops) for a batch of the given size.
+    ///
+    /// Returns `Err(BatchTooLarge)` when `op_count` exceeds `max_batch_size`.
+    pub fn estimate_fees(_env: Env, op_count: u32) -> Result<u32, MuxBatcherError> {
+        if op_count == 0 {
+            return Err(MuxBatcherError::EmptyBatch);
+        }
+        if op_count > MAX_BATCH_SIZE {
+            return Err(MuxBatcherError::BatchTooLarge);
+        }
+        Ok(op_count.saturating_mul(FEE_PER_OP))
+    }
+
     /// Simulate a batch without writing state — useful for preflight checks.
     pub fn simulate_batch(
         env: Env,
@@ -476,10 +489,11 @@ mod tests {
             fn_name: symbol_short!("noop"),
             args: Vec::new(&env),
             require_success: true,
+            kind: BatchOperationKind::Invoke,
         });
         let result = client.try_execute_batch(&caller, &ops);
         assert!(result.is_ok());
-        let r = result.unwrap();
+        let r = result.unwrap().unwrap();
         assert_eq!(r.success_count, 1);
         assert_eq!(r.failure_count, 0);
 
@@ -506,6 +520,7 @@ mod tests {
             fn_name: symbol_short!("noop"),
             args: Vec::new(&env),
             require_success: true,
+            kind: BatchOperationKind::Invoke,
         });
         let result = client.try_execute_batch(&caller, &ops);
         assert!(result.is_err());
@@ -552,6 +567,7 @@ mod tests {
                 fn_name: soroban_sdk::symbol_short!("noop"),
                 args: Vec::new(&env),
                 require_success: false,
+                kind: BatchOperationKind::Invoke,
             });
         }
         let result = client.try_submit_batch(&ops);
@@ -623,9 +639,9 @@ mod tests {
         let contract_id = env.register_contract(None, MuxBatcher);
         let client = MuxBatcherClient::new(&env, &contract_id);
 
-        assert_eq!(client.estimate_fees(&1), Ok(100));
-        assert_eq!(client.estimate_fees(&10), Ok(1_000));
-        assert_eq!(client.estimate_fees(&50), Ok(5_000));
+        assert_eq!(client.estimate_fees(&1), 100);
+        assert_eq!(client.estimate_fees(&10), 1_000);
+        assert_eq!(client.estimate_fees(&50), 5_000);
     }
 
     #[test]

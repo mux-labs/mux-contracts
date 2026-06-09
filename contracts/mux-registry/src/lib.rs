@@ -12,7 +12,7 @@ use soroban_sdk::{
 // ── Audit events ──────────────────────────────────────────────────────────────
 fn emit(env: &Env, action: Symbol, data: impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>) {
     env.events()
-        .publish((symbol_short!(\"mux_reg\"), action), data);
+        .publish((symbol_short!("mux_reg"), action), data);
 }
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
@@ -78,7 +78,7 @@ impl MuxRegistry {
         env.storage()
             .instance()
             .set(&DataKey::Names, &Vec::<Symbol>::new(&env));
-        emit(&env, symbol_short!(\"init\"), admin);
+        emit(&env, symbol_short!("init"), admin);
         Self::extend_ttl(&env);
         Ok(())
     }
@@ -103,7 +103,7 @@ impl MuxRegistry {
         env.storage()
             .instance()
             .set(&DataKey::Version(name.clone()), &version);
-        emit(&env, symbol_short!(\"reg\"), (name, version));
+        emit(&env, symbol_short!("reg"), (name, version));
         Self::extend_ttl(&env);
         Ok(())
     }
@@ -214,8 +214,8 @@ mod tests {
     #[test]
     fn test_register_and_get() {
         let (env, client, _) = setup();
-        let name = symbol_short!(\"account\");
-        let version = String::from_str(&env, \"1.0.0\");
+        let name = symbol_short!("account");
+        let version = String::from_str(&env, "1.0.0");
         client.register(&name, &version);
         assert_eq!(client.get_version(&name), version);
         assert!(client.list_contracts().contains(&name));
@@ -224,7 +224,7 @@ mod tests {
     #[test]
     fn test_get_unknown_fails() {
         let (env, client, _) = setup();
-        let result = client.try_get_version(&symbol_short!(\"ghost\"));
+        let result = client.try_get_version(&symbol_short!("ghost"));
         assert!(result.is_err());
     }
 

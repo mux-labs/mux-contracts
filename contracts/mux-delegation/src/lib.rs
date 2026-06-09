@@ -178,7 +178,7 @@ impl MuxDelegation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{symbol_short, testutils::Address as _, vec, Env};
+    use soroban_sdk::{symbol_short, testutils::{Address as _, Events}, vec, Env};
 
     fn setup() -> (Env, MuxDelegationClient<'static>) {
         let env = Env::default();

@@ -122,7 +122,7 @@
             ],
             "data": {
               "error": {
-                "wasm_vm": "invalid_input"
+                "contract": 2
               }
             }
           }
@@ -143,21 +143,12 @@
               },
               {
                 "error": {
-                  "context": "invalid_action"
+                  "contract": 2
                 }
               }
             ],
             "data": {
-              "vec": [
-                {
-                  "string": "frame-exit with Ok(Error) carrying a non-ScErrorType::Contract Error"
-                },
-                {
-                  "error": {
-                    "wasm_vm": "invalid_input"
-                  }
-                }
-              ]
+              "string": "escalating Ok(ScErrorType::Contract) frame-exit to Err"
             }
           }
         }
@@ -177,7 +168,7 @@
               },
               {
                 "error": {
-                  "context": "invalid_action"
+                  "contract": 2
                 }
               }
             ],

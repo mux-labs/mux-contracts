@@ -371,7 +371,7 @@ impl MuxAccount {
     /// Emits a `SessionExecuted` event on successful execution (currently a placeholder).
     pub fn execute_with_session(
         env: Env,
-        session_key: Address,
+        _session_key: Address,
         _payload: Bytes,
     ) -> Result<Bytes, MuxAccountError> {
         // TODO: Validate that session_key is authorized for this account

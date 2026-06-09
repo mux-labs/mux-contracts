@@ -1,9 +1,9 @@
+import type { MuxAccountFactoryError } from "./generated/mux-account-factory";
+import type { MuxRegistryError } from "./generated/mux-registry";
 import type {
   MuxAccountError,
   MuxBatcherError,
   MuxPermissionsError,
-  MuxAccountFactoryError,
-  MuxRegistryError,
 } from "./types";
 
 export interface HttpErrorResponse {

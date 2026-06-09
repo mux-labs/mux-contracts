@@ -11,6 +11,7 @@
 #   --network <name>     Stellar network (testnet|mainnet|localnet, default: testnet)
 #   --contract <name>    Deploy a single contract by name (default: all contracts)
 #   --dry-run            Simulate all deployment steps without executing on-chain transactions
+#   --skip-build         Skip the WASM build step (assumes artifacts already exist)
 #   --rpc-url <url>      Override the RPC URL
 #   --help               Show this help message
 #
@@ -51,6 +52,7 @@ WASM_DIR="${REPO_ROOT}/target/wasm32-unknown-unknown/release"
 
 NETWORK="${SOROBAN_NETWORK:-testnet}"
 DRY_RUN=false
+SKIP_BUILD=false
 TARGET_CONTRACT=""
 RPC_URL_OVERRIDE="${RPC_URL:-}"
 
@@ -92,6 +94,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dry-run)
       DRY_RUN=true
+      shift
+      ;;
+    --skip-build)
+      SKIP_BUILD=true
       shift
       ;;
     --rpc-url)
@@ -193,6 +199,11 @@ preflight_checks() {
 # ─────────────────────────────────────────────────────────────────────────────
 
 build_contracts() {
+  if [[ "$SKIP_BUILD" == "true" ]]; then
+    log_info "Skipping WASM build (--skip-build)"
+    return
+  fi
+
   if [[ "$DRY_RUN" == "true" ]]; then
     log_dry "Would run: cargo build --target wasm32-unknown-unknown --release --workspace"
     return

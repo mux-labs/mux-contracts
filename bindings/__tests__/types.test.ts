@@ -1,11 +1,11 @@
+import { xdr } from "@stellar/stellar-sdk";
 import {
   NETWORK_CONFIGS,
   getActiveNetwork,
   getNetworkConfig,
 } from "../src/network";
-import { MuxSpendingPolicyClient } from "../src/index";
+import { MuxSpendingPolicyClient, MuxWalletRegistryClient } from "../src/index";
 import type { BatchOperationKind, Operation } from "../src/types";
-import { MuxWalletRegistryClient } from "../src/index";
 
 describe("NETWORK_CONFIGS", () => {
   it("defines localnet config", () => {
@@ -119,7 +119,7 @@ describe("BatchOperationKind", () => {
   });
 
   it("Operation accepts each kind variant", () => {
-    const { Address, xdr } = require("@stellar/stellar-sdk");
+    const { Address } = require("@stellar/stellar-sdk");
     const addr = Address.fromString(
       "GATPLJWD4WKPGXT5FVVHO6RXYIBUE6RUHBOBGLAWVE4WDMTBX23EL54Q"
     );
@@ -148,5 +148,16 @@ describe("MuxSpendingPolicyClient export", () => {
   it("exposes setPolicy and getPolicy methods", () => {
     expect(typeof MuxSpendingPolicyClient.prototype.setPolicy).toBe("function");
     expect(typeof MuxSpendingPolicyClient.prototype.getPolicy).toBe("function");
+  });
+});
+
+describe("MuxWalletRegistryClient export", () => {
+  it("is exported from the package index", () => {
+    expect(typeof MuxWalletRegistryClient).toBe("function");
+  });
+
+  it("exposes registerWallet and getWallet methods", () => {
+    expect(typeof MuxWalletRegistryClient.prototype.registerWallet).toBe("function");
+    expect(typeof MuxWalletRegistryClient.prototype.getWallet).toBe("function");
   });
 });

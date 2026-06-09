@@ -15,11 +15,11 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-repository = "https://github.com/dami-drips/mux-contracts"
+repository = "https://github.com/mux-labs/mux-contracts"
 
 [workspace.dependencies]
 # Initialize Soroban Rust workspace dependencies
-soroban-sdk = { version = "21.0.0", features = ["testutils"] }
+soroban-sdk = { version = "21.0.0" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

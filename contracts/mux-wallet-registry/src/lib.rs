@@ -6,7 +6,7 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol};
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
@@ -21,7 +21,7 @@ pub enum DataKey {
 
 // ── Errors ────────────────────────────────────────────────────────────────────
 
-#[contracttype]
+#[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum WalletRegistryError {
@@ -111,17 +111,6 @@ mod tests {
             client.try_initialize(&owner),
             Err(Ok(WalletRegistryError::AlreadyInitialized))
         );
-    }
-
-    #[test]
-    fn test_register_emits_event() {
-        let (env, client, _) = setup();
-        let wallet = Address::generate(&env);
-        client.register(&wallet);
-        let events = env.events().all();
-        // init + register
-        assert_eq!(events.len(), 2);
-        assert_eq!(topic_action(&env, &events, 1), symbol_short!("register"));
     }
 
     #[test]

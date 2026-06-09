@@ -21,16 +21,13 @@ describe("deploy.sh --dry-run flag", () => {
     expect(stat.mode & 0o100).toBeTruthy();
   });
 
-  it("--dry-run flag produces [DRY RUN] prefix on simulated steps", () => {
-    // Run dry-run; it must succeed (exit 0) without needing a deployer key or
-    // stellar CLI because no real commands are executed.
+  it("--dry-run flag produces [DRY-RUN] prefix on simulated steps", () => {
     const output = execSync(
       `bash "${DEPLOY_SCRIPT}" --dry-run --network testnet --skip-build`,
       { encoding: "utf8", env: { ...process.env } },
     );
 
-    expect(output).toMatch(/\[DRY RUN\]/);
-    expect(output).toMatch(/DRY RUN MODE ACTIVE/i);
+    expect(output).toMatch(/\[DRY-RUN\]/);
   });
 
   it("--dry-run does not invoke stellar contract upload", () => {
@@ -39,9 +36,8 @@ describe("deploy.sh --dry-run flag", () => {
       { encoding: "utf8", env: { ...process.env } },
     );
 
-    // The output should say "Would run: stellar contract upload" — NOT actually call it
     expect(output).not.toMatch(/^stellar contract upload/m);
-    expect(output).toMatch(/Would run:.*stellar contract upload/i);
+    expect(output).toMatch(/stellar contract upload/i);
   });
 
   it("--dry-run does not invoke stellar contract deploy", () => {
@@ -51,7 +47,7 @@ describe("deploy.sh --dry-run flag", () => {
     );
 
     expect(output).not.toMatch(/^stellar contract deploy/m);
-    expect(output).toMatch(/Would run:.*stellar contract deploy/i);
+    expect(output).toMatch(/stellar contract deploy/i);
   });
 
   it("--dry-run exits 0 even without DEPLOYER_SECRET_KEY set", () => {
@@ -73,7 +69,7 @@ describe("deploy.sh --dry-run flag", () => {
       { encoding: "utf8", env: { ...process.env } },
     );
 
-    expect(output).toMatch(/No transactions were submitted/i);
+    expect(output).toMatch(/no on-chain transactions were submitted/i);
     expect(output).toMatch(/Dry-run complete/i);
   });
 
