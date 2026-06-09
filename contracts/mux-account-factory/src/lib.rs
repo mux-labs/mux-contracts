@@ -12,7 +12,11 @@ use soroban_sdk::{
 };
 
 // ── Audit events ──────────────────────────────────────────────────────────────
-fn emit(env: &Env, action: soroban_sdk::Symbol, data: impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>) {
+fn emit(
+    env: &Env,
+    action: soroban_sdk::Symbol,
+    data: impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
+) {
     env.events()
         .publish((symbol_short!("mux_fac"), action), data);
 }
@@ -97,7 +101,11 @@ impl MuxAccountFactory {
             .instance()
             .set(&DataKey::AccountCount, &(count + 1));
 
-        emit(&env, symbol_short!("deployed"), (owner, account_address.clone()));
+        emit(
+            &env,
+            symbol_short!("deployed"),
+            (owner, account_address.clone()),
+        );
         Self::extend_ttl(&env);
         Ok(account_address)
     }

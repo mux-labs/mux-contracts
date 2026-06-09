@@ -191,11 +191,7 @@ impl MuxBatcher {
                         env.storage().instance().remove(&DataKey::Executing);
                         // Emit abort event so callers can observe the failure
                         // without relying solely on the error return value.
-                        emit(
-                            &env,
-                            symbol_short!("bat_abort"),
-                            caller,
-                        );
+                        emit(&env, symbol_short!("bat_abort"), caller);
                         return Err(MuxBatcherError::RequiredOperationFailed);
                     }
                     failure_count += 1;
@@ -247,10 +243,7 @@ impl MuxBatcher {
     /// the invoking address, so callers do not need to pass it explicitly.
     ///
     /// Emits the same events as `execute_batch`.
-    pub fn submit_batch(
-        env: Env,
-        ops: Vec<Operation>,
-    ) -> Result<BatchResult, MuxBatcherError> {
+    pub fn submit_batch(env: Env, ops: Vec<Operation>) -> Result<BatchResult, MuxBatcherError> {
         let caller = env.current_contract_address();
         Self::execute_batch(env, caller, ops)
     }

@@ -13,7 +13,11 @@ use soroban_sdk::{
 };
 
 // ── Audit events ──────────────────────────────────────────────────────────────
-fn emit(env: &Env, action: soroban_sdk::Symbol, data: impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>) {
+fn emit(
+    env: &Env,
+    action: soroban_sdk::Symbol,
+    data: impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
+) {
     env.events()
         .publish((symbol_short!("mux_pol"), action), data);
 }
@@ -132,11 +136,7 @@ impl MuxPolicy {
     ///
     /// Resets the counter if the day window has elapsed, then debits `amount`.
     /// Returns `LimitExceeded` if the debit would exceed the daily limit.
-    pub fn record_spend(
-        env: Env,
-        wallet: Address,
-        amount: i128,
-    ) -> Result<(), MuxPolicyError> {
+    pub fn record_spend(env: Env, wallet: Address, amount: i128) -> Result<(), MuxPolicyError> {
         wallet.require_auth();
         if amount <= 0 {
             return Err(MuxPolicyError::InvalidAmount);
@@ -150,10 +150,7 @@ impl MuxPolicy {
         // Reset counter if the day window has elapsed.
         if env.ledger().sequence() >= record.reset_ledger {
             record.spent = 0;
-            record.reset_ledger = env
-                .ledger()
-                .sequence()
-                .saturating_add(record.day_ledgers);
+            record.reset_ledger = env.ledger().sequence().saturating_add(record.day_ledgers);
         }
 
         let new_spent = record
@@ -258,15 +255,21 @@ mod tests {
     fn test_set_daily_limit_invalid_amount() {
         let (env, client, _) = setup();
         let wallet = Address::generate(&env);
-        assert!(client.try_set_daily_limit(&wallet, &0_i128, &17280_u32).is_err());
-        assert!(client.try_set_daily_limit(&wallet, &-1_i128, &17280_u32).is_err());
+        assert!(client
+            .try_set_daily_limit(&wallet, &0_i128, &17280_u32)
+            .is_err());
+        assert!(client
+            .try_set_daily_limit(&wallet, &-1_i128, &17280_u32)
+            .is_err());
     }
 
     #[test]
     fn test_set_daily_limit_invalid_period() {
         let (env, client, _) = setup();
         let wallet = Address::generate(&env);
-        assert!(client.try_set_daily_limit(&wallet, &1000_i128, &0_u32).is_err());
+        assert!(client
+            .try_set_daily_limit(&wallet, &1000_i128, &0_u32)
+            .is_err());
     }
 
     #[test]

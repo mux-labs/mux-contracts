@@ -74,9 +74,10 @@ impl MuxDelegation {
         }
 
         // Persist the permissions map (issue #83).
-        env.storage()
-            .persistent()
-            .set(&DataKey::DelegatePerms(owner.clone(), delegate.clone()), &permissions);
+        env.storage().persistent().set(
+            &DataKey::DelegatePerms(owner.clone(), delegate.clone()),
+            &permissions,
+        );
 
         // Track delegate in owner's delegate list.
         let mut delegates: Vec<Address> = env
@@ -132,11 +133,7 @@ impl MuxDelegation {
     }
 
     /// Return the permissions granted by `owner` to `delegate`.
-    pub fn get_delegate_permissions(
-        env: Env,
-        owner: Address,
-        delegate: Address,
-    ) -> Vec<Symbol> {
+    pub fn get_delegate_permissions(env: Env, owner: Address, delegate: Address) -> Vec<Symbol> {
         env.storage()
             .persistent()
             .get(&DataKey::DelegatePerms(owner, delegate))
@@ -144,12 +141,7 @@ impl MuxDelegation {
     }
 
     /// Check whether `delegate` holds a specific permission from `owner`.
-    pub fn is_delegate(
-        env: Env,
-        owner: Address,
-        delegate: Address,
-        permission: Symbol,
-    ) -> bool {
+    pub fn is_delegate(env: Env, owner: Address, delegate: Address, permission: Symbol) -> bool {
         let perms: Vec<Symbol> = env
             .storage()
             .persistent()
@@ -178,7 +170,11 @@ impl MuxDelegation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{symbol_short, testutils::{Address as _, Events}, vec, Env};
+    use soroban_sdk::{
+        symbol_short,
+        testutils::{Address as _, Events},
+        vec, Env,
+    };
 
     fn setup() -> (Env, MuxDelegationClient<'static>) {
         let env = Env::default();
