@@ -2,11 +2,29 @@
  * mux-spending-policy: Spending-policy enforcement contract for Mux Protocol.
  *
  * Stores per-account spend limits and validates spend requests against them.
+ *
+ * ## Audit Events
+ *
+ * This contract emits the following events:
+ * - `initialize`: Emitted when the contract is initialized with an admin address.
+ * - `lmt_set`: Emitted when a spending limit policy is created or updated.
+ *
+ * Events can be queried via the Soroban RPC `getEvents` endpoint with contract ID filter.
  */
 
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env};
+
+// ── Audit events ──────────────────────────────────────────────────────────────
+fn emit(
+    env: &Env,
+    action: soroban_sdk::Symbol,
+    data: impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
+) {
+    env.events()
+        .publish((symbol_short!("mux_spend"), action), data);
+}
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
@@ -52,6 +70,7 @@ impl MuxSpendingPolicy {
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
+        emit(&env, symbol_short!("init"), admin);
         Ok(())
     }
 
@@ -66,7 +85,8 @@ impl MuxSpendingPolicy {
         let policy = SpendLimit { asset: asset.clone(), limit };
         env.storage()
             .instance()
-            .set(&DataKey::SpendLimit(account, asset), &policy);
+            .set(&DataKey::SpendLimit(account.clone(), asset.clone()), &policy);
+        emit(&env, symbol_short!("lmt_set"), (account, asset, limit));
         Ok(())
     }
 
@@ -480,5 +500,121 @@ mod tests {
         assert_eq!(policy.limit, 1);
         assert!(client.try_check_spend(&account, &asset, &1).is_ok());
         assert!(client.try_check_spend(&account, &asset, &2).is_err());
+    }
+
+    // ── Audit Event Tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_initialize_emits_event() {
+        use soroban_sdk::testutils::Events;
+        
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxSpendingPolicy);
+        let client = MuxSpendingPolicyClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        
+        client.initialize(&admin);
+        
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        
+        let (_, topics, data) = events.get(0).unwrap();
+        assert_eq!(topics.len(), 2);
+        
+        // Verify topics
+        let contract_tag = soroban_sdk::Symbol::from_val(&env, &topics.get(0).unwrap());
+        let action = soroban_sdk::Symbol::from_val(&env, &topics.get(1).unwrap());
+        assert_eq!(contract_tag, symbol_short!("mux_spend"));
+        assert_eq!(action, symbol_short!("init"));
+    }
+
+    #[test]
+    fn test_set_policy_emits_event() {
+        use soroban_sdk::testutils::Events;
+        
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        
+        // Clear events from setup (initialize event)
+        env.events().all();
+        
+        client.set_policy(&account, &asset, &1000);
+        
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        
+        let (_, topics, _) = events.get(0).unwrap();
+        
+        // Verify topics
+        let contract_tag = soroban_sdk::Symbol::from_val(&env, &topics.get(0).unwrap());
+        let action = soroban_sdk::Symbol::from_val(&env, &topics.get(1).unwrap());
+        assert_eq!(contract_tag, symbol_short!("mux_spend"));
+        assert_eq!(action, symbol_short!("lmt_set"));
+    }
+
+    #[test]
+    fn test_multiple_events_emitted() {
+        use soroban_sdk::testutils::Events;
+        
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxSpendingPolicy);
+        let client = MuxSpendingPolicyClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let account1 = Address::generate(&env);
+        let asset1 = Address::generate(&env);
+        let account2 = Address::generate(&env);
+        let asset2 = Address::generate(&env);
+        
+        // Initialize
+        client.initialize(&admin);
+        
+        // Set first policy
+        client.set_policy(&account1, &asset1, &1000);
+        
+        // Set second policy
+        client.set_policy(&account2, &asset2, &2000);
+        
+        let events = env.events().all();
+        
+        // Should have 3 events: initialize + 2 set_policy
+        assert_eq!(events.len(), 3);
+        
+        // Verify first event is initialize
+        let (_, topics1, _) = events.get(0).unwrap();
+        let action1 = soroban_sdk::Symbol::from_val(&env, &topics1.get(1).unwrap());
+        assert_eq!(action1, symbol_short!("init"));
+        
+        // Verify second event is set_policy
+        let (_, topics2, _) = events.get(1).unwrap();
+        let action2 = soroban_sdk::Symbol::from_val(&env, &topics2.get(1).unwrap());
+        assert_eq!(action2, symbol_short!("lmt_set"));
+        
+        // Verify third event is set_policy
+        let (_, topics3, _) = events.get(2).unwrap();
+        let action3 = soroban_sdk::Symbol::from_val(&env, &topics3.get(1).unwrap());
+        assert_eq!(action3, symbol_short!("lmt_set"));
+    }
+
+    #[test]
+    fn test_check_spend_does_not_emit_event() {
+        use soroban_sdk::testutils::Events;
+        
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        
+        client.set_policy(&account, &asset, &1000);
+        
+        // Clear events from setup and set_policy
+        env.events().all();
+        
+        // check_spend should not emit events (read-only operation)
+        client.check_spend(&account, &asset, &500);
+        
+        let events = env.events().all();
+        assert_eq!(events.len(), 0);
     }
 }
