@@ -23,21 +23,22 @@ export interface LocalInvokeOptions {
   simulateOnly?: boolean;
 }
 
-export type NamedContract = "mux-account" | "mux-batcher" | "mux-permissions";
+export type NamedContract = "mux-account" | "mux-batcher" | "mux-permissions" | "mux-registry";
 
 export function resolveContractId(
   contractName: NamedContract,
   network: string
 ): string {
-  const supported: Record<NamedContract, "muxAccount" | "muxBatcher" | "muxPermissions"> = {
+  const supported: Record<NamedContract, string> = {
     "mux-account": "muxAccount",
     "mux-batcher": "muxBatcher",
     "mux-permissions": "muxPermissions",
+    "mux-registry": "muxRegistry",
   };
 
   const contractKey = supported[contractName];
   const addresses = loadContractAddresses(network, DEFAULT_ADDRESSES);
-  const contractId = addresses[contractKey];
+  const contractId = (addresses as unknown as Record<string, string | undefined>)[contractKey];
   if (!contractId) {
     throw new Error(
       `Contract address for ${contractName} is not configured on network ${network}. ` +
@@ -232,7 +233,7 @@ Options:
   --network <network>           Use SOROBAN_NETWORK (localnet|testnet|mainnet). Default: localnet
   --rpc-url <url>               Override the Soroban RPC endpoint
   --contract-id <contractId>    Explicit contract ID to invoke
-  --contract-name <name>        Named contract (mux-account|mux-batcher|mux-permissions)
+  --contract-name <name>        Named contract (mux-account|mux-batcher|mux-permissions|mux-registry)
   --function <name>             Contract function name to invoke
   --secret-key <secret>         Signer secret key for the transaction
   --arg <value>                 Argument for the contract function (repeatable)

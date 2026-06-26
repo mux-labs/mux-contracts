@@ -38,6 +38,8 @@ export function loadContractAddresses(
     muxPermissions:
       process.env[`${envPrefix}_MUX_PERMISSIONS_ID`] ||
       networkConfig.muxPermissions,
+    muxRegistry:
+      process.env[`${envPrefix}_MUX_REGISTRY_ID`] || networkConfig.muxRegistry,
   };
 
   return addresses;
