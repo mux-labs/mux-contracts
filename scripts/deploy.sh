@@ -151,6 +151,7 @@ ALL_CONTRACTS=(
   "mux-batcher"
   "mux-permissions"
   "mux-registry"
+  "mux-wallet-registry"
 )
 
 if [[ -n "$TARGET_CONTRACT" ]]; then
