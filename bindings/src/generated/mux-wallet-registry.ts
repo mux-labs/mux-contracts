@@ -18,6 +18,13 @@ import {
 } from "@stellar/stellar-sdk";
 import { pollTransaction } from "../horizon";
 
+export type WalletRegistryError =
+  | "NotInitialized"
+  | "AlreadyInitialized"
+  | "Unauthorized"
+  | "WalletNotFound"
+  | "TooManyWallets";
+
 export interface MuxWalletRegistryClientOptions {
   contractId: string;
   networkPassphrase: string;

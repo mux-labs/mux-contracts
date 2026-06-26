@@ -1,5 +1,6 @@
 import type { MuxAccountFactoryError } from "./generated/mux-account-factory";
 import type { MuxRegistryError } from "./generated/mux-registry";
+import type { WalletRegistryError } from "./generated/mux-wallet-registry";
 import type {
   MuxAccountError,
   MuxBatcherError,
@@ -17,7 +18,8 @@ type ContractError =
   | MuxBatcherError
   | MuxPermissionsError
   | MuxAccountFactoryError
-  | MuxRegistryError;
+  | MuxRegistryError
+  | WalletRegistryError;
 
 /**
  * Maps contract error variants to HTTP status codes.
@@ -56,6 +58,10 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   // Capacity limits → 409 Conflict
   TooManyAccounts: 409,
   TooManyContracts: 409,
+  TooManyWallets: 409,
+
+  // Wallet registry not-found → 404
+  WalletNotFound: 404,
 
   // Internal/Uninitialized → 500
   NotInitialized: 500,
