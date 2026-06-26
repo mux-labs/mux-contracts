@@ -2,6 +2,27 @@
  * mux-wallet-registry: Wallet registry contract for Mux Protocol.
  *
  * Allows an owner to register and look up wallet addresses by a symbolic name.
+ *
+ * ## Upgrade Migration Notes
+ *
+ * When upgrading this contract to a new version:
+ *
+ * 1. **Storage Compatibility**: All storage keys (Owner, Wallet) must remain stable.
+ *    Do not change DataKey enum variants or their discriminants.
+ *
+ * 2. **Owner Migration**: The Owner address will persist across upgrades.
+ *    No migration action required for existing owner authorization.
+ *
+ * 3. **Wallet Registry Migration**: All registered wallet entries (Symbol -> Address)
+ *    will remain accessible. Maintain backward compatibility with existing wallet lookups.
+ *
+ * 4. **Breaking Changes**: If introducing new storage fields, ensure they are optional
+ *    to maintain compatibility with existing instances. Use a version marker if needed.
+ *
+ * 5. **Testing**: After upgrade, verify:
+ *    - Owner can still authorize operations
+ *    - All registered wallets can be retrieved
+ *    - New wallets can be registered
  */
 
 #![no_std]
