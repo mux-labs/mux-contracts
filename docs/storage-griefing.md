@@ -24,6 +24,7 @@ On Soroban, every contract pays **rent** for the ledger entries it occupies.  Al
 | `mux-account` | `Delegates` map | `DataKey::Delegates` | `MAX_DELEGATES = 64` | `TooManyDelegates` |
 | `mux-permissions` | `RoleMembers` vec | `DataKey::RoleMembers(role)` | `MAX_ROLE_MEMBERS = 256` | `TooManyMembers` |
 | `mux-permissions` | `AccountRoles` vec | `DataKey::AccountRoles(account)` | `MAX_ROLES_PER_ACCOUNT = 32` | `TooManyRoles` |
+| `mux-registry` | `Names` vec | `DataKey::Names` | `MAX_CONTRACTS = 128` | `TooManyContracts` |
 
 Caps are enforced on **new insertions only**; updates to existing entries are always allowed.
 
@@ -71,6 +72,7 @@ Run this job at least once every **25 days** to stay ahead of the 30-day TTL win
 | `Delegates` map | ~72 bytes | 64 | ~4.6 KB |
 | `RoleMembers` vec | ~32 bytes | 256 | ~8 KB |
 | `AccountRoles` vec | ~8 bytes | 32 | ~256 bytes |
+| `Names` vec (`mux-registry`) | ~16 bytes | 128 | ~2 KB |
 | `SpendLimit` per asset | ~80 bytes | owner-controlled | unbounded (owner only) |
 
 `SpendLimit` keys are written only by the contract owner and are not publicly writable, so no cap is enforced.  Owners should avoid registering an excessive number of distinct assets.
@@ -86,3 +88,4 @@ Run this job at least once every **25 days** to stay ahead of the 30-day TTL win
 | T-19 | Admin assigns excessive roles to one account | `MAX_ROLES_PER_ACCOUNT = 32` in `grant_role` |
 | T-20 | Spend limits accumulate unbounded per-asset keys | No public write path; owner-only |
 | T-21 | Instance storage TTL expiry causes silent data loss | `extend_ttl` on every write + keeper job |
+| T-22 | Admin floods registry Names vec via `register` or `register_with_metadata` | `MAX_CONTRACTS = 128` enforced in both functions |
