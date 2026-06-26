@@ -10,33 +10,46 @@ use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, 
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
+/// Key space used by the spending-policy contract.
 #[contracttype]
 pub enum DataKey {
+    /// Instance storage key for the admin address.
     Admin,
-    /// SpendLimit(account, asset) -> SpendLimit
+    /// Persistent policy record keyed by (account, asset).
     SpendLimit(Address, Address),
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+/// A spend policy describing the maximum spendable amount for a given asset.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct SpendLimit {
+    /// Asset identifier associated with the policy.
     pub asset: Address,
+    /// Maximum amount that may be spent for the asset.
     pub limit: i128,
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────
 
+/// Errors returned by the spending-policy contract.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum SpendingPolicyError {
+    /// The contract has not been initialized.
     NotInitialized = 1,
+    /// The contract was already initialized.
     AlreadyInitialized = 2,
+    /// The caller is not authorized to perform the requested action.
     Unauthorized = 3,
+    /// No spend policy exists for the requested account/asset pair.
     PolicyNotFound = 4,
+    /// The requested spend exceeds the configured policy limit.
     SpendLimitExceeded = 5,
+    /// The provided input is invalid (for example a non-positive limit).
+    InvalidInput = 6,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -46,6 +59,7 @@ pub struct MuxSpendingPolicy;
 
 #[contractimpl]
 impl MuxSpendingPolicy {
+    /// Initialize the contract with the admin address that may manage policies.
     pub fn initialize(env: Env, admin: Address) -> Result<(), SpendingPolicyError> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(SpendingPolicyError::AlreadyInitialized);
@@ -55,7 +69,10 @@ impl MuxSpendingPolicy {
         Ok(())
     }
 
-    /// Set a spend limit for an account/asset pair. Admin only.
+    /// Set or replace the spend limit for an account/asset pair.
+    ///
+    /// Only the initialized admin can change policies. The configured limit
+    /// must be strictly positive.
     pub fn set_policy(
         env: Env,
         account: Address,
@@ -63,6 +80,9 @@ impl MuxSpendingPolicy {
         limit: i128,
     ) -> Result<(), SpendingPolicyError> {
         Self::require_admin(&env)?;
+        if limit <= 0 {
+            return Err(SpendingPolicyError::InvalidInput);
+        }
         let policy = SpendLimit { asset: asset.clone(), limit };
         env.storage()
             .instance()
@@ -83,14 +103,19 @@ impl MuxSpendingPolicy {
     }
 
     /// Check whether `amount` is within the policy limit for `account`/`asset`.
-    /// Returns Ok(()) if allowed, Err(SpendLimitExceeded) if over limit,
-    /// or Err(PolicyNotFound) if no policy is set.
+    ///
+    /// Returns `Ok(())` when the spend is allowed, `Err(SpendLimitExceeded)`
+    /// when the spend exceeds the configured limit, `Err(PolicyNotFound)` when
+    /// no policy is configured, and `Err(InvalidInput)` for negative amounts.
     pub fn check_spend(
         env: Env,
         account: Address,
         asset: Address,
         amount: i128,
     ) -> Result<(), SpendingPolicyError> {
+        if amount < 0 {
+            return Err(SpendingPolicyError::InvalidInput);
+        }
         let policy: SpendLimit = env
             .storage()
             .instance()
@@ -189,8 +214,30 @@ mod tests {
     }
 
     #[test]
-    fn test_spend_limit_exceeded_error_code() {
-        // Verify SpendLimitExceeded has the expected discriminant value (5)
-        assert_eq!(SpendingPolicyError::SpendLimitExceeded as u32, 5);
+    fn test_set_policy_rejects_non_positive_limit() {
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        let result = client.try_set_policy(&account, &asset, &0);
+        assert!(result.is_err());
+        let err = result.unwrap_err().unwrap();
+        assert_eq!(err, SpendingPolicyError::InvalidInput);
+    }
+
+    #[test]
+    fn test_check_spend_rejects_negative_amount() {
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        client.set_policy(&account, &asset, &1000);
+        let result = client.try_check_spend(&account, &asset, &-1);
+        assert!(result.is_err());
+        let err = result.unwrap_err().unwrap();
+        assert_eq!(err, SpendingPolicyError::InvalidInput);
+    }
+
+    #[test]
+    fn test_invalid_input_error_code() {
+        assert_eq!(SpendingPolicyError::InvalidInput as u32, 6);
     }
 }
