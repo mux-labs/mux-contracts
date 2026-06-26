@@ -148,6 +148,24 @@ describe("Error Mapping", () => {
         expect(response.statusCode).toBeLessThan(600);
       });
     });
+
+    it("handles all MuxPolicyError variants", () => {
+      const policyErrors: string[] = [
+        "NotInitialized",
+        "AlreadyInitialized",
+        "Unauthorized",
+        "LimitNotFound",
+        "LimitExceeded",
+        "InvalidAmount",
+        "InvalidPeriod",
+      ];
+
+      policyErrors.forEach((error) => {
+        const response = contractErrorToHttp(error);
+        expect(response.statusCode).toBeGreaterThanOrEqual(400);
+        expect(response.statusCode).toBeLessThan(600);
+      });
+    });
   });
 
   describe("isContractError", () => {

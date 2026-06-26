@@ -328,4 +328,54 @@ mod tests {
         // Reaching here without panic confirms extend_ttl was called (T-21).
         let (_env, _client, _admin) = setup();
     }
+
+    // ── Negative path tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_record_spend_invalid_amount() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        client.set_daily_limit(&wallet, &1000_i128, &17280_u32);
+        assert!(client.try_record_spend(&wallet, &0_i128).is_err());
+        assert!(client.try_record_spend(&wallet, &-1_i128).is_err());
+    }
+
+    #[test]
+    fn test_record_spend_not_found() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        assert!(client.try_record_spend(&wallet, &100_i128).is_err());
+    }
+
+    #[test]
+    fn test_set_daily_limit_not_initialized() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxPolicy);
+        let client = MuxPolicyClient::new(&env, &contract_id);
+        let wallet = Address::generate(&env);
+        assert!(client
+            .try_set_daily_limit(&wallet, &1000_i128, &17280_u32)
+            .is_err());
+    }
+
+    #[test]
+    fn test_record_spend_not_initialized() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxPolicy);
+        let client = MuxPolicyClient::new(&env, &contract_id);
+        let wallet = Address::generate(&env);
+        assert!(client.try_record_spend(&wallet, &100_i128).is_err());
+    }
+
+    #[test]
+    fn test_record_spend_overflow_guard() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        client.set_daily_limit(&wallet, &i128::MAX, &17280_u32);
+        client.record_spend(&wallet, &(i128::MAX - 1));
+        // checked_add(i128::MAX - 1, 2) overflows → LimitExceeded
+        assert!(client.try_record_spend(&wallet, &2_i128).is_err());
+    }
 }

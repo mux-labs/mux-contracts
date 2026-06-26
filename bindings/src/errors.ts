@@ -37,11 +37,13 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   AccountNotInRole: 404,
   PermissionNotFound: 404,
   ContractNotFound: 404,
+  LimitNotFound: 404,
 
   // Validation/Constraint errors → 400
   InvalidAmount: 400,
   InvalidPeriod: 400,
   SpendLimitExceeded: 400,
+  LimitExceeded: 400,
   DelegateExpired: 400,
   EmptyBatch: 400,
   BatchTooLarge: 400,
