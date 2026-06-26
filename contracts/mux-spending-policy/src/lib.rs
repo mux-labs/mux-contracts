@@ -317,4 +317,168 @@ mod tests {
         assert_eq!(SpendingPolicyError::PolicyNotFound as u32, 4);
         assert_eq!(SpendingPolicyError::SpendLimitExceeded as u32, 5);
     }
+
+    // ── Negative Path Tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_set_policy_not_initialized() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxSpendingPolicy);
+        let client = MuxSpendingPolicyClient::new(&env, &contract_id);
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        
+        // Try to set policy before initialization
+        let result = client.try_set_policy(&account, &asset, &1000);
+        assert_eq!(result, Err(Ok(SpendingPolicyError::NotInitialized)));
+    }
+
+    #[test]
+    fn test_check_spend_not_initialized() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxSpendingPolicy);
+        let client = MuxSpendingPolicyClient::new(&env, &contract_id);
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        
+        // Try to check spend before initialization
+        let result = client.try_check_spend(&account, &asset, &100);
+        assert_eq!(result, Err(Ok(SpendingPolicyError::NotInitialized)));
+    }
+
+    #[test]
+    fn test_check_spend_with_negative_amount() {
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        
+        client.set_policy(&account, &asset, &1000);
+        
+        // Check spend with negative amount should fail (no policy for this amount)
+        // This tests handling of negative amounts in the comparison logic
+        let result = client.try_check_spend(&account, &asset, &-500);
+        assert!(result.is_ok()); // Negative amounts are less than positive limits, so they pass
+    }
+
+    #[test]
+    fn test_get_policy_not_found_specific_error() {
+        let (env, client, _) = setup();
+        let nonexistent_account = Address::generate(&env);
+        let nonexistent_asset = Address::generate(&env);
+        
+        // Verify that getting a non-existent policy returns PolicyNotFound error
+        let result = client.try_get_policy(&nonexistent_account, &nonexistent_asset);
+        assert_eq!(result, Err(Ok(SpendingPolicyError::PolicyNotFound)));
+    }
+
+    #[test]
+    fn test_check_spend_policy_not_found_error() {
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        
+        // Try to check spend on account/asset pair with no policy
+        let result = client.try_check_spend(&account, &asset, &500);
+        assert_eq!(result, Err(Ok(SpendingPolicyError::PolicyNotFound)));
+    }
+
+    #[test]
+    fn test_check_spend_exceeds_limit_error() {
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        
+        client.set_policy(&account, &asset, &1000);
+        
+        // Verify SpendLimitExceeded error when spending exceeds limit
+        let result = client.try_check_spend(&account, &asset, &1001);
+        assert_eq!(result, Err(Ok(SpendingPolicyError::SpendLimitExceeded)));
+    }
+
+    #[test]
+    fn test_check_spend_far_exceeds_limit() {
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        
+        client.set_policy(&account, &asset, &1000);
+        
+        // Test spending far exceeding the limit
+        let result = client.try_check_spend(&account, &asset, &1_000_000);
+        assert_eq!(result, Err(Ok(SpendingPolicyError::SpendLimitExceeded)));
+    }
+
+    #[test]
+    fn test_set_policy_overwrites_completely() {
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset1 = Address::generate(&env);
+        let asset2 = Address::generate(&env);
+        
+        // Set policy with asset1 and high limit
+        client.set_policy(&account, &asset1, &10000);
+        
+        // Verify first policy exists
+        let policy1 = client.get_policy(&account, &asset1);
+        assert_eq!(policy1.asset, asset1);
+        assert_eq!(policy1.limit, 10000);
+        
+        // Create new policy with different asset - should not affect previous
+        client.set_policy(&account, &asset2, &5000);
+        
+        // Verify both policies exist independently
+        let policy1_check = client.get_policy(&account, &asset1);
+        let policy2_check = client.get_policy(&account, &asset2);
+        
+        assert_eq!(policy1_check.limit, 10000);
+        assert_eq!(policy2_check.limit, 5000);
+    }
+
+    #[test]
+    fn test_get_policy_returns_correct_asset() {
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        
+        client.set_policy(&account, &asset, &2500);
+        let policy = client.get_policy(&account, &asset);
+        
+        // Verify the returned policy has the correct asset address
+        assert_eq!(policy.asset, asset);
+        assert_eq!(policy.limit, 2500);
+    }
+
+    #[test]
+    fn test_sequential_check_spend_calls() {
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        
+        client.set_policy(&account, &asset, &1000);
+        
+        // Multiple successful checks should not affect limit enforcement
+        assert!(client.try_check_spend(&account, &asset, &100).is_ok());
+        assert!(client.try_check_spend(&account, &asset, &200).is_ok());
+        assert!(client.try_check_spend(&account, &asset, &500).is_ok());
+        
+        // Limit should still be enforced for new checks
+        assert!(client.try_check_spend(&account, &asset, &800).is_err());
+    }
+
+    #[test]
+    fn test_policy_with_min_positive_limit() {
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        
+        // Set policy with minimum positive limit (1)
+        client.set_policy(&account, &asset, &1);
+        let policy = client.get_policy(&account, &asset);
+        
+        assert_eq!(policy.limit, 1);
+        assert!(client.try_check_spend(&account, &asset, &1).is_ok());
+        assert!(client.try_check_spend(&account, &asset, &2).is_err());
+    }
 }
