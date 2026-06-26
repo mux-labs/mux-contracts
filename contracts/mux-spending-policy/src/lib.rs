@@ -193,4 +193,128 @@ mod tests {
         // Verify SpendLimitExceeded has the expected discriminant value (5)
         assert_eq!(SpendingPolicyError::SpendLimitExceeded as u32, 5);
     }
+
+    // ── Unit Tests ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_double_initialize_fails() {
+        let (env, client, admin) = setup();
+        // Second attempt to initialize should fail
+        let result = client.try_initialize(&admin);
+        assert_eq!(result, Err(Ok(SpendingPolicyError::AlreadyInitialized)));
+    }
+
+    #[test]
+    fn test_set_policy_updates_existing() {
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        
+        // Set initial policy
+        client.set_policy(&account, &asset, &1000);
+        let policy1 = client.get_policy(&account, &asset);
+        assert_eq!(policy1.limit, 1000);
+        
+        // Update the policy to a new limit
+        client.set_policy(&account, &asset, &5000);
+        let policy2 = client.get_policy(&account, &asset);
+        assert_eq!(policy2.limit, 5000);
+        assert_eq!(policy2.asset, asset);
+    }
+
+    #[test]
+    fn test_multiple_accounts_same_asset() {
+        let (env, client, _) = setup();
+        let asset = Address::generate(&env);
+        let account1 = Address::generate(&env);
+        let account2 = Address::generate(&env);
+        
+        // Set policies for two different accounts with the same asset
+        client.set_policy(&account1, &asset, &1000);
+        client.set_policy(&account2, &asset, &2000);
+        
+        // Verify each account has its own policy
+        let policy1 = client.get_policy(&account1, &asset);
+        let policy2 = client.get_policy(&account2, &asset);
+        
+        assert_eq!(policy1.limit, 1000);
+        assert_eq!(policy2.limit, 2000);
+        assert_eq!(policy1.asset, asset);
+        assert_eq!(policy2.asset, asset);
+    }
+
+    #[test]
+    fn test_multiple_assets_same_account() {
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset1 = Address::generate(&env);
+        let asset2 = Address::generate(&env);
+        
+        // Set policies for the same account with two different assets
+        client.set_policy(&account, &asset1, &1000);
+        client.set_policy(&account, &asset2, &5000);
+        
+        // Verify each asset has its own policy for the same account
+        let policy1 = client.get_policy(&account, &asset1);
+        let policy2 = client.get_policy(&account, &asset2);
+        
+        assert_eq!(policy1.limit, 1000);
+        assert_eq!(policy1.asset, asset1);
+        assert_eq!(policy2.limit, 5000);
+        assert_eq!(policy2.asset, asset2);
+    }
+
+    #[test]
+    fn test_policy_boundary_values() {
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        
+        // Test with very large limit (max i128)
+        let max_limit = i128::MAX;
+        client.set_policy(&account, &asset, &max_limit);
+        let policy = client.get_policy(&account, &asset);
+        assert_eq!(policy.limit, max_limit);
+        
+        // Test check_spend at exactly the limit
+        assert!(client.try_check_spend(&account, &asset, &max_limit).is_ok());
+    }
+
+    #[test]
+    fn test_check_spend_at_exact_limit() {
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        let limit = 1000;
+        
+        client.set_policy(&account, &asset, &limit);
+        
+        // Spending exactly at the limit should succeed
+        assert!(client.try_check_spend(&account, &asset, &limit).is_ok());
+        
+        // Spending 1 more should fail
+        assert!(client.try_check_spend(&account, &asset, &(limit + 1)).is_err());
+    }
+
+    #[test]
+    fn test_check_spend_zero_amount() {
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        
+        client.set_policy(&account, &asset, &1000);
+        
+        // Spending zero should be allowed (no validation against zero in current implementation)
+        assert!(client.try_check_spend(&account, &asset, &0).is_ok());
+    }
+
+    #[test]
+    fn test_error_codes_mapping() {
+        // Verify all error codes have expected discriminant values
+        assert_eq!(SpendingPolicyError::NotInitialized as u32, 1);
+        assert_eq!(SpendingPolicyError::AlreadyInitialized as u32, 2);
+        assert_eq!(SpendingPolicyError::Unauthorized as u32, 3);
+        assert_eq!(SpendingPolicyError::PolicyNotFound as u32, 4);
+        assert_eq!(SpendingPolicyError::SpendLimitExceeded as u32, 5);
+    }
 }
