@@ -22,3 +22,9 @@ This document provides a comprehensive reference for all error codes used within
 ## Mux Registry (`contracts/mux-registry`)
 - `RegistryError::ContractNotFound` (5001) - The specified contract was not found in the registry.
 - `RegistryError::VersionMismatch` (5002) - The contract version does not match the expected version.
+
+## Mux Wallet Registry (`contracts/mux-wallet-registry`)
+- `WalletRegistryError::NotInitialized` (1) - `initialize` has not been called; the owner is unknown.
+- `WalletRegistryError::AlreadyInitialized` (2) - `initialize` was called a second time on the same instance.
+- `WalletRegistryError::Unauthorized` (3) - Reserved. Auth failures are surfaced as host errors by `Address::require_auth`.
+- `WalletRegistryError::WalletNotFound` (4) - No wallet is registered under the requested name.
