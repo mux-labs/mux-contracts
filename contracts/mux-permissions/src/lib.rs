@@ -620,4 +620,81 @@ mod tests {
         let result = client.try_approve_admin(&admin, &ghost);
         assert!(result.is_err());
     }
+
+    // ── Negative path tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_revoke_role_from_non_member_fails() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let role = symbol_short!("viewer");
+        client.create_role(&role, &Vec::new(&env));
+        let result = client.try_revoke_role(&user, &role);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_revoke_role_nonexistent_role_fails() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let result = client.try_revoke_role(&user, &symbol_short!("ghost"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_role_members_nonexistent_role_fails() {
+        let (_env, client, _admin) = setup();
+        let result = client.try_get_role_members(&symbol_short!("nope"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_has_permission_returns_false_for_unknown_account() {
+        let (env, client, _admin) = setup();
+        let stranger = Address::generate(&env);
+        assert!(!client.has_permission(&stranger, &symbol_short!("read")));
+    }
+
+    #[test]
+    fn test_has_permission_returns_false_for_ungranted_perm() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let role = symbol_short!("editor");
+        let mut perms: Vec<Symbol> = Vec::new(&env);
+        perms.push_back(symbol_short!("write"));
+        client.create_role(&role, &perms);
+        client.grant_role(&user, &role);
+        assert!(!client.has_permission(&user, &symbol_short!("delete")));
+    }
+
+    #[test]
+    fn test_get_roles_returns_empty_for_unknown_account() {
+        let (env, client, _admin) = setup();
+        let stranger = Address::generate(&env);
+        let roles = client.get_roles(&stranger);
+        assert_eq!(roles.len(), 0);
+    }
+
+    #[test]
+    fn test_grant_role_idempotent_no_duplicate() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let role = symbol_short!("editor");
+        client.create_role(&role, &Vec::new(&env));
+        client.grant_role(&user, &role);
+        client.grant_role(&user, &role);
+        let members = client.get_role_members(&role);
+        assert_eq!(members.len(), 1);
+    }
+
+    #[test]
+    fn test_set_admin_threshold_zero_allows_instant_promotion() {
+        let (env, client, admin) = setup();
+        client.set_admin_threshold(&0_u32);
+        let candidate = Address::generate(&env);
+        client.propose_admin(&candidate);
+        client.approve_admin(&admin, &candidate);
+        let pending = client.get_pending_admins();
+        assert!(!pending.contains(&candidate));
+    }
 }
