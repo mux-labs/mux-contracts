@@ -45,6 +45,14 @@ jobs:
       - name: Check contract sizes
         run: bash scripts/check-contract-sizes.sh
 
+  deploy-dry-run:
+    name: Deploy dry-run (batcher)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test deploy dry-run for mux-batcher
+        run: bash scripts/test-deploy-dry-run.sh
+
   bindings:
     name: TypeScript Bindings
     runs-on: ubuntu-latest
