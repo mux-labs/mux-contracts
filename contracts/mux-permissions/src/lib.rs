@@ -210,7 +210,7 @@ impl MuxPermissions {
         let account_roles: Vec<Symbol> = env
             .storage()
             .instance()
-            .get(&DataKey::AccountRoles(account))
+            .get(&DataKey::AccountRoles(account.clone()))
             .unwrap_or_else(|| Vec::new(&env));
 
         for role in account_roles.iter() {
@@ -220,9 +220,11 @@ impl MuxPermissions {
                 .get(&DataKey::RolePermissions(role))
                 .unwrap_or_else(|| Vec::new(&env));
             if perms.contains(&permission) {
+                emit(&env, symbol_short!("perm_ok"), (account, permission));
                 return true;
             }
         }
+        emit(&env, symbol_short!("perm_den"), (account, permission));
         false
     }
 
@@ -619,5 +621,36 @@ mod tests {
         let ghost = Address::generate(&env);
         let result = client.try_approve_admin(&admin, &ghost);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_has_permission_emits_perm_ok() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let role = symbol_short!("auditor");
+        let perm = symbol_short!("read");
+        let mut perms: Vec<Symbol> = Vec::new(&env);
+        perms.push_back(perm.clone());
+        client.create_role(&role, &perms);
+        client.grant_role(&user, &role);
+
+        assert!(client.has_permission(&user, &perm));
+
+        let events = env.events().all();
+        let last = events.len() - 1;
+        assert_eq!(topic_action(&env, &events, last), symbol_short!("perm_ok"));
+    }
+
+    #[test]
+    fn test_has_permission_emits_perm_den_on_missing() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let perm = symbol_short!("secret");
+
+        assert!(!client.has_permission(&user, &perm));
+
+        let events = env.events().all();
+        let last = events.len() - 1;
+        assert_eq!(topic_action(&env, &events, last), symbol_short!("perm_den"));
     }
 }
