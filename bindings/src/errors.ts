@@ -56,6 +56,12 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   // Capacity limits → 409 Conflict
   TooManyAccounts: 409,
   TooManyContracts: 409,
+  TooManyMembers: 409,
+  TooManyRoles: 409,
+  AlreadyApproved: 409,
+
+  // Not Found (admin-related) → 404
+  AdminNotFound: 404,
 
   // Internal/Uninitialized → 500
   NotInitialized: 500,

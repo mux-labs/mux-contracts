@@ -9,7 +9,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String,
+    Symbol, Vec,
 };
 
 // ── Audit events ──────────────────────────────────────────────────────────────
@@ -349,6 +350,29 @@ impl MuxPermissions {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    // ── Error code mapping ─────────────────────────────────────────────────────
+
+    /// Return a human-readable description for a given error code.
+    ///
+    /// Useful for off-chain tooling (SDKs, front-ends, explorers) that need to
+    /// translate the raw `u32` error codes produced by the contract into
+    /// actionable messages without hard-coding them in client code.
+    pub fn error_message(env: Env, code: u32) -> String {
+        match code {
+            1 => String::from_str(&env, "contract not initialized"),
+            2 => String::from_str(&env, "contract already initialized"),
+            3 => String::from_str(&env, "caller is not authorized"),
+            4 => String::from_str(&env, "role not found"),
+            5 => String::from_str(&env, "account is not a member of the role"),
+            6 => String::from_str(&env, "permission not found"),
+            7 => String::from_str(&env, "role has too many members"),
+            8 => String::from_str(&env, "account holds too many roles"),
+            9 => String::from_str(&env, "pending admin not found"),
+            10 => String::from_str(&env, "approver has already approved this candidate"),
+            _ => String::from_str(&env, "unknown error code"),
+        }
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────────
 
     fn require_admin(env: &Env) -> Result<(), MuxPermissionsError> {
@@ -377,7 +401,7 @@ mod tests {
     use soroban_sdk::{
         symbol_short,
         testutils::{Address as _, Events},
-        Env, FromVal, Vec,
+        Env, FromVal, String, Vec,
     };
 
     fn topic_action(
@@ -619,5 +643,61 @@ mod tests {
         let ghost = Address::generate(&env);
         let result = client.try_approve_admin(&admin, &ghost);
         assert!(result.is_err());
+    }
+
+    // ── Error code mapping tests ───────────────────────────────────────────────
+
+    #[test]
+    fn test_error_message_all_known_codes() {
+        let (env, client, _admin) = setup();
+        assert_eq!(
+            client.error_message(&1_u32),
+            String::from_str(&env, "contract not initialized")
+        );
+        assert_eq!(
+            client.error_message(&2_u32),
+            String::from_str(&env, "contract already initialized")
+        );
+        assert_eq!(
+            client.error_message(&3_u32),
+            String::from_str(&env, "caller is not authorized")
+        );
+        assert_eq!(
+            client.error_message(&4_u32),
+            String::from_str(&env, "role not found")
+        );
+        assert_eq!(
+            client.error_message(&5_u32),
+            String::from_str(&env, "account is not a member of the role")
+        );
+        assert_eq!(
+            client.error_message(&6_u32),
+            String::from_str(&env, "permission not found")
+        );
+        assert_eq!(
+            client.error_message(&7_u32),
+            String::from_str(&env, "role has too many members")
+        );
+        assert_eq!(
+            client.error_message(&8_u32),
+            String::from_str(&env, "account holds too many roles")
+        );
+        assert_eq!(
+            client.error_message(&9_u32),
+            String::from_str(&env, "pending admin not found")
+        );
+        assert_eq!(
+            client.error_message(&10_u32),
+            String::from_str(&env, "approver has already approved this candidate")
+        );
+    }
+
+    #[test]
+    fn test_error_message_unknown_code_returns_fallback() {
+        let (env, client, _admin) = setup();
+        assert_eq!(
+            client.error_message(&999_u32),
+            String::from_str(&env, "unknown error code")
+        );
     }
 }
