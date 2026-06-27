@@ -679,4 +679,230 @@ mod tests {
         client.grant_role(&user, &role);
         client.revoke_role(&user, &role);
     }
+
+    // ── Additional unit tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_has_permission_returns_false_for_unknown_account() {
+        let (env, client, _admin) = setup();
+        let stranger = Address::generate(&env);
+        assert!(!client.has_permission(&stranger, &symbol_short!("any")));
+    }
+
+    #[test]
+    fn test_get_roles_returns_empty_for_unknown_account() {
+        let (env, client, _admin) = setup();
+        let stranger = Address::generate(&env);
+        let roles = client.get_roles(&stranger);
+        assert_eq!(roles.len(), 0);
+    }
+
+    #[test]
+    fn test_get_role_members_fails_for_nonexistent_role() {
+        let (_env, client, _admin) = setup();
+        let result = client.try_get_role_members(&symbol_short!("nope"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_role_members_returns_empty_after_creation() {
+        let (env, client, _admin) = setup();
+        let role = symbol_short!("empty");
+        client.create_role(&role, &Vec::new(&env));
+        let members = client.get_role_members(&role);
+        assert_eq!(members.len(), 0);
+    }
+
+    #[test]
+    fn test_grant_same_role_twice_is_idempotent() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let role = symbol_short!("dup");
+        client.create_role(&role, &Vec::new(&env));
+        client.grant_role(&user, &role);
+        client.grant_role(&user, &role);
+        let members = client.get_role_members(&role);
+        assert_eq!(members.len(), 1);
+        let roles = client.get_roles(&user);
+        assert_eq!(roles.len(), 1);
+    }
+
+    #[test]
+    fn test_revoke_non_member_fails() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let role = symbol_short!("solo");
+        client.create_role(&role, &Vec::new(&env));
+        let result = client.try_revoke_role(&user, &role);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_revoke_nonexistent_role_fails() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let result = client.try_revoke_role(&user, &symbol_short!("ghost"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_multiple_roles_grant_combined_permissions() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+
+        let role_a = symbol_short!("roleA");
+        let role_b = symbol_short!("roleB");
+        let perm_x = symbol_short!("permX");
+        let perm_y = symbol_short!("permY");
+
+        let mut perms_a: Vec<Symbol> = Vec::new(&env);
+        perms_a.push_back(perm_x.clone());
+        let mut perms_b: Vec<Symbol> = Vec::new(&env);
+        perms_b.push_back(perm_y.clone());
+
+        client.create_role(&role_a, &perms_a);
+        client.create_role(&role_b, &perms_b);
+        client.grant_role(&user, &role_a);
+        client.grant_role(&user, &role_b);
+
+        assert!(client.has_permission(&user, &perm_x));
+        assert!(client.has_permission(&user, &perm_y));
+        let roles = client.get_roles(&user);
+        assert_eq!(roles.len(), 2);
+    }
+
+    #[test]
+    fn test_revoke_one_role_keeps_other_permissions() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+
+        let role_a = symbol_short!("keepA");
+        let role_b = symbol_short!("dropB");
+        let perm_keep = symbol_short!("keep");
+        let perm_drop = symbol_short!("drop");
+
+        let mut perms_a: Vec<Symbol> = Vec::new(&env);
+        perms_a.push_back(perm_keep.clone());
+        let mut perms_b: Vec<Symbol> = Vec::new(&env);
+        perms_b.push_back(perm_drop.clone());
+
+        client.create_role(&role_a, &perms_a);
+        client.create_role(&role_b, &perms_b);
+        client.grant_role(&user, &role_a);
+        client.grant_role(&user, &role_b);
+
+        client.revoke_role(&user, &role_b);
+
+        assert!(client.has_permission(&user, &perm_keep));
+        assert!(!client.has_permission(&user, &perm_drop));
+    }
+
+    #[test]
+    fn test_role_with_multiple_permissions() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let role = symbol_short!("multi");
+        let p1 = symbol_short!("read");
+        let p2 = symbol_short!("write");
+        let p3 = symbol_short!("delete");
+
+        let mut perms: Vec<Symbol> = Vec::new(&env);
+        perms.push_back(p1.clone());
+        perms.push_back(p2.clone());
+        perms.push_back(p3.clone());
+
+        client.create_role(&role, &perms);
+        client.grant_role(&user, &role);
+
+        assert!(client.has_permission(&user, &p1));
+        assert!(client.has_permission(&user, &p2));
+        assert!(client.has_permission(&user, &p3));
+        assert!(!client.has_permission(&user, &symbol_short!("admin")));
+    }
+
+    #[test]
+    fn test_get_pending_admins_empty_initially() {
+        let (_env, client, _admin) = setup();
+        let pending = client.get_pending_admins();
+        assert_eq!(pending.len(), 0);
+    }
+
+    #[test]
+    fn test_propose_and_get_pending_admins() {
+        let (env, client, _admin) = setup();
+        let c1 = Address::generate(&env);
+        let c2 = Address::generate(&env);
+        client.propose_admin(&c1);
+        client.propose_admin(&c2);
+        let pending = client.get_pending_admins();
+        assert_eq!(pending.len(), 2);
+        assert!(pending.contains(&c1));
+        assert!(pending.contains(&c2));
+    }
+
+    #[test]
+    fn test_multisig_full_promotion_flow() {
+        let (env, client, admin) = setup();
+        client.set_admin_threshold(&1_u32);
+        let candidate = Address::generate(&env);
+        client.propose_admin(&candidate);
+        client.approve_admin(&admin, &candidate);
+        let pending = client.get_pending_admins();
+        assert!(!pending.contains(&candidate));
+    }
+
+    #[test]
+    fn test_multiple_members_in_role() {
+        let (env, client, _admin) = setup();
+        let role = symbol_short!("team");
+        let perm = symbol_short!("deploy");
+        let mut perms: Vec<Symbol> = Vec::new(&env);
+        perms.push_back(perm.clone());
+        client.create_role(&role, &perms);
+
+        let u1 = Address::generate(&env);
+        let u2 = Address::generate(&env);
+        let u3 = Address::generate(&env);
+        client.grant_role(&u1, &role);
+        client.grant_role(&u2, &role);
+        client.grant_role(&u3, &role);
+
+        let members = client.get_role_members(&role);
+        assert_eq!(members.len(), 3);
+        assert!(client.has_permission(&u1, &perm));
+        assert!(client.has_permission(&u2, &perm));
+        assert!(client.has_permission(&u3, &perm));
+    }
+
+    #[test]
+    fn test_revoke_middle_member_preserves_others() {
+        let (env, client, _admin) = setup();
+        let role = symbol_short!("squad");
+        client.create_role(&role, &Vec::new(&env));
+
+        let u1 = Address::generate(&env);
+        let u2 = Address::generate(&env);
+        let u3 = Address::generate(&env);
+        client.grant_role(&u1, &role);
+        client.grant_role(&u2, &role);
+        client.grant_role(&u3, &role);
+
+        client.revoke_role(&u2, &role);
+
+        let members = client.get_role_members(&role);
+        assert_eq!(members.len(), 2);
+        assert!(members.contains(&u1));
+        assert!(!members.contains(&u2));
+        assert!(members.contains(&u3));
+    }
+
+    #[test]
+    fn test_create_role_with_empty_permissions() {
+        let (env, client, _admin) = setup();
+        let role = symbol_short!("bare");
+        client.create_role(&role, &Vec::new(&env));
+        let user = Address::generate(&env);
+        client.grant_role(&user, &role);
+        assert!(!client.has_permission(&user, &symbol_short!("any")));
+    }
 }
