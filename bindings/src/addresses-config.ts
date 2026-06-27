@@ -6,17 +6,20 @@ export const DEFAULT_ADDRESSES = {
     muxBatcher: "",
     muxDelegation: "",
     muxPermissions: "",
+    muxPolicy: "",
   },
   testnet: {
     muxAccount: "",
     muxBatcher: "",
     muxDelegation: "",
     muxPermissions: "",
+    muxPolicy: "",
   },
   mainnet: {
     muxAccount: "",
     muxBatcher: "",
     muxDelegation: "",
     muxPermissions: "",
+    muxPolicy: "",
   },
 };

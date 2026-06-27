@@ -38,6 +38,8 @@ export function loadContractAddresses(
     muxPermissions:
       process.env[`${envPrefix}_MUX_PERMISSIONS_ID`] ||
       networkConfig.muxPermissions,
+    muxPolicy:
+      process.env[`${envPrefix}_MUX_POLICY_ID`] || networkConfig.muxPolicy,
   };
 
   return addresses;
@@ -64,6 +66,9 @@ export function validateAddresses(
   }
   if (!addresses.muxPermissions) {
     missing.push("muxPermissions");
+  }
+  if (!addresses.muxPolicy) {
+    missing.push("muxPolicy");
   }
 
   if (missing.length > 0) {

@@ -7,6 +7,7 @@ export interface MuxContractIds {
   muxBatcher: string;
   muxDelegation: string;
   muxPermissions: string;
+  muxPolicy: string;
 }
 
 export interface SpendLimit {
@@ -77,6 +78,15 @@ export interface SpendingPolicyLimit {
   asset: Address;
   limit: bigint;
 }
+
+export type MuxPolicyError =
+  | "NotInitialized"
+  | "AlreadyInitialized"
+  | "Unauthorized"
+  | "LimitNotFound"
+  | "LimitExceeded"
+  | "InvalidAmount"
+  | "InvalidPeriod";
 
 export type SpendingPolicyError =
   | "NotInitialized"
