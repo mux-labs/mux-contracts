@@ -11,12 +11,20 @@ describe("MuxAccountFactoryClient shape", () => {
     expect(typeof MuxAccountFactoryClient.prototype.deployAccount).toBe("function");
   });
 
+  it("exposes deployAccountWithMetadata as a function", () => {
+    expect(typeof MuxAccountFactoryClient.prototype.deployAccountWithMetadata).toBe("function");
+  });
+
   it("exposes getAccounts as a function", () => {
     expect(typeof MuxAccountFactoryClient.prototype.getAccounts).toBe("function");
   });
 
   it("exposes accountCount as a function", () => {
     expect(typeof MuxAccountFactoryClient.prototype.accountCount).toBe("function");
+  });
+
+  it("exposes getAccountMetadata as a function", () => {
+    expect(typeof MuxAccountFactoryClient.prototype.getAccountMetadata).toBe("function");
   });
 });
 
@@ -45,6 +53,10 @@ describe("Factory and registry error HTTP mapping", () => {
 
   it("maps TooManyAccounts to 409", () => {
     expect(ERROR_HTTP_MAP.TooManyAccounts).toBe(409);
+  });
+
+  it("maps MetadataNotFound to 404", () => {
+    expect(ERROR_HTTP_MAP.MetadataNotFound).toBe(404);
   });
 
   it("maps ContractNotFound to 404", () => {

@@ -8,7 +8,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String, Vec,
 };
 
 // ── Audit events ──────────────────────────────────────────────────────────────
@@ -29,6 +29,22 @@ pub enum DataKey {
     Accounts(Address),
     /// Total accounts registered across all owners.
     AccountCount,
+    /// Metadata for a specific account: DataKey::Metadata(owner, account_address)
+    Metadata(Address, Address),
+}
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+/// Metadata associated with a registered account.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct AccountMetadata {
+    /// Semantic version string, e.g. "1.2.0"
+    pub version: String,
+    /// Short human-readable description of the account.
+    pub description: String,
+    /// Author or team identifier.
+    pub author: String,
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────
@@ -43,6 +59,8 @@ pub enum MuxAccountFactoryError {
     // STORAGE-GRIEFING: unbounded per-owner Accounts vec would let an owner
     // bloat instance storage indefinitely.
     TooManyAccounts = 3,
+    /// Metadata not found for the specified account.
+    MetadataNotFound = 4,
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -124,6 +142,80 @@ impl MuxAccountFactory {
             .instance()
             .get(&DataKey::AccountCount)
             .unwrap_or(0)
+    }
+
+    /// Register a new account for the given owner with metadata.
+    ///
+    /// The caller must be the owner. `account_address` must differ from `owner`
+    /// and must not already be registered for this owner.
+    pub fn deploy_account_with_metadata(
+        env: Env,
+        owner: Address,
+        account_address: Address,
+        version: String,
+        description: String,
+        author: String,
+    ) -> Result<Address, MuxAccountFactoryError> {
+        owner.require_auth();
+
+        if account_address == owner {
+            return Err(MuxAccountFactoryError::InvalidAccount);
+        }
+
+        let mut accounts: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::Accounts(owner.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        // STORAGE-GRIEFING: cap per-owner account list.
+        if accounts.len() >= MAX_ACCOUNTS_PER_OWNER {
+            return Err(MuxAccountFactoryError::TooManyAccounts);
+        }
+
+        accounts.push_back(account_address.clone());
+        env.storage()
+            .instance()
+            .set(&DataKey::Accounts(owner.clone()), &accounts);
+
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::AccountCount)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::AccountCount, &(count + 1));
+
+        // Store metadata
+        let meta = AccountMetadata {
+            version,
+            description,
+            author,
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::Metadata(owner.clone(), account_address.clone()), &meta);
+
+        emit(
+            &env,
+            symbol_short!("deployed"),
+            (owner, account_address.clone()),
+        );
+        Self::extend_ttl(&env);
+        Ok(account_address)
+    }
+
+    /// Get the metadata for a specific account.
+    pub fn get_account_metadata(
+        env: Env,
+        owner: Address,
+        account_address: Address,
+    ) -> Result<AccountMetadata, MuxAccountFactoryError> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Metadata(owner, account_address))
+            .ok_or(MuxAccountFactoryError::MetadataNotFound)
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────
@@ -235,5 +327,105 @@ mod tests {
         client.deploy_account(&owner, &Address::generate(&env));
         // If extend_ttl was missing the SDK would panic; reaching here is the assertion.
         assert_eq!(client.account_count(), 1);
+    }
+
+    #[test]
+    fn test_deploy_account_with_metadata() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        let version = String::from_str(&env, "1.0.0");
+        let description = String::from_str(&env, "Test account");
+        let author = String::from_str(&env, "test-author");
+
+        let deployed = client.deploy_account_with_metadata(
+            &owner,
+            &account_addr,
+            &version,
+            &description,
+            &author,
+        );
+        assert_eq!(deployed, account_addr);
+        assert_eq!(client.account_count(), 1);
+    }
+
+    #[test]
+    fn test_get_account_metadata() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        let version = String::from_str(&env, "2.0.0");
+        let description = String::from_str(&env, "Account with metadata");
+        let author = String::from_str(&env, "mux-labs");
+
+        client.deploy_account_with_metadata(
+            &owner,
+            &account_addr,
+            &version.clone(),
+            &description.clone(),
+            &author.clone(),
+        );
+
+        let meta = client.get_account_metadata(&owner, &account_addr);
+        assert_eq!(meta.version, version);
+        assert_eq!(meta.description, description);
+        assert_eq!(meta.author, author);
+    }
+
+    #[test]
+    fn test_get_account_metadata_not_found() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        let result = client.try_get_account_metadata(&owner, &account_addr);
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::MetadataNotFound)));
+    }
+
+    #[test]
+    fn test_deploy_account_with_metadata_enforces_cap() {
+        let (env, client) = setup();
+        env.budget().reset_unlimited();
+        let owner = Address::generate(&env);
+        let version = String::from_str(&env, "1.0.0");
+        let description = String::from_str(&env, "Test");
+        let author = String::from_str(&env, "test");
+
+        // Fill up to the cap
+        for _ in 0..64 {
+            client.deploy_account_with_metadata(
+                &owner,
+                &Address::generate(&env),
+                &version.clone(),
+                &description.clone(),
+                &author.clone(),
+            );
+        }
+        // One more must be rejected
+        let result = client.try_deploy_account_with_metadata(
+            &owner,
+            &Address::generate(&env),
+            &version,
+            &description,
+            &author,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deploy_account_with_metadata_invalid_account() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let version = String::from_str(&env, "1.0.0");
+        let description = String::from_str(&env, "Test");
+        let author = String::from_str(&env, "test");
+
+        let result = client.try_deploy_account_with_metadata(
+            &owner,
+            &owner,
+            &version,
+            &description,
+            &author,
+        );
+        assert!(result.is_err());
     }
 }

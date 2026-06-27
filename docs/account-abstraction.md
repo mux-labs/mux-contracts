@@ -38,6 +38,7 @@ The factory contract manages the lifecycle of account instances:
 - **Maintains Registry** — Tracks all deployed accounts and their owners
 - **Enables Discovery** — Allows applications to locate a user's account
 - **Links Delegation State to Registry** — Accounts are registered on-chain so delegate-enabled contracts can discover account metadata through the shared registry
+- **Stores Account Metadata** — Associates version, description, and author information with each registered account
 
 #### Account Contract (`mux-account`)
 
@@ -171,7 +172,15 @@ Integration is planned for Phase 2 pending completion of `execute_with_session()
 
 ## Storage Layout
 
-### DataKey Variants
+### Account Factory DataKey Variants
+
+```rust
+DataKey::Accounts(owner)                    // Vec<Address> of deployed accounts per owner
+DataKey::AccountCount                       // Total accounts registered across all owners
+DataKey::Metadata(owner, account_address)   // AccountMetadata for a specific account
+```
+
+### Account Contract DataKey Variants
 
 ```rust
 DataKey::Owner                              // Account owner address
@@ -184,6 +193,18 @@ DataKey::SessionKeyIndex(owner)             // Vec<session key addresses>
 ```
 
 ### Record Structures
+
+#### Account Factory
+
+```rust
+struct AccountMetadata {
+  version: String,      // Semantic version string, e.g. "1.2.0"
+  description: String,  // Short human-readable description
+  author: String,       // Author or team identifier
+}
+```
+
+#### Account Contract
 
 ```rust
 struct SpendLimit {
@@ -213,7 +234,57 @@ struct Scope {
 
 ## API Reference
 
-### Public Functions
+### Account Factory Public Functions
+
+#### `deploy_account(owner, account_address) -> Result<Address, Error>`
+
+Register a new account for the given owner.
+
+**Parameters:**
+- `owner` — Account owner (must be authenticated)
+- `account_address` — Address of the deployed account contract
+
+**Returns:** Ok with account address if successful, Err if unauthorized or invalid
+
+#### `deploy_account_with_metadata(owner, account_address, version, description, author) -> Result<Address, Error>`
+
+Register a new account for the given owner with associated metadata.
+
+**Parameters:**
+- `owner` — Account owner (must be authenticated)
+- `account_address` — Address of the deployed account contract
+- `version` — Semantic version string (e.g., "1.0.0")
+- `description` — Human-readable description of the account
+- `author` — Author or team identifier
+
+**Returns:** Ok with account address if successful, Err if unauthorized or invalid
+
+#### `get_account_metadata(owner, account_address) -> Result<AccountMetadata, Error>`
+
+Retrieve metadata for a specific registered account.
+
+**Parameters:**
+- `owner` — Account owner
+- `account_address` — Address of the account contract
+
+**Returns:** Ok with AccountMetadata if found, Err(MetadataNotFound) if not found
+
+#### `get_accounts(owner) -> Vec<Address>`
+
+Get all accounts registered for a given owner.
+
+**Parameters:**
+- `owner` — Account owner
+
+**Returns:** Vector of account addresses
+
+#### `account_count() -> u64`
+
+Get the total count of registered accounts across all owners.
+
+**Returns:** Total number of registered accounts
+
+### Account Contract Public Functions
 
 #### `register_session_key(owner, session_key, expires_at, scopes) -> Result<(), Error>`
 
