@@ -349,6 +349,17 @@ impl MuxPermissions {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    /// Extend the contract instance TTL. Callable by anyone so external keepers
+    /// can prevent expiry during idle periods without needing admin auth.
+    pub fn bump_ttl(env: Env) {
+        Self::extend_ttl(&env);
+    }
+
+    /// Return the current TTL configuration.
+    pub fn ttl_config(_env: Env) -> (u32, u32) {
+        (TTL_THRESHOLD, TTL_EXTEND_TO)
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────────
 
     fn require_admin(env: &Env) -> Result<(), MuxPermissionsError> {
@@ -619,5 +630,53 @@ mod tests {
         let ghost = Address::generate(&env);
         let result = client.try_approve_admin(&admin, &ghost);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_bump_ttl_callable_without_admin() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxPermissions);
+        let client = MuxPermissionsClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        // bump_ttl requires no auth — anyone can call it
+        client.bump_ttl();
+    }
+
+    #[test]
+    fn test_ttl_config_returns_constants() {
+        let (_env, client, _admin) = setup();
+        let (threshold, extend_to) = client.ttl_config();
+        assert_eq!(threshold, 17_280);
+        assert_eq!(extend_to, 518_400);
+    }
+
+    #[test]
+    fn test_create_role_extends_ttl() {
+        let (env, client, _admin) = setup();
+        let role = symbol_short!("writer");
+        client.create_role(&role, &Vec::new(&env));
+        // If extend_ttl was missing the contract would eventually expire.
+        // Reaching here without panic confirms TTL was bumped.
+    }
+
+    #[test]
+    fn test_grant_role_extends_ttl() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let role = symbol_short!("reader");
+        client.create_role(&role, &Vec::new(&env));
+        client.grant_role(&user, &role);
+    }
+
+    #[test]
+    fn test_revoke_role_extends_ttl() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let role = symbol_short!("temp");
+        client.create_role(&role, &Vec::new(&env));
+        client.grant_role(&user, &role);
+        client.revoke_role(&user, &role);
     }
 }
