@@ -167,3 +167,68 @@ mod upgrade_tests {
 - [Stellar CLI: `contract upload`](https://developers.stellar.org/docs/tools/stellar-cli)
 - Mux deployment scripts: `scripts/deploy-testnet.sh` (see #110)
 - Mux WASM hash verification: `scripts/verify-wasm-hash.sh` (see #113)
+
+---
+
+## MuxAccountFactory — Upgrade Migration Notes
+
+### Storage layout (as of initial release)
+
+| Key | Type | Scope |
+|-----|------|-------|
+| `DataKey::Accounts(Address)` | `Vec<Address>` | `instance` |
+| `DataKey::AccountCount` | `u64` | `instance` |
+
+All state lives in **instance storage**; there is no persistent or temporary
+storage to migrate.
+
+### Rules for future upgrades
+
+1. **Do not rename or remove `DataKey` variants.**  
+   Existing `Accounts(owner)` entries on the ledger will be unreadable if the
+   discriminant changes.  Add new variants instead.
+
+2. **Adding fields to the stored value type** (`Vec<Address>` is currently a
+   primitive; if you introduce a wrapper struct) — use `Option<NewField>` or a
+   versioned enum so old entries remain deserializable.
+
+3. **Changing `MAX_ACCOUNTS_PER_OWNER`** is backward-compatible for decreases
+   (existing over-cap owners are grandfathered; new deployments are capped at
+   the new limit).  Increases require no migration.
+
+4. **The factory has no `admin` or `initialize` entry point** — the upgrade
+   authority must therefore be controlled at the deployer level (key that owns
+   the contract instance).  Ensure the deployer key is retained and
+   hardware-secured before upgrading.
+
+### Migration procedure (breaking storage change)
+
+If a future version must change stored types, implement a `migrate` function:
+
+```rust
+pub fn migrate(env: Env, caller: Address) {
+    caller.require_auth();
+    // Example: rewrite Accounts vec to a new type
+    // Iterate known owners if an owner index exists, otherwise use an
+    // off-chain list from ledger snapshot.
+}
+```
+
+Call `migrate()` **after** `upgrade()` and **before** any user traffic resumes.
+
+### Rollback
+
+The factory has no state that is write-destructive on upgrade (only adds
+entries, never removes).  Rolling back to a prior WASM hash via `upgrade()`
+with the old hash is always safe as long as storage types are unchanged.
+
+If storage types changed and `migrate()` was called, prepare a reverse
+`migrate_rollback()` function before the upgrade and keep it ready.
+
+### Smoke-test checklist after factory upgrade
+
+- [ ] `account_count()` returns the pre-upgrade value
+- [ ] `get_accounts(owner)` for a known owner returns the same list
+- [ ] `deploy_account(owner, new_addr)` succeeds and increments the count
+- [ ] `deploy_account(owner, owner)` returns `InvalidAccount` error
+- [ ] Deploying a 65th account for a capped owner returns `TooManyAccounts`
