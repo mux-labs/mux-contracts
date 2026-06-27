@@ -43,9 +43,9 @@ pub enum DataKey {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum MuxDelegationError {
-    NotADelegate = 1,
-    TooManyPermissions = 2,
-    EmptyPermissions = 3,
+    NotADelegate = 6001,
+    TooManyPermissions = 6002,
+    EmptyPermissions = 6003,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -294,6 +294,21 @@ mod tests {
         let stored = client.get_delegate_permissions(&owner, &delegate);
         assert!(!stored.contains(&perm_a));
         assert!(stored.contains(&perm_b));
+    }
+
+    #[test]
+    fn test_error_code_not_a_delegate() {
+        assert_eq!(MuxDelegationError::NotADelegate as u32, 6001);
+    }
+
+    #[test]
+    fn test_error_code_too_many_permissions() {
+        assert_eq!(MuxDelegationError::TooManyPermissions as u32, 6002);
+    }
+
+    #[test]
+    fn test_error_code_empty_permissions() {
+        assert_eq!(MuxDelegationError::EmptyPermissions as u32, 6003);
     }
 
     #[test]

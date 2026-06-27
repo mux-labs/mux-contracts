@@ -22,3 +22,8 @@ This document provides a comprehensive reference for all error codes used within
 ## Mux Registry (`contracts/mux-registry`)
 - `RegistryError::ContractNotFound` (5001) - The specified contract was not found in the registry.
 - `RegistryError::VersionMismatch` (5002) - The contract version does not match the expected version.
+
+## Mux Delegation (`contracts/mux-delegation`)
+- `MuxDelegationError::NotADelegate` (6001) - The specified address is not a delegate of the owner.
+- `MuxDelegationError::TooManyPermissions` (6002) - The permissions list exceeds the maximum allowed (64).
+- `MuxDelegationError::EmptyPermissions` (6003) - The permissions list must not be empty.
