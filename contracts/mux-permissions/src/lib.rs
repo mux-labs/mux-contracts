@@ -58,6 +58,7 @@ pub enum MuxPermissionsError {
     TooManyRoles = 8,
     AdminNotFound = 9,
     AlreadyApproved = 10,
+    TooManyPendingAdmins = 11,
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -67,6 +68,9 @@ const MAX_ROLE_MEMBERS: u32 = 256;
 
 /// Maximum roles an account may hold simultaneously.
 const MAX_ROLES_PER_ACCOUNT: u32 = 32;
+
+/// Maximum pending admin proposals to bound the PendingAdmins vec.
+const MAX_PENDING_ADMINS: u32 = 16;
 
 // ── Storage TTL ───────────────────────────────────────────────────────────────
 // STORAGE-GRIEFING (T-21): extend instance TTL on every write so the registry
@@ -266,6 +270,9 @@ impl MuxPermissions {
             .get(&DataKey::PendingAdmins)
             .unwrap_or_else(|| Vec::new(&env));
         if !pending.contains(&new_admin) {
+            if pending.len() >= MAX_PENDING_ADMINS {
+                return Err(MuxPermissionsError::TooManyPendingAdmins);
+            }
             pending.push_back(new_admin.clone());
             env.storage()
                 .instance()
@@ -652,5 +659,15 @@ mod tests {
         let events = env.events().all();
         let last = events.len() - 1;
         assert_eq!(topic_action(&env, &events, last), symbol_short!("perm_den"));
+    }
+
+    #[test]
+    fn test_pending_admins_cap_enforced() {
+        let (env, client, _admin) = setup();
+        for _ in 0..16 {
+            client.propose_admin(&Address::generate(&env));
+        }
+        let result = client.try_propose_admin(&Address::generate(&env));
+        assert!(result.is_err());
     }
 }
