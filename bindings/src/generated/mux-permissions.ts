@@ -108,6 +108,43 @@ export class MuxPermissionsClient {
     return this.simulateRead<Address[]>(tx);
   }
 
+  async setAdminThreshold(
+    sourceKeypair: Keypair,
+    threshold: number
+  ): Promise<void> {
+    const tx = await this.buildTx(sourceKeypair, "set_admin_threshold", [
+      xdr.ScVal.scvU32(threshold),
+    ]);
+    await this.submit(tx, sourceKeypair);
+  }
+
+  async proposeAdmin(
+    sourceKeypair: Keypair,
+    newAdmin: Address
+  ): Promise<void> {
+    const tx = await this.buildTx(sourceKeypair, "propose_admin", [
+      nativeToScVal(newAdmin.toString(), { type: "address" }),
+    ]);
+    await this.submit(tx, sourceKeypair);
+  }
+
+  async approveAdmin(
+    sourceKeypair: Keypair,
+    approver: Address,
+    newAdmin: Address
+  ): Promise<void> {
+    const tx = await this.buildTx(sourceKeypair, "approve_admin", [
+      nativeToScVal(approver.toString(), { type: "address" }),
+      nativeToScVal(newAdmin.toString(), { type: "address" }),
+    ]);
+    await this.submit(tx, sourceKeypair);
+  }
+
+  async getPendingAdmins(sourceKeypair: Keypair): Promise<Address[]> {
+    const tx = await this.buildTx(sourceKeypair, "get_pending_admins", []);
+    return this.simulateRead<Address[]>(tx);
+  }
+
   // ── Private helpers ──────────────────────────────────────────────────────────
 
   private async buildTx(

@@ -71,7 +71,11 @@ export type MuxPermissionsError =
   | "Unauthorized"
   | "RoleNotFound"
   | "AccountNotInRole"
-  | "PermissionNotFound";
+  | "PermissionNotFound"
+  | "TooManyMembers"
+  | "TooManyRoles"
+  | "AdminNotFound"
+  | "AlreadyApproved";
 
 export interface SpendingPolicyLimit {
   asset: Address;
