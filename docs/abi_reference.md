@@ -120,6 +120,13 @@ pub struct RoleInfo {
 | `approve_admin` | `approver: Address, new_admin: Address` | `Result<(), MuxPermissionsError>` | Approve a pending admin; promotes when threshold reached (admin-only) |
 | `get_pending_admins` | — | `Vec<Address>` | Return all pending admin candidates |
 
+### Methods — TTL Management
+
+| Method | Args | Returns | Description |
+|---|---|---|---|
+| `bump_ttl` | — | `()` | Extend instance storage TTL; callable by anyone (keepers, bots) |
+| `ttl_config` | — | `(u32, u32)` | Return `(TTL_THRESHOLD, TTL_EXTEND_TO)` constants |
+
 ### Events
 
 | Topic | Data | Condition |
