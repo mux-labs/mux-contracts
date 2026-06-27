@@ -60,10 +60,9 @@ export type MuxBatcherError =
   | "ReentrancyDetected";
 
 export type MuxDelegationError =
-  | "Unauthorized"
-  | "DelegateNotFound"
-  | "DelegateExpired"
-  | "TooManyDelegates";
+  | "NotADelegate"
+  | "TooManyPermissions"
+  | "EmptyPermissions";
 
 export type MuxPermissionsError =
   | "NotInitialized"
