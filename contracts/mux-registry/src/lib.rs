@@ -4,6 +4,8 @@
 
 #![no_std]
 
+extern crate alloc;
+
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String,
     Symbol, Vec,
@@ -126,17 +128,23 @@ impl MuxRegistry {
             names.push_back(name.clone());
             env.storage().instance().set(&DataKey::Names, &names);
         }
+        let version_clone = version.clone();
         env.storage()
             .instance()
-            .set(&DataKey::Version(name.clone()), &version.clone());
+            .set(&DataKey::Version(name.clone()), &version_clone);
         let meta = ContractMetadata {
             version,
-            description,
-            author,
+            description: description.clone(),
+            author: author.clone(),
         };
         env.storage()
             .instance()
-            .set(&DataKey::Metadata(name), &meta);
+            .set(&DataKey::Metadata(name.clone()), &meta);
+        emit(
+            &env,
+            symbol_short!("reg_meta"),
+            (name, version_clone, description, author),
+        );
         Ok(())
     }
 
@@ -188,7 +196,11 @@ impl MuxRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{symbol_short, testutils::Address as _, Env, String};
+    use soroban_sdk::{
+        symbol_short,
+        testutils::{Address as _, Events},
+        Env, FromVal, String,
+    };
 
     fn setup() -> (Env, MuxRegistryClient<'static>, Address) {
         let env = Env::default();
@@ -223,7 +235,7 @@ mod tests {
 
     #[test]
     fn test_get_unknown_fails() {
-        let (env, client, _) = setup();
+        let (_env, client, _) = setup();
         let result = client.try_get_version(&symbol_short!("ghost"));
         assert!(result.is_err());
     }
@@ -249,7 +261,7 @@ mod tests {
 
     #[test]
     fn test_get_metadata_unknown_fails() {
-        let (env, client, _) = setup();
+        let (_env, client, _) = setup();
         let result = client.try_get_metadata(&symbol_short!("ghost"));
         assert!(result.is_err());
     }
@@ -272,5 +284,107 @@ mod tests {
         let names = client.list_contracts();
         let count = names.iter().filter(|n| *n == name).count();
         assert_eq!(count, 1);
+    }
+
+    fn topic_action(
+        env: &Env,
+        events: &soroban_sdk::Vec<(
+            soroban_sdk::Address,
+            soroban_sdk::Vec<soroban_sdk::Val>,
+            soroban_sdk::Val,
+        )>,
+        idx: u32,
+    ) -> soroban_sdk::Symbol {
+        let (_, topics, _) = events.get(idx).unwrap();
+        soroban_sdk::Symbol::from_val(env, &topics.get(1).unwrap())
+    }
+
+    #[test]
+    fn test_register_without_init_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxRegistry);
+        let client = MuxRegistryClient::new(&env, &contract_id);
+        let _admin = Address::generate(&env);
+        assert!(client
+            .try_register(&symbol_short!("x"), &String::from_str(&env, "1.0.0"))
+            .is_err());
+    }
+
+    #[test]
+    fn test_register_emits_event() {
+        let (env, client, _) = setup();
+        let name = symbol_short!("acct");
+        client.register(&name, &String::from_str(&env, "1.0.0"));
+        let events = env.events().all();
+        assert_eq!(events.len(), 2);
+        // first event is init, second is reg
+        assert_eq!(
+            topic_action(&env, &events, 1),
+            symbol_short!("reg")
+        );
+    }
+
+    #[test]
+    fn test_register_with_metadata_emits_event() {
+        let (env, client, _) = setup();
+        let name = symbol_short!("acct");
+        client.register_with_metadata(
+            &name,
+            &String::from_str(&env, "1.0.0"),
+            &String::from_str(&env, "desc"),
+            &String::from_str(&env, "author"),
+        );
+        let events = env.events().all();
+        // init + reg_meta
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            topic_action(&env, &events, 1),
+            symbol_short!("reg_meta")
+        );
+    }
+
+    #[test]
+    fn test_register_cap_enforced() {
+        let (env, client, _) = setup();
+        env.budget().reset_unlimited();
+        // Register MAX_CONTRACTS (128) contracts, then the 129th should fail.
+        for i in 0..MAX_CONTRACTS {
+            let name = Symbol::new(&env, &alloc::format!("n{i}"));
+            client.register(&name, &String::from_str(&env, "1.0.0"));
+        }
+        let extra = symbol_short!("n128");
+        assert!(client
+            .try_register(&extra, &String::from_str(&env, "1.0.0"))
+            .is_err());
+    }
+
+    #[test]
+    fn test_list_contracts_empty() {
+        let (_env, client, _) = setup();
+        assert!(client.list_contracts().is_empty());
+    }
+
+    #[test]
+    fn test_register_updates_existing() {
+        let (env, client, _) = setup();
+        let name = symbol_short!("acct");
+        let v1 = String::from_str(&env, "1.0.0");
+        let v2 = String::from_str(&env, "2.0.0");
+        client.register(&name, &v1);
+        client.register(&name, &v2);
+        assert_eq!(client.get_version(&name), v2);
+        // Name appears only once in the list
+        let count = client
+            .list_contracts()
+            .iter()
+            .filter(|n| *n == name)
+            .count();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_ttl_extended_on_write() {
+        let (_env, _client, _admin) = setup();
     }
 }

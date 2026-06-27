@@ -67,6 +67,20 @@ Contract tag: `mux_bat`
 
 ---
 
+---
+
+## mux-registry events
+
+Contract tag: `mux_reg`
+
+| Action | Trigger | Data payload |
+|---|---|---|
+| `init` | `initialize` succeeds | `admin: Address` |
+| `reg` | `register` succeeds | `(name: Symbol, version: String)` |
+| `reg_meta` | `register_with_metadata` succeeds | `(name: Symbol, version: String, description: String, author: String)` |
+
+---
+
 ## Querying events
 
 Use the Soroban RPC `getEvents` endpoint, filtering by `contractId` and topic:

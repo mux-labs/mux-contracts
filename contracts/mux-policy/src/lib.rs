@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_double_initialize_fails() {
-        let (env, client, admin) = setup();
+        let (_env, client, admin) = setup();
         assert!(client.try_initialize(&admin).is_err());
     }
 
