@@ -22,6 +22,8 @@ On Soroban, every contract pays **rent** for the ledger entries it occupies.  Al
 | Contract | Collection | Key | Cap constant | Error on overflow |
 |---|---|---|---|---|
 | `mux-account` | `Delegates` map | `DataKey::Delegates` | `MAX_DELEGATES = 64` | `TooManyDelegates` |
+| `mux-delegation` | `OwnerDelegates` vec | `DataKey::OwnerDelegates(owner)` | `MAX_DELEGATES_PER_OWNER = 128` | `TooManyDelegates` |
+| `mux-delegation` | `DelegatePerms` vec | `DataKey::DelegatePerms(owner, delegate)` | `MAX_DELEGATE_PERMS = 64` | `TooManyPermissions` |
 | `mux-permissions` | `RoleMembers` vec | `DataKey::RoleMembers(role)` | `MAX_ROLE_MEMBERS = 256` | `TooManyMembers` |
 | `mux-permissions` | `AccountRoles` vec | `DataKey::AccountRoles(account)` | `MAX_ROLES_PER_ACCOUNT = 32` | `TooManyRoles` |
 
@@ -71,6 +73,8 @@ Run this job at least once every **25 days** to stay ahead of the 30-day TTL win
 | `Delegates` map | ~72 bytes | 64 | ~4.6 KB |
 | `RoleMembers` vec | ~32 bytes | 256 | ~8 KB |
 | `AccountRoles` vec | ~8 bytes | 32 | ~256 bytes |
+| `DelegatePerms` vec | ~8 bytes | 64 | ~512 bytes |
+| `OwnerDelegates` vec | ~32 bytes | 128 | ~4 KB |
 | `SpendLimit` per asset | ~80 bytes | owner-controlled | unbounded (owner only) |
 
 `SpendLimit` keys are written only by the contract owner and are not publicly writable, so no cap is enforced.  Owners should avoid registering an excessive number of distinct assets.
@@ -86,3 +90,5 @@ Run this job at least once every **25 days** to stay ahead of the 30-day TTL win
 | T-19 | Admin assigns excessive roles to one account | `MAX_ROLES_PER_ACCOUNT = 32` in `grant_role` |
 | T-20 | Spend limits accumulate unbounded per-asset keys | No public write path; owner-only |
 | T-21 | Instance storage TTL expiry causes silent data loss | `extend_ttl` on every write + keeper job |
+| T-22 | Owner floods delegate list in mux-delegation | `MAX_DELEGATES_PER_OWNER = 128` in `grant_delegate` |
+| T-23 | Owner floods permission vec per delegate | `MAX_DELEGATE_PERMS = 64` in `grant_delegate` |

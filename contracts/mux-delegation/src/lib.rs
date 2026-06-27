@@ -25,6 +25,9 @@ const TTL_EXTEND_TO: u32 = 518_400;
 /// Maximum permissions that can be granted to a single delegate.
 const MAX_DELEGATE_PERMS: u32 = 64;
 
+/// Maximum delegates an owner can register (storage griefing guard).
+const MAX_DELEGATES_PER_OWNER: u32 = 128;
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 // Issue #83: Store delegate permissions map.
@@ -46,6 +49,7 @@ pub enum MuxDelegationError {
     NotADelegate = 1,
     TooManyPermissions = 2,
     EmptyPermissions = 3,
+    TooManyDelegates = 4,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -86,6 +90,9 @@ impl MuxDelegation {
             .get(&DataKey::OwnerDelegates(owner.clone()))
             .unwrap_or_else(|| Vec::new(&env));
         if !delegates.contains(&delegate) {
+            if delegates.len() >= MAX_DELEGATES_PER_OWNER {
+                return Err(MuxDelegationError::TooManyDelegates);
+            }
             delegates.push_back(delegate.clone());
             env.storage()
                 .persistent()
@@ -294,6 +301,23 @@ mod tests {
         let stored = client.get_delegate_permissions(&owner, &delegate);
         assert!(!stored.contains(&perm_a));
         assert!(stored.contains(&perm_b));
+    }
+
+    #[test]
+    fn test_grant_exceeding_max_delegates_fails() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let perm = symbol_short!("read");
+        let perms = vec![&env, perm];
+
+        for _ in 0..MAX_DELEGATES_PER_OWNER {
+            let delegate = Address::generate(&env);
+            client.grant_delegate(&owner, &delegate, &perms);
+        }
+
+        let extra = Address::generate(&env);
+        let result = client.try_grant_delegate(&owner, &extra, &perms);
+        assert!(result.is_err());
     }
 
     #[test]
