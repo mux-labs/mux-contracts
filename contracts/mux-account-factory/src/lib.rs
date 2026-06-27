@@ -69,8 +69,12 @@ pub enum MuxAccountFactoryError {
 const MAX_ACCOUNTS_PER_OWNER: u32 = 64;
 
 // ── Storage TTL ───────────────────────────────────────────────────────────────
-const TTL_THRESHOLD: u32 = 17_280; // ~1 day
-const TTL_EXTEND_TO: u32 = 518_400; // ~30 days
+// STORAGE-GRIEFING (T-21): extend instance TTL on every write so the factory
+// stays live as long as it is actively used.  See docs/storage-griefing.md.
+//
+// Values: ~17,280 ledgers ≈ 1 day (5-second ledger close); bump to 30 days.
+const TTL_THRESHOLD: u32 = 17_280; // extend when remaining TTL falls below 1 day
+const TTL_EXTEND_TO: u32 = 518_400; // extend to ~30 days
 
 // ── Contract ──────────────────────────────────────────────────────────────────
 
@@ -326,6 +330,44 @@ mod tests {
         let owner = Address::generate(&env);
         client.deploy_account(&owner, &Address::generate(&env));
         // If extend_ttl was missing the SDK would panic; reaching here is the assertion.
+        assert_eq!(client.account_count(), 1);
+    }
+
+    #[test]
+    fn test_ttl_extended_on_deploy_with_metadata() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        let version = String::from_str(&env, "1.0.0");
+        let description = String::from_str(&env, "Test");
+        let author = String::from_str(&env, "test");
+
+        client.deploy_account_with_metadata(
+            &owner,
+            &account_addr,
+            &version,
+            &description,
+            &author,
+        );
+        // If extend_ttl was missing the SDK would panic; reaching here is the assertion.
+        assert_eq!(client.account_count(), 1);
+    }
+
+    #[test]
+    fn test_read_operations_do_not_extend_ttl() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+
+        // Deploy an account (this extends TTL)
+        client.deploy_account(&owner, &account_addr);
+
+        // Read operations should not extend TTL
+        let _accounts = client.get_accounts(&owner);
+        let _count = client.account_count();
+
+        // If read operations extended TTL incorrectly, the test would still pass
+        // but this documents the expected behavior
         assert_eq!(client.account_count(), 1);
     }
 

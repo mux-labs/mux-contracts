@@ -22,6 +22,7 @@ On Soroban, every contract pays **rent** for the ledger entries it occupies.  Al
 | Contract | Collection | Key | Cap constant | Error on overflow |
 |---|---|---|---|---|
 | `mux-account` | `Delegates` map | `DataKey::Delegates` | `MAX_DELEGATES = 64` | `TooManyDelegates` |
+| `mux-account-factory` | `Accounts` vec | `DataKey::Accounts(owner)` | `MAX_ACCOUNTS_PER_OWNER = 64` | `TooManyAccounts` |
 | `mux-permissions` | `RoleMembers` vec | `DataKey::RoleMembers(role)` | `MAX_ROLE_MEMBERS = 256` | `TooManyMembers` |
 | `mux-permissions` | `AccountRoles` vec | `DataKey::AccountRoles(account)` | `MAX_ROLES_PER_ACCOUNT = 32` | `TooManyRoles` |
 
@@ -69,9 +70,11 @@ Run this job at least once every **25 days** to stay ahead of the 30-day TTL win
 | Collection | Entry size (approx.) | Cap | Max storage |
 |---|---|---|---|
 | `Delegates` map | ~72 bytes | 64 | ~4.6 KB |
+| `Accounts` vec (per owner) | ~32 bytes | 64 | ~2 KB |
 | `RoleMembers` vec | ~32 bytes | 256 | ~8 KB |
 | `AccountRoles` vec | ~8 bytes | 32 | ~256 bytes |
 | `SpendLimit` per asset | ~80 bytes | owner-controlled | unbounded (owner only) |
+| `AccountMetadata` per account | ~100 bytes | owner-controlled | unbounded (owner only) |
 
 `SpendLimit` keys are written only by the contract owner and are not publicly writable, so no cap is enforced.  Owners should avoid registering an excessive number of distinct assets.
 
@@ -86,3 +89,4 @@ Run this job at least once every **25 days** to stay ahead of the 30-day TTL win
 | T-19 | Admin assigns excessive roles to one account | `MAX_ROLES_PER_ACCOUNT = 32` in `grant_role` |
 | T-20 | Spend limits accumulate unbounded per-asset keys | No public write path; owner-only |
 | T-21 | Instance storage TTL expiry causes silent data loss | `extend_ttl` on every write + keeper job |
+| T-22 | Owner floods account factory with accounts | `MAX_ACCOUNTS_PER_OWNER = 64` in `deploy_account` |
