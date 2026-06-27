@@ -14,6 +14,7 @@ This repository contains the **core Soroban smart contracts** that power Mux. Co
 | Contract | Description |
 |---|---|
 | [`contracts/mux-account`](contracts/mux-account/) | Account abstraction: owner, delegates, spend limits, guardian set |
+| [`contracts/mux-account-factory`](contracts/mux-account-factory/) | Factory for deploying and registering account instances with metadata |
 | [`contracts/mux-batcher`](contracts/mux-batcher/) | Atomic multi-operation batching with optional per-op failure handling |
 | [`contracts/mux-permissions`](contracts/mux-permissions/) | RBAC registry — roles, permissions, grant/revoke |
 
@@ -36,17 +37,29 @@ The CI pipeline ([`.github/workflows/bindings.yml`](.github/workflows/bindings.y
 
 ### Usage example
 
-See [`examples/bindings-usage.ts`](examples/bindings-usage.ts) for a working end-to-end example showing `check_spend` and `register_wallet`:
+See the examples directory for working end-to-end examples:
+
+- [`examples/bindings-usage.ts`](examples/bindings-usage.ts) — Shows `check_spend` and `register_wallet`
+- [`examples/account-factory-usage.ts`](examples/account-factory-usage.ts) — Shows account factory operations
 
 ```ts
 import {
   MuxSpendingPolicyClient,
   MuxWalletRegistryClient,
+  MuxAccountFactoryClient,
 } from "@mux-protocol/contracts";
 
+// Account factory example
+const factoryClient = new MuxAccountFactoryClient({ contractId, networkPassphrase, rpcUrl });
+await factoryClient.deployAccount(signer, owner, accountAddress);
+await factoryClient.deployAccountWithMetadata(signer, owner, accountAddress, "1.0.0", "My account", "user");
+const accounts = await factoryClient.getAccounts(owner);
+
+// Spending policy example
 const spendingClient = new MuxSpendingPolicyClient({ contractId, networkPassphrase, rpcUrl });
 await spendingClient.checkSpend(signer, account, asset, 500n);
 
+// Wallet registry example
 const walletClient = new MuxWalletRegistryClient({ contractId, networkPassphrase, rpcUrl });
 await walletClient.registerWallet(signer, "treasury", walletAddress);
 const addr = await walletClient.getWallet(signer, "treasury");
