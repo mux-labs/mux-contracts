@@ -70,17 +70,83 @@ pub struct BatchResult {
 
 ## mux-permissions
 
-### Methods
+### Types
+
+```rust
+pub enum DataKey {
+    Admin,
+    RoleMembers(Symbol),
+    RolePermissions(Symbol),
+    AccountRoles(Address),
+    PendingAdmins,
+    AdminThreshold,
+    AdminApprovals(Address),
+}
+
+pub struct RoleInfo {
+    pub name: Symbol,
+    pub members: Vec<Address>,
+    pub permissions: Vec<Symbol>,
+}
+```
+
+### Constants
+
+| Constant | Value | Description |
+|---|---|---|
+| `MAX_ROLE_MEMBERS` | 256 | Maximum members per role |
+| `MAX_ROLES_PER_ACCOUNT` | 32 | Maximum roles per account |
+| `TTL_THRESHOLD` | 17,280 | ~1 day — TTL extension trigger |
+| `TTL_EXTEND_TO` | 518,400 | ~30 days — TTL extended to |
+
+### Methods — Role Management
 
 | Method | Args | Returns | Description |
 |---|---|---|---|
-| `initialize` | `admin: Address` | `Result<(), MuxPermissionsError>` | Set admin |
-| `create_role` | `role: Symbol, permissions: Vec<Symbol>` | `Result<(), MuxPermissionsError>` | Create a role |
-| `grant_role` | `account: Address, role: Symbol` | `Result<(), MuxPermissionsError>` | Grant role to account |
-| `revoke_role` | `account: Address, role: Symbol` | `Result<(), MuxPermissionsError>` | Revoke role from account |
-| `has_permission` | `account: Address, permission: Symbol` | `bool` | Check if account holds a permission |
+| `initialize` | `admin: Address` | `Result<(), MuxPermissionsError>` | Set admin; can only be called once |
+| `create_role` | `role: Symbol, permissions: Vec<Symbol>` | `Result<(), MuxPermissionsError>` | Create a role with permissions (admin-only) |
+| `grant_role` | `account: Address, role: Symbol` | `Result<(), MuxPermissionsError>` | Grant role to account (admin-only) |
+| `revoke_role` | `account: Address, role: Symbol` | `Result<(), MuxPermissionsError>` | Revoke role from account (admin-only) |
+| `has_permission` | `account: Address, permission: Symbol` | `bool` | Check if account holds a permission via any role |
 | `get_roles` | `account: Address` | `Vec<Symbol>` | Return all roles for an account |
 | `get_role_members` | `role: Symbol` | `Result<Vec<Address>, MuxPermissionsError>` | Return all members of a role |
+
+### Methods — Multisig Admin
+
+| Method | Args | Returns | Description |
+|---|---|---|---|
+| `set_admin_threshold` | `threshold: u32` | `Result<(), MuxPermissionsError>` | Set approval count required to promote a pending admin (admin-only) |
+| `propose_admin` | `new_admin: Address` | `Result<(), MuxPermissionsError>` | Propose a new admin candidate (admin-only, idempotent) |
+| `approve_admin` | `approver: Address, new_admin: Address` | `Result<(), MuxPermissionsError>` | Approve a pending admin; promotes when threshold reached (admin-only) |
+| `get_pending_admins` | — | `Vec<Address>` | Return all pending admin candidates |
+
+### Events
+
+| Topic | Data | Condition |
+|---|---|---|
+| `init` | `admin: Address` | Contract initialized |
+| `role_crt` | `role: Symbol` | Role created |
+| `role_grt` | `(account: Address, role: Symbol)` | Role granted |
+| `role_rev` | `(account: Address, role: Symbol)` | Role revoked |
+| `adm_thr` | `threshold: u32` | Admin threshold updated |
+| `adm_prp` | `new_admin: Address` | Admin candidate proposed |
+| `adm_apr` | `(approver: Address, new_admin: Address)` | Admin approval recorded (below threshold) |
+| `adm_prm` | `new_admin: Address` | Admin promoted (threshold reached) |
+
+### Errors
+
+| Variant | Code | Description |
+|---|---|---|
+| `NotInitialized` | 1 | Contract not yet initialized |
+| `AlreadyInitialized` | 2 | `initialize` called more than once |
+| `Unauthorized` | 3 | Caller is not the admin |
+| `RoleNotFound` | 4 | Role does not exist |
+| `AccountNotInRole` | 5 | Account is not a member of the role |
+| `PermissionNotFound` | 6 | Permission does not exist |
+| `TooManyMembers` | 7 | Role has reached `MAX_ROLE_MEMBERS` (256) |
+| `TooManyRoles` | 8 | Account has reached `MAX_ROLES_PER_ACCOUNT` (32) |
+| `AdminNotFound` | 9 | Candidate is not in the pending admin list |
+| `AlreadyApproved` | 10 | Approver already voted for this candidate |
 
 ---
 
