@@ -38,6 +38,10 @@ describe("Error Mapping", () => {
     it("maps initialization errors to 500", () => {
       expect(ERROR_HTTP_MAP.NotInitialized).toBe(500);
     });
+
+    it("maps WalletNotFound to 404", () => {
+      expect(ERROR_HTTP_MAP.WalletNotFound).toBe(404);
+    });
   });
 
   describe("contractErrorToHttp", () => {
@@ -143,6 +147,21 @@ describe("Error Mapping", () => {
       ];
 
       registryErrors.forEach((error) => {
+        const response = contractErrorToHttp(error);
+        expect(response.statusCode).toBeGreaterThanOrEqual(400);
+        expect(response.statusCode).toBeLessThan(600);
+      });
+    });
+
+    it("handles all MuxWalletRegistryError variants", () => {
+      const walletRegistryErrors: string[] = [
+        "NotInitialized",
+        "AlreadyInitialized",
+        "Unauthorized",
+        "WalletNotFound",
+      ];
+
+      walletRegistryErrors.forEach((error) => {
         const response = contractErrorToHttp(error);
         expect(response.statusCode).toBeGreaterThanOrEqual(400);
         expect(response.statusCode).toBeLessThan(600);

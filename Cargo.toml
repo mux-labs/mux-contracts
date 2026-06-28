@@ -7,8 +7,11 @@ members = [
     "contracts/mux-delegation",
     "contracts/mux-permissions",
     "contracts/mux-policy",
+    "contracts/mux-recovery",
     "contracts/mux-registry",
+    "contracts/mux-spending-policy",
     "contracts/mux-wallet-registry",
+    "contracts/soroban-test-helpers",
 ]
 resolver = "2"
 

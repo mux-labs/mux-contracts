@@ -108,6 +108,60 @@ export class MuxPermissionsClient {
     return this.simulateRead<Address[]>(tx);
   }
 
+  // ── Multisig Admin ──────────────────────────────────────────────────────────
+
+  async setAdminThreshold(
+    sourceKeypair: Keypair,
+    threshold: number
+  ): Promise<void> {
+    const tx = await this.buildTx(sourceKeypair, "set_admin_threshold", [
+      nativeToScVal(threshold, { type: "u32" }),
+    ]);
+    await this.submit(tx, sourceKeypair);
+  }
+
+  async proposeAdmin(
+    sourceKeypair: Keypair,
+    newAdmin: Address
+  ): Promise<void> {
+    const tx = await this.buildTx(sourceKeypair, "propose_admin", [
+      nativeToScVal(newAdmin.toString(), { type: "address" }),
+    ]);
+    await this.submit(tx, sourceKeypair);
+  }
+
+  async approveAdmin(
+    sourceKeypair: Keypair,
+    approver: Address,
+    newAdmin: Address
+  ): Promise<void> {
+    const tx = await this.buildTx(sourceKeypair, "approve_admin", [
+      nativeToScVal(approver.toString(), { type: "address" }),
+      nativeToScVal(newAdmin.toString(), { type: "address" }),
+    ]);
+    await this.submit(tx, sourceKeypair);
+  }
+
+  async getPendingAdmins(sourceKeypair: Keypair): Promise<Address[]> {
+    const tx = await this.buildTx(sourceKeypair, "get_pending_admins", []);
+    return this.simulateRead<Address[]>(tx);
+  }
+
+  // ── TTL Management ─────────────────────────────────────────────────────────
+
+  async bumpTtl(sourceKeypair: Keypair): Promise<void> {
+    const tx = await this.buildTx(sourceKeypair, "bump_ttl", []);
+    await this.submit(tx, sourceKeypair);
+  }
+
+  async ttlConfig(
+    sourceKeypair: Keypair
+  ): Promise<{ threshold: number; extendTo: number }> {
+    const tx = await this.buildTx(sourceKeypair, "ttl_config", []);
+    const [threshold, extendTo] = await this.simulateRead<[number, number]>(tx);
+    return { threshold, extendTo };
+  }
+
   // ── Private helpers ──────────────────────────────────────────────────────────
 
   private async buildTx(
