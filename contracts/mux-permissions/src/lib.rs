@@ -9,7 +9,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String,
+    Symbol, Vec,
 };
 
 // ── Audit events ──────────────────────────────────────────────────────────────
@@ -29,6 +30,26 @@ pub enum DataKey {
     PendingAdmins,
     AdminThreshold,
     AdminApprovals(Address),
+    /// Registry-level metadata (name, version, description).
+    Metadata,
+}
+
+// ── Registry metadata ─────────────────────────────────────────────────────────
+
+/// Descriptive metadata attached to the permissions registry itself.
+///
+/// Stored under [`DataKey::Metadata`] and writable only by the current admin.
+/// Useful for off-chain tooling (indexers, dashboards) that need to identify
+/// or version a deployed contract instance.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct RegistryMeta {
+    /// Human-readable name for this registry instance (e.g. `"mux-mainnet-perm"`).
+    pub name: String,
+    /// Semantic version string (e.g. `"1.0.0"`).
+    pub version: String,
+    /// Optional free-form description / notes.
+    pub description: String,
 }
 
 #[contracttype]
@@ -349,6 +370,24 @@ impl MuxPermissions {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
+    // ── Registry metadata ──────────────────────────────────────────────────────
+
+    /// Store registry-level metadata. Admin only.
+    ///
+    /// Overwrites any previously stored metadata. Emits a `meta_set` audit event.
+    pub fn set_metadata(env: Env, meta: RegistryMeta) -> Result<(), MuxPermissionsError> {
+        Self::require_admin(&env)?;
+        env.storage().instance().set(&DataKey::Metadata, &meta);
+        emit(&env, symbol_short!("meta_set"), meta.name.clone());
+        Self::extend_ttl(&env);
+        Ok(())
+    }
+
+    /// Return the currently stored registry metadata, or `None` if not set.
+    pub fn get_metadata(env: Env) -> Option<RegistryMeta> {
+        env.storage().instance().get(&DataKey::Metadata)
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────────
 
     fn require_admin(env: &Env) -> Result<(), MuxPermissionsError> {
@@ -377,7 +416,7 @@ mod tests {
     use soroban_sdk::{
         symbol_short,
         testutils::{Address as _, Events},
-        Env, FromVal, Vec,
+        Env, FromVal, String, Vec,
     };
 
     fn topic_action(
@@ -619,6 +658,63 @@ mod tests {
         let ghost = Address::generate(&env);
         let result = client.try_approve_admin(&admin, &ghost);
         assert!(result.is_err());
+    }
+
+    // ── Registry metadata tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_set_and_get_metadata() {
+        let (env, client, _admin) = setup();
+        let meta = RegistryMeta {
+            name: String::from_str(&env, "mux-testnet-perm"),
+            version: String::from_str(&env, "1.0.0"),
+            description: String::from_str(&env, "Permissions registry for testnet"),
+        };
+        client.set_metadata(&meta);
+        let stored = client.get_metadata().unwrap();
+        assert_eq!(stored.name, meta.name);
+        assert_eq!(stored.version, meta.version);
+        assert_eq!(stored.description, meta.description);
+    }
+
+    #[test]
+    fn test_set_metadata_overwrites_previous() {
+        let (env, client, _admin) = setup();
+        let meta1 = RegistryMeta {
+            name: String::from_str(&env, "v1"),
+            version: String::from_str(&env, "1.0.0"),
+            description: String::from_str(&env, "first"),
+        };
+        let meta2 = RegistryMeta {
+            name: String::from_str(&env, "v2"),
+            version: String::from_str(&env, "2.0.0"),
+            description: String::from_str(&env, "second"),
+        };
+        client.set_metadata(&meta1);
+        client.set_metadata(&meta2);
+        let stored = client.get_metadata().unwrap();
+        assert_eq!(stored.version, meta2.version);
+    }
+
+    #[test]
+    fn test_get_metadata_returns_none_when_unset() {
+        let (_env, client, _admin) = setup();
+        assert!(client.get_metadata().is_none());
+    }
+
+    #[test]
+    fn test_set_metadata_emits_event() {
+        let (env, client, _admin) = setup();
+        let meta = RegistryMeta {
+            name: String::from_str(&env, "registry"),
+            version: String::from_str(&env, "1.0.0"),
+            description: String::from_str(&env, ""),
+        };
+        client.set_metadata(&meta);
+        let events = env.events().all();
+        // init + meta_set
+        assert_eq!(events.len(), 2);
+        assert_eq!(topic_action(&env, &events, 1), symbol_short!("meta_set"));
     }
 }
 
