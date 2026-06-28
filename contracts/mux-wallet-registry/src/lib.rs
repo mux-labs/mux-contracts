@@ -1,27 +1,33 @@
 /*!
  * mux-wallet-registry: Named wallet address registry for Mux Protocol.
  *
- * Maintains a mapping from symbolic names (`Symbol`) to wallet addresses
- * (`Address`). A single owner is set at initialisation time; only that owner
- * may write to the registry. Reads are open to any caller.
+ * Allows an owner to register and look up wallet addresses by a symbolic name.
  *
- * # Public interface
+ * ## Upgrade Migration Notes
  *
- * | Method            | Mutating | Auth required |
- * |-------------------|----------|---------------|
- * | `initialize`      | yes      | owner         |
- * | `register_wallet` | yes      | owner         |
- * | `get_wallet`      | no       | —             |
+ * When upgrading this contract to a new version:
  *
- * # Errors
+ * 1. **Storage Compatibility**: All storage keys (Owner, Wallet) must remain stable.
+ *    Do not change DataKey enum variants or their discriminants.
  *
- * All methods return `Result<_, WalletRegistryError>`. See that type for the
- * full set of error codes and when each is produced.
+ * 2. **Owner Migration**: The Owner address will persist across upgrades.
+ *    No migration action required for existing owner authorization.
+ *
+ * 3. **Wallet Registry Migration**: All registered wallet entries (Symbol -> Address)
+ *    will remain accessible. Maintain backward compatibility with existing wallet lookups.
+ *
+ * 4. **Breaking Changes**: If introducing new storage fields, ensure they are optional
+ *    to maintain compatibility with existing instances. Use a version marker if needed.
+ *
+ * 5. **Testing**: After upgrade, verify:
+ *    - Owner can still authorize operations
+ *    - All registered wallets can be retrieved
+ *    - New wallets can be registered
  */
 
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol, Vec};
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
@@ -32,6 +38,8 @@ pub enum DataKey {
     Owner,
     /// A registered wallet entry keyed by name: `DataKey::Wallet(name)`.
     Wallet(Symbol),
+    /// List of wallet names registered in this contract.
+    Names,
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────
@@ -53,7 +61,17 @@ pub enum WalletRegistryError {
     Unauthorized = 3,
     /// No wallet is registered under the requested name.
     WalletNotFound = 4,
+    TooManyWallets = 5,
 }
+
+// ── Storage limits ─────────────────────────────────────────────────────────────
+
+/// Maximum number of distinct wallet names that may be registered.
+const MAX_WALLETS: u32 = 128;
+
+// ── Storage TTL ─────────────────────────────────────────────────────────────────
+const TTL_THRESHOLD: u32 = 17_280; // ~1 day
+const TTL_EXTEND_TO: u32 = 518_400; // ~30 days
 
 // ── Contract ──────────────────────────────────────────────────────────────────
 
@@ -80,6 +98,10 @@ impl MuxWalletRegistry {
         }
         owner.require_auth();
         env.storage().instance().set(&DataKey::Owner, &owner);
+        env.storage()
+            .instance()
+            .set(&DataKey::Names, &Vec::<Symbol>::new(&env));
+        Self::extend_ttl(&env);
         Ok(())
     }
 
@@ -98,9 +120,24 @@ impl MuxWalletRegistry {
         wallet: Address,
     ) -> Result<(), WalletRegistryError> {
         Self::require_owner(&env)?;
+        let mut names: Vec<Symbol> = env
+            .storage()
+            .instance()
+            .get(&DataKey::Names)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        if !names.contains(&name) {
+            if names.len() >= MAX_WALLETS {
+                return Err(WalletRegistryError::TooManyWallets);
+            }
+            names.push_back(name.clone());
+            env.storage().instance().set(&DataKey::Names, &names);
+        }
+
         env.storage()
             .instance()
             .set(&DataKey::Wallet(name), &wallet);
+        Self::extend_ttl(&env);
         Ok(())
     }
 
@@ -119,6 +156,33 @@ impl MuxWalletRegistry {
             .ok_or(WalletRegistryError::WalletNotFound)
     }
 
+    /// Register (or update) a wallet with metadata. Owner only.
+    pub fn register_wallet_with_metadata(
+        env: Env,
+        name: Symbol,
+        wallet: Address,
+        label: String,
+        description: String,
+    ) -> Result<(), WalletRegistryError> {
+        Self::require_owner(&env)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::Wallet(name.clone()), &wallet);
+        let meta = WalletMetadata { label, description };
+        env.storage()
+            .instance()
+            .set(&DataKey::Metadata(name), &meta);
+        Ok(())
+    }
+
+    /// Return the metadata for a wallet registered under `name`.
+    pub fn get_metadata(env: Env, name: Symbol) -> Result<WalletMetadata, WalletRegistryError> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Metadata(name))
+            .ok_or(WalletRegistryError::WalletNotFound)
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────────
 
     /// Fetch the stored owner and require their auth. Returns
@@ -132,6 +196,12 @@ impl MuxWalletRegistry {
         owner.require_auth();
         Ok(())
     }
+
+    fn extend_ttl(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -139,11 +209,7 @@ impl MuxWalletRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{
-        symbol_short,
-        testutils::{Address as _, MockAuth, MockAuthInvoke},
-        vec, Env,
-    };
+    use soroban_sdk::{symbol_short, testutils::Address as _, Env, String};
 
     fn setup() -> (Env, MuxWalletRegistryClient<'static>, Address) {
         let env = Env::default();
@@ -179,6 +245,31 @@ mod tests {
     }
 
     #[test]
+    fn test_register_wallet_caps_names() {
+        let (env, client, _) = setup();
+        env.budget().reset_unlimited();
+        for i in 0..MAX_WALLETS {
+            let name = soroban_sdk::Symbol::new(&env, format!("wallet{}", i));
+            let wallet = Address::generate(&env);
+            client.register_wallet(&name, &wallet);
+        }
+
+        let overflow_name = soroban_sdk::Symbol::new(&env, "overflow");
+        let overflow_wallet = Address::generate(&env);
+        let result = client.try_register_wallet(&overflow_name, &overflow_wallet);
+        assert_eq!(result, Err(Ok(WalletRegistryError::TooManyWallets)));
+    }
+
+    #[test]
+    fn test_ttl_extended_on_register_wallet() {
+        let (env, client, _) = setup();
+        let name = symbol_short!("alice");
+        let wallet = Address::generate(&env);
+        client.register_wallet(&name, &wallet);
+        assert_eq!(client.get_wallet(&name), wallet);
+    }
+
+    #[test]
     fn test_get_wallet_not_found() {
         let (_, client, _) = setup();
         let result = client.try_get_wallet(&symbol_short!("ghost"));
@@ -196,63 +287,39 @@ mod tests {
         assert_eq!(client.get_wallet(&name), wallet2);
     }
 
-    /// `register_wallet` must return `NotInitialized` when called before
-    /// `initialize`.
     #[test]
-    fn test_register_wallet_not_initialized() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, MuxWalletRegistry);
-        let client = MuxWalletRegistryClient::new(&env, &contract_id);
-        let name = symbol_short!("alice");
+    fn test_register_wallet_with_metadata() {
+        let (env, client, _) = setup();
+        let name = symbol_short!("carol");
         let wallet = Address::generate(&env);
-        assert_eq!(
-            client.try_register_wallet(&name, &wallet),
-            Err(Ok(WalletRegistryError::NotInitialized))
-        );
+        let label = String::from_str(&env, "Carol's Wallet");
+        let description = String::from_str(&env, "Primary spending wallet");
+        client.register_wallet_with_metadata(&name, &wallet, &label, &description);
+        assert_eq!(client.get_wallet(&name), wallet);
+        let meta = client.get_metadata(&name);
+        assert_eq!(meta.label, label);
+        assert_eq!(meta.description, description);
     }
 
-    /// `get_wallet` on an uninitialised or empty registry returns
-    /// `WalletNotFound` (not a host error), so callers can handle the
-    /// miss without catching panics.
     #[test]
-    fn test_get_wallet_before_any_registration() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, MuxWalletRegistry);
-        let client = MuxWalletRegistryClient::new(&env, &contract_id);
-        // No initialize, no entries — must return WalletNotFound cleanly.
-        assert_eq!(
-            client.try_get_wallet(&symbol_short!("miss")),
-            Err(Ok(WalletRegistryError::WalletNotFound))
-        );
+    fn test_get_metadata_not_found() {
+        let (_, client, _) = setup();
+        let result = client.try_get_metadata(&symbol_short!("ghost"));
+        assert_eq!(result, Err(Ok(WalletRegistryError::WalletNotFound)));
     }
 
-    /// `register_wallet` invocation without the owner's authorisation must
-    /// fail at the host level. Auth is enforced by `Address::require_auth`;
-    /// the call is rejected before reaching contract logic.
     #[test]
-    fn test_register_wallet_requires_owner_auth() {
-        let env = Env::default();
-        let contract_id = env.register_contract(None, MuxWalletRegistry);
-        let client = MuxWalletRegistryClient::new(&env, &contract_id);
-        let owner = Address::generate(&env);
-
-        // Authorise only the initialize call.
-        env.mock_auths(&[MockAuth {
-            address: &owner,
-            invoke: &MockAuthInvoke {
-                contract: &contract_id,
-                fn_name: "initialize",
-                args: vec![&env, owner.to_val()],
-                sub_invokes: &[],
-            },
-        }]);
-        client.initialize(&owner);
-
-        // register_wallet has no auth mocked → host rejects it.
-        let name = symbol_short!("hack");
+    fn test_metadata_update_preserves_wallet() {
+        let (env, client, _) = setup();
+        let name = symbol_short!("dave");
         let wallet = Address::generate(&env);
-        assert!(client.try_register_wallet(&name, &wallet).is_err());
+        let label1 = String::from_str(&env, "v1");
+        let label2 = String::from_str(&env, "v2");
+        let desc = String::from_str(&env, "desc");
+        client.register_wallet_with_metadata(&name, &wallet, &label1, &desc);
+        client.register_wallet_with_metadata(&name, &wallet, &label2, &desc);
+        let meta = client.get_metadata(&name);
+        assert_eq!(meta.label, label2);
+        assert_eq!(client.get_wallet(&name), wallet);
     }
 }

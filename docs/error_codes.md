@@ -24,7 +24,15 @@ This document provides a comprehensive reference for all error codes used within
 - `RegistryError::VersionMismatch` (5002) - The contract version does not match the expected version.
 
 ## Mux Wallet Registry (`contracts/mux-wallet-registry`)
-- `WalletRegistryError::NotInitialized` (1) - `initialize` has not been called; the owner is unknown.
-- `WalletRegistryError::AlreadyInitialized` (2) - `initialize` was called a second time on the same instance.
-- `WalletRegistryError::Unauthorized` (3) - Reserved. Auth failures are surfaced as host errors by `Address::require_auth`.
-- `WalletRegistryError::WalletNotFound` (4) - No wallet is registered under the requested name.
+- `WalletRegistryError::NotInitialized` (1) — The registry has not been initialized.
+- `WalletRegistryError::AlreadyInitialized` (2) — The registry has already been initialized.
+- `WalletRegistryError::Unauthorized` (3) — The caller is not the registry owner.
+- `WalletRegistryError::WalletNotFound` (4) — No wallet is registered under the given name.
+
+### HTTP mapping
+| Error variant         | HTTP status |
+|-----------------------|-------------|
+| `NotInitialized`      | 500         |
+| `AlreadyInitialized`  | 409         |
+| `Unauthorized`        | 401         |
+| `WalletNotFound`      | 404         |
