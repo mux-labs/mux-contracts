@@ -61,6 +61,7 @@ describe("Contract Address Configuration", () => {
         muxBatcher: "CBatch1",
         muxDelegation: "CDel1",
         muxPermissions: "CPerms1",
+        muxWalletRegistry: "CWReg1",
       };
 
       expect(() => {
@@ -74,6 +75,7 @@ describe("Contract Address Configuration", () => {
         muxBatcher: "CBatch1",
         muxDelegation: "CDel1",
         muxPermissions: "CPerms1",
+        muxWalletRegistry: "CWReg1",
       };
 
       expect(() => {
@@ -90,6 +92,7 @@ describe("Contract Address Configuration", () => {
         muxBatcher: "",
         muxDelegation: "CDel1",
         muxPermissions: "CPerms1",
+        muxWalletRegistry: "CWReg1",
       };
 
       expect(() => {
@@ -106,6 +109,7 @@ describe("Contract Address Configuration", () => {
         muxBatcher: "",
         muxDelegation: "",
         muxPermissions: "",
+        muxWalletRegistry: "",
       };
 
       expect(() => {
@@ -122,18 +126,21 @@ describe("Contract Address Configuration", () => {
           muxBatcher: "CLoc2",
           muxDelegation: "CLoc3",
           muxPermissions: "CLoc4",
+          muxWalletRegistry: "CLoc5",
         },
         testnet: {
           muxAccount: "CTest1",
           muxBatcher: "CTest2",
           muxDelegation: "CTest3",
           muxPermissions: "CTest4",
+          muxWalletRegistry: "CTest5",
         },
         mainnet: {
           muxAccount: "",
           muxBatcher: "",
           muxDelegation: "",
           muxPermissions: "",
+          muxWalletRegistry: "",
         },
       });
 
@@ -163,6 +170,7 @@ describe("Contract Address Configuration", () => {
         expect(networkAddresses).toHaveProperty("muxBatcher");
         expect(networkAddresses).toHaveProperty("muxDelegation");
         expect(networkAddresses).toHaveProperty("muxPermissions");
+        expect(networkAddresses).toHaveProperty("muxWalletRegistry");
       });
     });
   });
