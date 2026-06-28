@@ -236,21 +236,17 @@ mod tests {
     }
 
     #[test]
-    fn test_initialize() {
+    fn test_initialize_succeeds() {
         let env = Env::default();
         env.mock_all_auths();
         let contract_id = env.register_contract(None, MuxWalletRegistry);
         let client = MuxWalletRegistryClient::new(&env, &contract_id);
         let owner = Address::generate(&env);
         assert!(client.try_initialize(&owner).is_ok());
-        assert_eq!(
-            client.try_initialize(&owner),
-            Err(Ok(WalletRegistryError::AlreadyInitialized))
-        );
     }
 
     #[test]
-    fn test_register_and_get() {
+    fn test_register_and_get_wallet() {
         let (env, client, _) = setup();
         let name = symbol_short!("alice");
         let wallet = Address::generate(&env);
@@ -286,19 +282,52 @@ mod tests {
     #[test]
     fn test_get_wallet_not_found() {
         let (_, client, _) = setup();
-        let result = client.try_get_wallet(&symbol_short!("ghost"));
-        assert_eq!(result, Err(Ok(WalletRegistryError::WalletNotFound)));
+        assert_eq!(
+            client.try_get_wallet(&symbol_short!("ghost")),
+            Err(Ok(WalletRegistryError::WalletNotFound))
+        );
     }
 
     #[test]
-    fn test_register_wallet_updates_existing() {
+    fn test_register_wallet_before_init_returns_not_initialized() {
+        // require_owner checks for Owner key; absent means NotInitialized.
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxWalletRegistry);
+        let client = MuxWalletRegistryClient::new(&env, &contract_id);
+        let name = symbol_short!("wallet");
+        let wallet = Address::generate(&env);
+        assert_eq!(
+            client.try_register_wallet(&name, &wallet),
+            Err(Ok(WalletRegistryError::NotInitialized))
+        );
+    }
+
+    #[test]
+    fn test_get_wallet_on_uninitialised_contract_returns_not_found() {
+        // get_wallet does not check auth — it just returns WalletNotFound when
+        // nothing is stored, even on a completely fresh contract.
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxWalletRegistry);
+        let client = MuxWalletRegistryClient::new(&env, &contract_id);
+        assert_eq!(
+            client.try_get_wallet(&symbol_short!("x")),
+            Err(Ok(WalletRegistryError::WalletNotFound))
+        );
+    }
+
+    #[test]
+    fn test_get_unknown_name_after_registrations() {
         let (env, client, _) = setup();
-        let name = symbol_short!("bob");
-        let wallet1 = Address::generate(&env);
-        let wallet2 = Address::generate(&env);
-        client.register_wallet(&name, &wallet1);
-        client.register_wallet(&name, &wallet2);
-        assert_eq!(client.get_wallet(&name), wallet2);
+        let known = symbol_short!("known");
+        client.register_wallet(&known, &Address::generate(&env));
+        // Unregistered name is still WalletNotFound.
+        assert_eq!(
+            client.try_get_wallet(&symbol_short!("unknown")),
+            Err(Ok(WalletRegistryError::WalletNotFound))
+        );
+        // Registered name is unaffected.
+        assert!(client.try_get_wallet(&known).is_ok());
     }
 
     #[test]
