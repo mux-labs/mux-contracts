@@ -79,7 +79,7 @@ describe("Contract Address Configuration", () => {
         muxBatcher: "CBatch1",
         muxDelegation: "CDel1",
         muxPermissions: "CPerms1",
-        muxPolicy: "CPol1",
+        muxWalletRegistry: "CWReg1",
       };
 
       expect(() => {
@@ -93,7 +93,7 @@ describe("Contract Address Configuration", () => {
         muxBatcher: "CBatch1",
         muxDelegation: "CDel1",
         muxPermissions: "CPerms1",
-        muxPolicy: "CPol1",
+        muxWalletRegistry: "CWReg1",
       };
 
       expect(() => {
@@ -110,7 +110,7 @@ describe("Contract Address Configuration", () => {
         muxBatcher: "",
         muxDelegation: "CDel1",
         muxPermissions: "CPerms1",
-        muxPolicy: "CPol1",
+        muxWalletRegistry: "CWReg1",
       };
 
       expect(() => {
@@ -127,7 +127,7 @@ describe("Contract Address Configuration", () => {
         muxBatcher: "",
         muxDelegation: "",
         muxPermissions: "",
-        muxPolicy: "",
+        muxWalletRegistry: "",
       };
 
       expect(() => {
@@ -144,21 +144,21 @@ describe("Contract Address Configuration", () => {
           muxBatcher: "CLoc2",
           muxDelegation: "CLoc3",
           muxPermissions: "CLoc4",
-          muxPolicy: "CLoc5",
+          muxWalletRegistry: "CLoc5",
         },
         testnet: {
           muxAccount: "CTest1",
           muxBatcher: "CTest2",
           muxDelegation: "CTest3",
           muxPermissions: "CTest4",
-          muxPolicy: "CTest5",
+          muxWalletRegistry: "CTest5",
         },
         mainnet: {
           muxAccount: "",
           muxBatcher: "",
           muxDelegation: "",
           muxPermissions: "",
-          muxPolicy: "",
+          muxWalletRegistry: "",
         },
       });
 
@@ -189,7 +189,7 @@ describe("Contract Address Configuration", () => {
         expect(networkAddresses).toHaveProperty("muxBatcher");
         expect(networkAddresses).toHaveProperty("muxDelegation");
         expect(networkAddresses).toHaveProperty("muxPermissions");
-        expect(networkAddresses).toHaveProperty("muxPolicy");
+        expect(networkAddresses).toHaveProperty("muxWalletRegistry");
       });
     });
   });

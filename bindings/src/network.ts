@@ -22,8 +22,8 @@ function getContractAddresses(
       process.env[`${envPrefix}_MUX_DELEGATION_ID`] || defaults.muxDelegation,
     muxPermissions:
       process.env[`${envPrefix}_MUX_PERMISSIONS_ID`] || defaults.muxPermissions,
-    muxPolicy:
-      process.env[`${envPrefix}_MUX_POLICY_ID`] || defaults.muxPolicy,
+    muxWalletRegistry:
+      process.env[`${envPrefix}_MUX_WALLET_REGISTRY_ID`] || defaults.muxWalletRegistry,
   };
 }
 
