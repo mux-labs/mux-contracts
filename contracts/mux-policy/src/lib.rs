@@ -34,7 +34,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, BytesN, Env,
 };
 
 // ── Audit events ──────────────────────────────────────────────────────────────
@@ -122,6 +122,16 @@ impl MuxPolicy {
         Ok(())
     }
 
+    /// Upgrade the contract WASM. Admin only.
+    ///
+    /// See the module-level doc comment and `docs/contract-upgrade-pattern.md`
+    /// for storage-compatibility rules that must be observed between versions.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), MuxPolicyError> {
+        Self::require_admin(&env)?;
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        Ok(())
+    }
+
     /// Set or update the daily spend limit for a wallet. Admin only.
     ///
     /// `day_ledgers` is the number of ledgers that constitute one day
@@ -167,9 +177,13 @@ impl MuxPolicy {
             day_ledgers,
             registry_id,
         };
+        let key = DataKey::WalletLimit(wallet.clone());
+        env.storage().persistent().set(&key, &record);
+        // #287 – extend persistent entry TTL on every write so the record
+        // survives beyond the default ledger TTL.
         env.storage()
             .persistent()
-            .set(&DataKey::WalletLimit(wallet.clone()), &record);
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         emit(&env, symbol_short!("lmt_set"), (wallet, limit, day_ledgers));
         Self::extend_ttl(&env);
         Ok(())
@@ -200,10 +214,11 @@ impl MuxPolicy {
         if amount <= 0 {
             return Err(MuxPolicyError::InvalidAmount);
         }
+        let key = DataKey::WalletLimit(wallet.clone());
         let mut record: DailyLimit = env
             .storage()
             .persistent()
-            .get(&DataKey::WalletLimit(wallet.clone()))
+            .get(&key)
             .ok_or(MuxPolicyError::LimitNotFound)?;
 
         // Reset counter if the day window has elapsed.
@@ -220,10 +235,37 @@ impl MuxPolicy {
             return Err(MuxPolicyError::LimitExceeded);
         }
         record.spent = new_spent;
+        env.storage().persistent().set(&key, &record);
+        // #287 – extend persistent entry TTL on every write.
         env.storage()
             .persistent()
-            .set(&DataKey::WalletLimit(wallet.clone()), &record);
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         emit(&env, symbol_short!("spent"), (wallet, amount));
+        Self::extend_ttl(&env);
+        Ok(())
+    }
+
+    /// Explicitly reset a wallet's daily spend counter. Admin only.
+    ///
+    /// Clears `spent` to `0` and starts a fresh window from the current ledger.
+    /// Intended for emergency resets and post-upgrade counter corrections.
+    /// Fails with `LimitNotFound` if no limit has been configured for `wallet`.
+    pub fn reset_daily_counter(env: Env, wallet: Address) -> Result<(), MuxPolicyError> {
+        Self::require_admin(&env)?;
+        let key = DataKey::WalletLimit(wallet.clone());
+        let mut record: DailyLimit = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(MuxPolicyError::LimitNotFound)?;
+        record.spent = 0;
+        record.reset_ledger = env.ledger().sequence().saturating_add(record.day_ledgers);
+        env.storage().persistent().set(&key, &record);
+        // #287 – extend persistent entry TTL on every write.
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        emit(&env, symbol_short!("ctr_rst"), wallet);
         Self::extend_ttl(&env);
         Ok(())
     }
@@ -296,7 +338,7 @@ mod tests {
 
     #[test]
     fn test_double_initialize_fails() {
-        let (env, client, admin) = setup();
+        let (_env, client, admin) = setup();
         assert!(client.try_initialize(&admin).is_err());
     }
 
@@ -311,8 +353,62 @@ mod tests {
         assert_eq!(record.registry_id, None);
     }
 
+    // ── #282: size / bounds checks ──────────────────────────────────────────
+
     #[test]
-    fn test_set_daily_limit_invalid_amount() {
+    fn test_set_daily_limit_zero_amount_rejected() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        assert_eq!(
+            client.try_set_daily_limit(&wallet, &0_i128, &17280_u32),
+            Err(Ok(MuxPolicyError::InvalidAmount))
+        );
+    }
+
+    #[test]
+    fn test_set_daily_limit_negative_amount_rejected() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        assert_eq!(
+            client.try_set_daily_limit(&wallet, &-1_i128, &17280_u32),
+            Err(Ok(MuxPolicyError::InvalidAmount))
+        );
+    }
+
+    #[test]
+    fn test_set_daily_limit_zero_period_rejected() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        assert_eq!(
+            client.try_set_daily_limit(&wallet, &1000_i128, &0_u32),
+            Err(Ok(MuxPolicyError::InvalidPeriod))
+        );
+    }
+
+    #[test]
+    fn test_record_spend_zero_amount_rejected() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        client.set_daily_limit(&wallet, &1000_i128, &17280_u32);
+        assert_eq!(
+            client.try_record_spend(&wallet, &0_i128),
+            Err(Ok(MuxPolicyError::InvalidAmount))
+        );
+    }
+
+    #[test]
+    fn test_record_spend_negative_amount_rejected() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        client.set_daily_limit(&wallet, &1000_i128, &17280_u32);
+        assert_eq!(
+            client.try_record_spend(&wallet, &-5_i128),
+            Err(Ok(MuxPolicyError::InvalidAmount))
+        );
+    }
+
+    #[test]
+    fn test_record_spend_exact_limit_allowed() {
         let (env, client, _) = setup();
         let wallet = Address::generate(&env);
         assert!(client
@@ -324,13 +420,39 @@ mod tests {
     }
 
     #[test]
-    fn test_set_daily_limit_invalid_period() {
+    fn test_record_spend_one_over_limit_rejected() {
         let (env, client, _) = setup();
         let wallet = Address::generate(&env);
         assert!(client
             .try_set_daily_limit(&wallet, &1000_i128, &0_u32, &None)
             .is_err());
     }
+
+    #[test]
+    fn test_record_spend_cumulative_boundary() {
+        // Two spends of 500 each against a 1000 limit; third spend of 1 fails.
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        client.set_daily_limit(&wallet, &1000_i128, &17280_u32);
+        client.record_spend(&wallet, &500_i128);
+        client.record_spend(&wallet, &500_i128);
+        assert_eq!(
+            client.try_record_spend(&wallet, &1_i128),
+            Err(Ok(MuxPolicyError::LimitExceeded))
+        );
+    }
+
+    #[test]
+    fn test_record_spend_i128_max_overflows_to_limit_exceeded() {
+        // Spending i128::MAX when any positive limit is set must not panic.
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        client.set_daily_limit(&wallet, &1000_i128, &17280_u32);
+        let result = client.try_record_spend(&wallet, &i128::MAX);
+        assert_eq!(result, Err(Ok(MuxPolicyError::LimitExceeded)));
+    }
+
+    // ── Existing functional tests ───────────────────────────────────────────
 
     #[test]
     fn test_record_spend_within_limit() {

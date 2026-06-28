@@ -163,7 +163,7 @@ impl MuxRegistry {
             .instance()
             .set(&DataKey::Version(name.clone()), &version.clone());
         let meta = ContractMetadata {
-            version,
+            version: version.clone(),
             description,
             author,
         };
@@ -268,7 +268,7 @@ mod tests {
 
     #[test]
     fn test_get_unknown_fails() {
-        let (env, client, _) = setup();
+        let (_env, client, _) = setup();
         let result = client.try_get_version(&symbol_short!("ghost"));
         assert!(result.is_err());
     }
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn test_get_metadata_unknown_fails() {
-        let (env, client, _) = setup();
+        let (_env, client, _) = setup();
         let result = client.try_get_metadata(&symbol_short!("ghost"));
         assert!(result.is_err());
     }
