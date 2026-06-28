@@ -94,7 +94,10 @@ export class MuxRegistryClient {
     return retval.value() as unknown as string;
   }
 
-  async getMetadata(sourceKeypair: Keypair, name: string): Promise<ContractMetadata> {
+  async getMetadata(
+    sourceKeypair: Keypair,
+    name: string
+  ): Promise<{ version: string; description: string; author: string }> {
     const tx = await this.buildTx(sourceKeypair, "get_metadata", [
       xdr.ScVal.scvSymbol(name),
     ]);
@@ -104,7 +107,7 @@ export class MuxRegistryClient {
     }
     const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
     if (!retval) throw new Error("No return value");
-    return retval.value() as unknown as ContractMetadata;
+    return retval.value() as unknown as { version: string; description: string; author: string };
   }
 
   async listContracts(sourceKeypair: Keypair): Promise<string[]> {

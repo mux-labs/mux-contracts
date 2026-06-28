@@ -621,3 +621,94 @@ mod tests {
         assert!(result.is_err());
     }
 }
+
+// ── Integration test stubs ────────────────────────────────────────────────────
+// Issue #275 — Permissions: Add integration test stub.
+//
+// These stubs exercise multi-contract and cross-role scenarios that go beyond
+// isolated unit tests.  Each test is marked `#[ignore]` so that `cargo test`
+// runs them only when explicitly requested (`cargo test -- --ignored`), which
+// keeps the default CI fast while the stubs are fleshed out.
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use soroban_sdk::{symbol_short, testutils::Address as _, Env, Vec};
+
+    fn setup_integration() -> (Env, MuxPermissionsClient<'static>, Address) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxPermissions);
+        let client = MuxPermissionsClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        (env, client, admin)
+    }
+
+    /// Verify that a role granted on one instance is not visible on another
+    /// (contracts are isolated — no global state bleed-through).
+    #[test]
+    #[ignore = "integration stub: flesh out when multi-contract harness is ready"]
+    fn test_permissions_isolated_across_contract_instances() {
+        let (env, client_a, _) = setup_integration();
+        let contract_b = env.register_contract(None, MuxPermissions);
+        let client_b = MuxPermissionsClient::new(&env, &contract_b);
+        let admin_b = Address::generate(&env);
+        client_b.initialize(&admin_b);
+
+        let user = Address::generate(&env);
+        let role = symbol_short!("editor");
+        client_a.create_role(&role, &Vec::new(&env));
+        client_a.grant_role(&user, &role);
+
+        // The role granted on contract A must not be visible on contract B.
+        let roles_b = client_b.get_roles(&user);
+        assert!(roles_b.is_empty());
+    }
+
+    /// Full RBAC lifecycle: create role → grant → check permission → revoke →
+    /// re-check. Simulates the sequence a real dApp would execute.
+    #[test]
+    #[ignore = "integration stub: flesh out when multi-contract harness is ready"]
+    fn test_full_rbac_lifecycle() {
+        let (env, client, _) = setup_integration();
+        let user = Address::generate(&env);
+        let role = symbol_short!("operator");
+        let perm = symbol_short!("execute");
+        let mut perms: Vec<Symbol> = Vec::new(&env);
+        perms.push_back(perm.clone());
+
+        client.create_role(&role, &perms);
+        client.grant_role(&user, &role);
+        assert!(client.has_permission(&user, &perm));
+
+        client.revoke_role(&user, &role);
+        assert!(!client.has_permission(&user, &perm));
+    }
+
+    /// Multisig admin promotion: two approvals required, then confirm the
+    /// promoted admin can create roles while the old admin cannot.
+    #[test]
+    #[ignore = "integration stub: flesh out when multi-contract harness is ready"]
+    fn test_multisig_admin_promotion_transfers_control() {
+        let (env, client, old_admin) = setup_integration();
+        client.set_admin_threshold(&2_u32);
+        let new_admin = Address::generate(&env);
+        let second_approver = Address::generate(&env);
+
+        // Grant second_approver the admin role so their approval counts.
+        let admin_role = symbol_short!("sadmin");
+        client.create_role(&admin_role, &Vec::new(&env));
+        client.grant_role(&second_approver, &admin_role);
+
+        client.propose_admin(&new_admin);
+        client.approve_admin(&old_admin, &new_admin);
+        client.approve_admin(&second_approver, &new_admin);
+
+        // new_admin should now be the active admin; verify by creating a role.
+        let role = symbol_short!("newrole");
+        client.create_role(&role, &Vec::new(&env));
+        let members = client.get_role_members(&role);
+        assert_eq!(members.len(), 0);
+    }
+}

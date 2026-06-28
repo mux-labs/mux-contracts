@@ -16,6 +16,31 @@ This directory contains the smart contracts for the Mux Protocol, a comprehensiv
 
 - **mux-recovery**: Account recovery system for compromised or lost accounts
 - **mux-delegation**: Delegation system for permissions and voting power
+- **mux-spending-policy**: Contract for storing and checking per-account spend limits
+
+## mux-spending-policy
+
+The spending-policy contract stores per-account/per-asset spend limits and validates spend requests against them.
+
+### Features
+
+- **Policy Management**: Admin can create or update spend policies for account/asset pairs
+- **Policy Reads**: Callers can retrieve the current policy for a specific account/asset pair
+- **Spend Validation**: `check_spend` rejects requests that exceed the configured limit
+- **Input Validation**: Non-positive limits and negative spend amounts are rejected with `InvalidInput`
+
+### Key Functions
+
+- `initialize(admin)`: Initialize the contract with an admin
+- `set_policy(account, asset, limit)`: Store or replace a spend policy for an account/asset pair
+- `get_policy(account, asset)`: Retrieve the configured policy for an account/asset pair
+- `check_spend(account, asset, amount)`: Validate a spend request against the configured policy
+
+### Errors
+
+- `PolicyNotFound`: No spend policy exists for the provided account/asset pair
+- `SpendLimitExceeded`: The requested spend is above the configured limit
+- `InvalidInput`: The provided limit is not positive or the requested spend is negative
 
 ## mux-recovery
 
