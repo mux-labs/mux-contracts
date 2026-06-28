@@ -79,6 +79,7 @@ pub enum MuxPermissionsError {
     TooManyRoles = 8,
     AdminNotFound = 9,
     AlreadyApproved = 10,
+    TooManyPendingAdmins = 11,
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -88,6 +89,9 @@ const MAX_ROLE_MEMBERS: u32 = 256;
 
 /// Maximum roles an account may hold simultaneously.
 const MAX_ROLES_PER_ACCOUNT: u32 = 32;
+
+/// Maximum pending admin proposals to bound the PendingAdmins vec.
+const MAX_PENDING_ADMINS: u32 = 16;
 
 // ── Storage TTL ───────────────────────────────────────────────────────────────
 // STORAGE-GRIEFING (T-21): extend instance TTL on every write so the registry
@@ -231,7 +235,7 @@ impl MuxPermissions {
         let account_roles: Vec<Symbol> = env
             .storage()
             .instance()
-            .get(&DataKey::AccountRoles(account))
+            .get(&DataKey::AccountRoles(account.clone()))
             .unwrap_or_else(|| Vec::new(&env));
 
         for role in account_roles.iter() {
@@ -241,9 +245,11 @@ impl MuxPermissions {
                 .get(&DataKey::RolePermissions(role))
                 .unwrap_or_else(|| Vec::new(&env));
             if perms.contains(&permission) {
+                emit(&env, symbol_short!("perm_ok"), (account, permission));
                 return true;
             }
         }
+        emit(&env, symbol_short!("perm_den"), (account, permission));
         false
     }
 
@@ -285,6 +291,9 @@ impl MuxPermissions {
             .get(&DataKey::PendingAdmins)
             .unwrap_or_else(|| Vec::new(&env));
         if !pending.contains(&new_admin) {
+            if pending.len() >= MAX_PENDING_ADMINS {
+                return Err(MuxPermissionsError::TooManyPendingAdmins);
+            }
             pending.push_back(new_admin.clone());
             env.storage()
                 .instance()
