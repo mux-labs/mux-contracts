@@ -256,6 +256,32 @@ mod tests {
     }
 
     #[test]
+    fn test_grant_too_many_permissions_fails() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let delegate = Address::generate(&env);
+        let mut perms: Vec<Symbol> = Vec::new(&env);
+        for _ in 0..=MAX_DELEGATE_PERMS {
+            perms.push_back(symbol_short!("x"));
+        }
+        let result = client.try_grant_delegate(&owner, &delegate, &perms);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_grant_too_many_delegates_fails() {
+        let (env, client) = setup();
+        env.budget().reset_unlimited();
+        let owner = Address::generate(&env);
+        let perms = vec![&env, symbol_short!("read")];
+        for _ in 0..MAX_DELEGATES_PER_OWNER {
+            client.grant_delegate(&owner, &Address::generate(&env), &perms);
+        }
+        let result = client.try_grant_delegate(&owner, &Address::generate(&env), &perms);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_get_delegates_tracks_all_delegates() {
         let (env, client) = setup();
         let owner = Address::generate(&env);
