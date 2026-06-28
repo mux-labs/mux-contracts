@@ -37,8 +37,20 @@ describe("MuxRegistryClient shape", () => {
     expect(typeof MuxRegistryClient.prototype.register).toBe("function");
   });
 
+  it("exposes registerWithMetadata as a function", () => {
+    expect(typeof MuxRegistryClient.prototype.registerWithMetadata).toBe("function");
+  });
+
   it("exposes getVersion as a function", () => {
     expect(typeof MuxRegistryClient.prototype.getVersion).toBe("function");
+  });
+
+  it("exposes registerWithMetadata as a function", () => {
+    expect(typeof MuxRegistryClient.prototype.registerWithMetadata).toBe("function");
+  });
+
+  it("exposes getMetadata as a function", () => {
+    expect(typeof MuxRegistryClient.prototype.getMetadata).toBe("function");
   });
 
   it("exposes listContracts as a function", () => {

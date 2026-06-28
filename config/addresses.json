@@ -3,18 +3,21 @@
     "muxAccount": "",
     "muxBatcher": "",
     "muxDelegation": "",
-    "muxPermissions": ""
+    "muxPermissions": "",
+    "muxWalletRegistry": ""
   },
   "testnet": {
     "muxAccount": "",
     "muxBatcher": "",
     "muxDelegation": "",
-    "muxPermissions": ""
+    "muxPermissions": "",
+    "muxWalletRegistry": ""
   },
   "mainnet": {
     "muxAccount": "",
     "muxBatcher": "",
     "muxDelegation": "",
-    "muxPermissions": ""
+    "muxPermissions": "",
+    "muxWalletRegistry": ""
   }
 }
