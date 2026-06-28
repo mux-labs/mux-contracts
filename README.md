@@ -17,6 +17,7 @@ This repository contains the **core Soroban smart contracts** that power Mux. Co
 | [`contracts/mux-account-factory`](contracts/mux-account-factory/) | Factory for deploying and registering account instances with metadata |
 | [`contracts/mux-batcher`](contracts/mux-batcher/) | Atomic multi-operation batching with optional per-op failure handling |
 | [`contracts/mux-permissions`](contracts/mux-permissions/) | RBAC registry — roles, permissions, grant/revoke |
+| [`contracts/mux-spending-policy`](contracts/mux-spending-policy/) | Spend-limit policy contract — set policies, retrieve them, and check spends |
 
 ## TypeScript Bindings
 
@@ -37,10 +38,8 @@ The CI pipeline ([`.github/workflows/bindings.yml`](.github/workflows/bindings.y
 
 ### Usage example
 
-See the examples directory for working end-to-end examples:
-
-- [`examples/bindings-usage.ts`](examples/bindings-usage.ts) — Shows `check_spend` and `register_wallet`
-- [`examples/account-factory-usage.ts`](examples/account-factory-usage.ts) — Shows account factory operations
+See [`examples/bindings-usage.ts`](examples/bindings-usage.ts) for a working end-to-end example showing `check_spend` and `register_wallet`.
+See [`examples/wallet-registry-invoke.ts`](examples/wallet-registry-invoke.ts) for a dedicated wallet registry invoke script.
 
 ```ts
 import {

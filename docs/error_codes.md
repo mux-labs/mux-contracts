@@ -8,8 +8,9 @@ This document provides a comprehensive reference for all error codes used within
 - `AccountError::NonceTooLow` (1003) - The provided nonce is too low.
 
 ## Mux Account Factory (`contracts/mux-account-factory`)
-- `FactoryError::InitFailed` (2001) - Initialization of the account failed.
-- `FactoryError::AlreadyInitialized` (2002) - The factory or account is already initialized.
+- `MuxAccountFactoryError::Unauthorized` (1) → HTTP 401 - The caller is not the registered owner; `require_auth()` failed.
+- `MuxAccountFactoryError::InvalidAccount` (2) → HTTP 400 - `account_address` must differ from `owner`.
+- `MuxAccountFactoryError::TooManyAccounts` (3) → HTTP 409 - Owner has reached the 64-account-per-owner cap (storage-griefing guard).
 
 ## Mux Batcher (`contracts/mux-batcher`)
 - `BatcherError::BatchTooLarge` (3001) - The batch contains too many transactions.
@@ -22,3 +23,17 @@ This document provides a comprehensive reference for all error codes used within
 ## Mux Registry (`contracts/mux-registry`)
 - `RegistryError::ContractNotFound` (5001) - The specified contract was not found in the registry.
 - `RegistryError::VersionMismatch` (5002) - The contract version does not match the expected version.
+
+## Mux Wallet Registry (`contracts/mux-wallet-registry`)
+- `WalletRegistryError::NotInitialized` (1) — The registry has not been initialized.
+- `WalletRegistryError::AlreadyInitialized` (2) — The registry has already been initialized.
+- `WalletRegistryError::Unauthorized` (3) — The caller is not the registry owner.
+- `WalletRegistryError::WalletNotFound` (4) — No wallet is registered under the given name.
+
+### HTTP mapping
+| Error variant         | HTTP status |
+|-----------------------|-------------|
+| `NotInitialized`      | 500         |
+| `AlreadyInitialized`  | 409         |
+| `Unauthorized`        | 401         |
+| `WalletNotFound`      | 404         |

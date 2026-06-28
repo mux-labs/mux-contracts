@@ -44,6 +44,18 @@ jobs:
         run: bash scripts/build-wasm.sh --release
       - name: Check contract sizes
         run: bash scripts/check-contract-sizes.sh
+      - name: Check size-check coverage
+        run: bash scripts/test-check-contract-sizes.sh
+      - name: Deploy dry-run (testnet simulation)
+        run: bash scripts/deploy.sh --dry-run --network testnet --skip-build
+
+  deploy-dry-run:
+    name: Deploy dry-run (batcher)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test deploy dry-run for mux-batcher
+        run: bash scripts/test-deploy-dry-run.sh
 
   bindings:
     name: TypeScript Bindings

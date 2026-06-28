@@ -23,3 +23,4 @@ export * from "./addresses";
 export * from "./addresses-config";
 export * from "./local-invoke";
 export * as examples from "./examples/frontend-usage";
+export * as batcher from "./batcher";

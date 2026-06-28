@@ -1,9 +1,12 @@
 import type { MuxAccountFactoryError } from "./generated/mux-account-factory";
 import type { MuxRegistryError } from "./generated/mux-registry";
+import type { MuxWalletRegistryError } from "./generated/mux-wallet-registry";
 import type {
   MuxAccountError,
   MuxBatcherError,
+  MuxDelegationError,
   MuxPermissionsError,
+  MuxPolicyError,
 } from "./types";
 
 export interface HttpErrorResponse {
@@ -15,9 +18,12 @@ export interface HttpErrorResponse {
 type ContractError =
   | MuxAccountError
   | MuxBatcherError
+  | MuxDelegationError
   | MuxPermissionsError
+  | MuxPolicyError
   | MuxAccountFactoryError
-  | MuxRegistryError;
+  | MuxRegistryError
+  | MuxWalletRegistryError;
 
 /**
  * Maps contract error variants to HTTP status codes.
@@ -26,27 +32,40 @@ type ContractError =
  * - 400: Bad Request (invalid input, constraint violations)
  * - 409: Conflict (state conflicts)
  * - 500: Internal Server Error (initialization or unknown errors)
+ *
+ * MuxAccountFactory error codes (contracts/mux-account-factory):
+ *   Unauthorized      (1) → 401  caller is not the registered owner
+ *   InvalidAccount    (2) → 400  account_address must differ from owner
+ *   TooManyAccounts   (3) → 409  per-owner 64-account cap reached
  */
 export const ERROR_HTTP_MAP: Record<string, number> = {
   // Authentication/Authorization errors → 401
+  // Covers: MuxAccountError, MuxAccountFactoryError::Unauthorized (code 1)
   Unauthorized: 401,
 
   // Not Found errors → 404
+  NotADelegate: 404,
   DelegateNotFound: 404,
   RoleNotFound: 404,
   AccountNotInRole: 404,
   PermissionNotFound: 404,
   ContractNotFound: 404,
-  MetadataNotFound: 404,
+  WalletNotFound: 404,
 
   // Validation/Constraint errors → 400
   InvalidAmount: 400,
   InvalidPeriod: 400,
   SpendLimitExceeded: 400,
+  LimitExceeded: 400,
   DelegateExpired: 400,
   EmptyBatch: 400,
   BatchTooLarge: 400,
+  // MuxAccountFactoryError::InvalidAccount (code 2)
   InvalidAccount: 400,
+
+  // Delegation constraint errors → 400
+  TooManyPermissions: 400,
+  EmptyPermissions: 400,
 
   // State conflict → 409
   AlreadyInitialized: 409,
@@ -54,9 +73,18 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   // Security guard violations → 409 Conflict (concurrent/reentrant call)
   ReentrancyDetected: 409,
 
+  // Policy errors → 400 Bad Request
+  LimitNotFound: 404,
+  LimitExceeded: 400,
+
   // Capacity limits → 409 Conflict
+  // MuxAccountFactoryError::TooManyAccounts (code 3)
   TooManyAccounts: 409,
   TooManyContracts: 409,
+  TooManyWallets: 409,
+
+  // Wallet registry not-found → 404
+  WalletNotFound: 404,
 
   // Internal/Uninitialized → 500
   NotInitialized: 500,
