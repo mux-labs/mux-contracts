@@ -24,6 +24,17 @@ export interface MuxWalletRegistryClientOptions {
   rpcUrl: string;
 }
 
+export interface WalletMetadata {
+  label: string;
+  description: string;
+}
+
+export type MuxWalletRegistryError =
+  | "NotInitialized"
+  | "AlreadyInitialized"
+  | "Unauthorized"
+  | "WalletNotFound";
+
 export class MuxWalletRegistryClient {
   private contract: Contract;
   private server: SorobanRpc.Server;
@@ -59,6 +70,29 @@ export class MuxWalletRegistryClient {
       xdr.ScVal.scvSymbol(name),
     ]);
     return this.simulateRead<Address>(tx);
+  }
+
+  async registerWalletWithMetadata(
+    sourceKeypair: Keypair,
+    name: string,
+    wallet: Address,
+    label: string,
+    description: string
+  ): Promise<void> {
+    const tx = await this.buildTx(sourceKeypair, "register_wallet_with_metadata", [
+      xdr.ScVal.scvSymbol(name),
+      nativeToScVal(wallet.toString(), { type: "address" }),
+      xdr.ScVal.scvString(label),
+      xdr.ScVal.scvString(description),
+    ]);
+    await this.submit(tx, sourceKeypair);
+  }
+
+  async getMetadata(sourceKeypair: Keypair, name: string): Promise<WalletMetadata> {
+    const tx = await this.buildTx(sourceKeypair, "get_metadata", [
+      xdr.ScVal.scvSymbol(name),
+    ]);
+    return this.simulateRead<WalletMetadata>(tx);
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────────
