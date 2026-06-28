@@ -45,6 +45,7 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   InvalidAmount: 400,
   InvalidPeriod: 400,
   SpendLimitExceeded: 400,
+  LimitExceeded: 400,
   DelegateExpired: 400,
   EmptyBatch: 400,
   BatchTooLarge: 400,
