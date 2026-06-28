@@ -29,6 +29,12 @@ export type MuxRegistryError =
   | "ContractNotFound"
   | "TooManyContracts";
 
+export interface ContractMetadata {
+  version: string;
+  description: string;
+  author: string;
+}
+
 export class MuxRegistryClient {
   private contract: Contract;
   private server: SorobanRpc.Server;
