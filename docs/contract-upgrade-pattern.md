@@ -193,3 +193,21 @@ this series.
 
 **General rule for both registries:** upgrade → smoke-test → keep prior WASM
 hash for rollback. See the [Rollback](#rollback) section above.
+
+### mux-account
+
+No breaking storage changes in this cycle. The `DataKey` enum gained one new
+variant (`Metadata` for optional `RegistryMeta`); it is **additive** — existing
+ledger entries remain valid.
+
+**If you are upgrading a live `mux-account` instance:**
+
+1. Upload the new WASM and call `upgrade(new_wasm_hash)` as the owner (once
+   upgrade support is enabled on the contract).
+2. No `migrate()` call is required — `Metadata` is optional and reads return
+   `None` when unset.
+3. Verify with `owner`, `delegates`, and `get_metadata` that pre-upgrade state
+   is still readable.
+
+See [docs/account-upgrade-migration.md](./account-upgrade-migration.md) for the
+full storage layout and breaking-change checklist.
