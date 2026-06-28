@@ -25,12 +25,6 @@ export interface MuxDelegationClientOptions {
   rpcUrl: string;
 }
 
-export interface DelegateEntry {
-  delegate: Address;
-  expiryLedger: number;
-  canSpend: boolean;
-}
-
 export class MuxDelegationClient {
   private contract: Contract;
   private server: SorobanRpc.Server;
@@ -42,42 +36,54 @@ export class MuxDelegationClient {
     this.networkPassphrase = opts.networkPassphrase;
   }
 
-  async addDelegate(
+  async grantDelegate(
     sourceKeypair: Keypair,
     owner: Address,
     delegate: Address,
-    expiryLedger: number,
-    canSpend: boolean
+    permissions: string[]
   ): Promise<void> {
-    const tx = await this.buildTx(sourceKeypair, "add_delegate", [
+    const tx = await this.buildTx(sourceKeypair, "grant_delegate", [
       nativeToScVal(owner.toString(), { type: "address" }),
       nativeToScVal(delegate.toString(), { type: "address" }),
-      xdr.ScVal.scvU32(expiryLedger),
-      xdr.ScVal.scvBool(canSpend),
+      xdr.ScVal.scvVec(permissions.map((p) => xdr.ScVal.scvSymbol(p))),
     ]);
     await this.submit(tx, sourceKeypair);
   }
 
-  async removeDelegate(
+  async revokeDelegate(
     sourceKeypair: Keypair,
     owner: Address,
     delegate: Address
   ): Promise<void> {
-    const tx = await this.buildTx(sourceKeypair, "remove_delegate", [
+    const tx = await this.buildTx(sourceKeypair, "revoke_delegate", [
       nativeToScVal(owner.toString(), { type: "address" }),
       nativeToScVal(delegate.toString(), { type: "address" }),
     ]);
     await this.submit(tx, sourceKeypair);
   }
 
-  async isAuthorized(
+  async getDelegatePermissions(
     sourceKeypair: Keypair,
     owner: Address,
     delegate: Address
+  ): Promise<string[]> {
+    const tx = await this.buildTx(sourceKeypair, "get_delegate_permissions", [
+      nativeToScVal(owner.toString(), { type: "address" }),
+      nativeToScVal(delegate.toString(), { type: "address" }),
+    ]);
+    return this.simulateRead<string[]>(tx);
+  }
+
+  async isDelegate(
+    sourceKeypair: Keypair,
+    owner: Address,
+    delegate: Address,
+    permission: string
   ): Promise<boolean> {
-    const tx = await this.buildTx(sourceKeypair, "is_authorized", [
+    const tx = await this.buildTx(sourceKeypair, "is_delegate", [
       nativeToScVal(owner.toString(), { type: "address" }),
       nativeToScVal(delegate.toString(), { type: "address" }),
+      xdr.ScVal.scvSymbol(permission),
     ]);
     return this.simulateRead<boolean>(tx);
   }
@@ -85,11 +91,11 @@ export class MuxDelegationClient {
   async getDelegates(
     sourceKeypair: Keypair,
     owner: Address
-  ): Promise<DelegateEntry[]> {
+  ): Promise<Address[]> {
     const tx = await this.buildTx(sourceKeypair, "get_delegates", [
       nativeToScVal(owner.toString(), { type: "address" }),
     ]);
-    return this.simulateRead<DelegateEntry[]>(tx);
+    return this.simulateRead<Address[]>(tx);
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ import type { MuxWalletRegistryError } from "./generated/mux-wallet-registry";
 import type {
   MuxAccountError,
   MuxBatcherError,
+  MuxDelegationError,
   MuxPermissionsError,
   MuxPolicyError,
 } from "./types";
@@ -17,6 +18,7 @@ export interface HttpErrorResponse {
 type ContractError =
   | MuxAccountError
   | MuxBatcherError
+  | MuxDelegationError
   | MuxPermissionsError
   | MuxPolicyError
   | MuxAccountFactoryError
@@ -36,6 +38,7 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   Unauthorized: 401,
 
   // Not Found errors → 404
+  NotADelegate: 404,
   DelegateNotFound: 404,
   RoleNotFound: 404,
   AccountNotInRole: 404,
@@ -52,6 +55,10 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   EmptyBatch: 400,
   BatchTooLarge: 400,
   InvalidAccount: 400,
+
+  // Delegation constraint errors → 400
+  TooManyPermissions: 400,
+  EmptyPermissions: 400,
 
   // State conflict → 409
   AlreadyInitialized: 409,
