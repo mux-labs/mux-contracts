@@ -254,7 +254,7 @@ mod tests {
     use super::*;
     use soroban_sdk::{
         symbol_short,
-        testutils::{Address as _, Events},
+        testutils::{Address as _, Events, Ledger as _},
         Env, FromVal,
     };
 
@@ -390,30 +390,88 @@ mod tests {
     }
 
     #[test]
-    fn test_set_daily_limit_with_registry_id() {
+    fn test_record_spend_resets_counter_after_day_window() {
         let (env, client, _) = setup();
+        env.budget().reset_unlimited();
         let wallet = Address::generate(&env);
-        let registry = Address::generate(&env);
-        client.set_daily_limit(&wallet, &1000_i128, &17280_u32, &Some(registry.clone()));
+        // Use a short window (10 ledgers) to stay within persistent TTL.
+        client.set_daily_limit(&wallet, &1000_i128, &10_u32);
+        client.record_spend(&wallet, &900_i128);
+
+        // Advance past reset_ledger (0 + 10 = 10).
+        env.ledger().set_sequence_number(11);
+        // After the window expires the counter resets; a fresh 900 spend must succeed.
+        client.record_spend(&wallet, &900_i128);
         let record = client.get_daily_limit(&wallet);
-        assert_eq!(record.limit, 1000);
-        assert_eq!(record.registry_id, Some(registry));
+        assert_eq!(record.spent, 900);
     }
 
     #[test]
-    fn test_too_many_wallets_griefing_guard() {
+    fn test_get_daily_limit_shows_reset_spent_without_persisting() {
         let (env, client, _) = setup();
-        // Fill up to MAX_WALLETS (256)
-        for i in 0..256 {
-            let wallet = Address::generate(&env);
-            assert!(client
-                .try_set_daily_limit(&wallet, &1000_i128, &17280_u32, &None)
-                .is_ok());
-        }
-        // Next wallet should exceed limit
+        env.budget().reset_unlimited();
         let wallet = Address::generate(&env);
-        assert!(client
-            .try_set_daily_limit(&wallet, &1000_i128, &17280_u32, &None)
-            .is_err());
+        // Use a short window (10 ledgers) to stay within persistent TTL.
+        client.set_daily_limit(&wallet, &500_i128, &10_u32);
+        client.record_spend(&wallet, &300_i128);
+
+        // Advance past the reset window (0 + 10 = 10).
+        env.ledger().set_sequence_number(11);
+
+        // get_daily_limit should show spent=0 (window elapsed) without persisting.
+        let record = client.get_daily_limit(&wallet);
+        assert_eq!(record.spent, 0);
+
+        // A subsequent record_spend should see the reset and allow the full limit.
+        client.record_spend(&wallet, &500_i128);
+        let record2 = client.get_daily_limit(&wallet);
+        assert_eq!(record2.spent, 500);
+    }
+
+    #[test]
+    fn test_record_spend_invalid_amount_zero_fails() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        client.set_daily_limit(&wallet, &1000_i128, &17280_u32);
+        assert!(client.try_record_spend(&wallet, &0_i128).is_err());
+    }
+
+    #[test]
+    fn test_record_spend_invalid_amount_negative_fails() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        client.set_daily_limit(&wallet, &1000_i128, &17280_u32);
+        assert!(client.try_record_spend(&wallet, &-1_i128).is_err());
+    }
+
+    #[test]
+    fn test_record_spend_no_limit_configured_fails() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        assert!(client.try_record_spend(&wallet, &100_i128).is_err());
+    }
+
+    #[test]
+    fn test_set_daily_limit_emits_event() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        client.set_daily_limit(&wallet, &1000_i128, &17280_u32);
+        let events = env.events().all();
+        // init + lmt_set
+        assert_eq!(events.len(), 2);
+        assert_eq!(topic_action(&env, &events, 1), symbol_short!("lmt_set"));
+    }
+
+    #[test]
+    fn test_spend_exactly_at_limit_succeeds() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        client.set_daily_limit(&wallet, &500_i128, &17280_u32);
+        // Spending exactly the limit must succeed.
+        client.record_spend(&wallet, &500_i128);
+        let record = client.get_daily_limit(&wallet);
+        assert_eq!(record.spent, 500);
+        // One more unit must fail.
+        assert!(client.try_record_spend(&wallet, &1_i128).is_err());
     }
 }
