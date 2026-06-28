@@ -28,6 +28,8 @@
 
 #![no_std]
 
+extern crate alloc;
+
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String,
     Symbol, Vec,
@@ -159,9 +161,10 @@ impl MuxRegistry {
             names.push_back(name.clone());
             env.storage().instance().set(&DataKey::Names, &names);
         }
+        let version_clone = version.clone();
         env.storage()
             .instance()
-            .set(&DataKey::Version(name.clone()), &version.clone());
+            .set(&DataKey::Version(name.clone()), &version_clone);
         let meta = ContractMetadata {
             version: version.clone(),
             description,
@@ -233,7 +236,11 @@ impl MuxRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{symbol_short, testutils::Address as _, Env, String};
+    use soroban_sdk::{
+        symbol_short,
+        testutils::{Address as _, Events},
+        Env, FromVal, String,
+    };
 
     fn setup() -> (Env, MuxRegistryClient<'static>, Address) {
         let env = Env::default();
