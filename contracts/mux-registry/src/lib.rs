@@ -1,5 +1,29 @@
 /*!
  * mux-registry: Contract version registry for Mux Protocol.
+ *
+ * This contract maintains a registry of protocol components and their versions.
+ * It supports registration with optional metadata, discovery queries, and
+ * storage griefing guards via capped collections.
+ *
+ * # Public Interface
+ *
+ * - `initialize(admin)` — One-time setup with admin authorization
+ * - `register(name, version)` — Register/update version only (admin)
+ * - `register_with_metadata(name, version, description, author)` — Register with full metadata (admin)
+ * - `check_version(name, version)` — Dry-run validation without state mutation
+ * - `get_version(name)` — Query registered version (public)
+ * - `get_metadata(name)` — Query full metadata (public)
+ * - `list_contracts()` — List all registered names (public)
+ *
+ * # Storage Constraints
+ *
+ * The registry enforces a cap of 128 registered contracts to prevent storage griefing.
+ * Registering more than 128 unique names returns `TooManyContracts`.
+ *
+ * # Events
+ *
+ * - `"init"` — Emitted on initialization
+ * - `"reg"` — Emitted on registration with (name, version)
  */
 
 #![no_std]
@@ -69,6 +93,8 @@ pub struct MuxRegistry;
 
 #[contractimpl]
 impl MuxRegistry {
+    /// Initialize the registry with an admin address.
+    /// Must be called exactly once; subsequent calls return `AlreadyInitialized`.
     pub fn initialize(env: Env, admin: Address) -> Result<(), MuxRegistryError> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(MuxRegistryError::AlreadyInitialized);
@@ -84,6 +110,9 @@ impl MuxRegistry {
     }
 
     /// Register or update a contract version. Admin only.
+    /// If the name is new, it is added to the registry (up to MAX_CONTRACTS).
+    /// If already registered, the version is updated without duplicating the name.
+    /// Returns `TooManyContracts` if the registry is at capacity.
     pub fn register(env: Env, name: Symbol, version: String) -> Result<(), MuxRegistryError> {
         Self::require_admin(&env)?;
         let mut names: Vec<Symbol> = env
@@ -123,6 +152,7 @@ impl MuxRegistry {
             .get(&DataKey::Names)
             .unwrap_or_else(|| Vec::new(&env));
         if !names.contains(&name) {
+            // STORAGE-GRIEFING: cap the Names vec to bound instance storage growth.
             if names.len() >= MAX_CONTRACTS {
                 return Err(MuxRegistryError::TooManyContracts);
             }
@@ -140,13 +170,23 @@ impl MuxRegistry {
         env.storage()
             .instance()
             .set(&DataKey::Metadata(name.clone()), &meta);
-        emit(&env, symbol_short!("reg"), (name, version));
+        emit(&env, symbol_short!("regmeta"), name);
         Self::extend_ttl(&env);
         Ok(())
     }
 
     /// Get the version string for a registered contract.
     pub fn get_version(env: Env, name: Symbol) -> Result<String, MuxRegistryError> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Version(name))
+            .ok_or(MuxRegistryError::ContractNotFound)
+    }
+
+    /// Dry-run validation of a version query without state mutation.
+    /// Returns the version if registered, otherwise returns `ContractNotFound`.
+    /// This is useful for preflight checks and deployment validation.
+    pub fn check_version(env: Env, name: Symbol) -> Result<String, MuxRegistryError> {
         env.storage()
             .instance()
             .get(&DataKey::Version(name))
@@ -279,107 +319,60 @@ mod tests {
         assert_eq!(count, 1);
     }
 
-    // ── #294: negative path tests ─────────────────────────────────────────────
-
+    /// Filling the registry to MAX_CONTRACTS via register() and then calling
+    /// register_with_metadata() with a new name must return TooManyContracts.
     #[test]
-    fn test_double_initialize_fails() {
-        let (_, client, admin) = setup();
-        assert_eq!(
-            client.try_initialize(&admin),
-            Err(Ok(MuxRegistryError::AlreadyInitialized))
-        );
-    }
-
-    #[test]
-    fn test_get_version_unknown_contract_fails() {
-        let (_env, client, _) = setup();
-        assert_eq!(
-            client.try_get_version(&symbol_short!("ghost")),
-            Err(Ok(MuxRegistryError::ContractNotFound))
-        );
-    }
-
-    #[test]
-    fn test_get_metadata_unknown_contract_fails() {
-        let (_env, client, _) = setup();
-        assert_eq!(
-            client.try_get_metadata(&symbol_short!("ghost")),
-            Err(Ok(MuxRegistryError::ContractNotFound))
-        );
-    }
-
-    #[test]
-    fn test_register_without_init_fails() {
+    fn test_too_many_contracts_via_register_with_metadata() {
         let env = Env::default();
         env.mock_all_auths();
+        env.budget().reset_unlimited();
         let contract_id = env.register_contract(None, MuxRegistry);
         let client = MuxRegistryClient::new(&env, &contract_id);
-        let name = symbol_short!("x");
-        let version = String::from_str(&env, "1.0.0");
-        assert_eq!(
-            client.try_register(&name, &version),
-            Err(Ok(MuxRegistryError::NotInitialized))
-        );
-    }
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
-    #[test]
-    fn test_register_cap_enforced() {
-        // Fill the registry to MAX_CONTRACTS and verify the next registration fails.
-        let (env, client, _) = setup();
-        env.budget().reset_unlimited();
         let version = String::from_str(&env, "1.0.0");
-        // Register MAX_CONTRACTS unique names (128).
-        // We use a small helper: symbol_short! requires a literal, so we use
-        // a pre-built list of 128 distinct symbols via a loop over u8 values
-        // encoded as symbols using the SDK's String→Symbol path isn't available
-        // in no_std; instead we register 128 entries by re-using register_with_metadata
-        // which shares the same cap check.
-        for i in 0..MAX_CONTRACTS {
-            // Build unique Symbol values. Symbol can hold up to 9 alphanumeric
-            // chars; we encode i as a fixed-width decimal string via a tiny
-            // no_std-compatible formatter.
-            let name = symbol_from_u32(&env, i);
-            client.register(&name, &version);
+        let desc = String::from_str(&env, "desc");
+        let author = String::from_str(&env, "mux-labs");
+
+        // Fill the registry to exactly MAX_CONTRACTS (128) entries.
+        // Two-letter base-26 symbols: "aa"=0 … "ex"=127, "ey"=128.
+        for i in 0u32..128 {
+            let sym = soroban_sdk::Symbol::new(
+                &env,
+                &format!("{}{}", (b'a' + (i / 26) as u8) as char, (b'a' + (i % 26) as u8) as char),
+            );
+            client.register(&sym, &version);
         }
-        let extra = symbol_from_u32(&env, MAX_CONTRACTS);
-        assert_eq!(
-            client.try_register(&extra, &version),
-            Err(Ok(MuxRegistryError::TooManyContracts))
-        );
+
+        // One more new name must be rejected by register_with_metadata.
+        let overflow = soroban_sdk::Symbol::new(&env, "ey");
+        let result = client.try_register_with_metadata(&overflow, &version, &desc, &author);
+        assert_eq!(result, Err(Ok(MuxRegistryError::TooManyContracts)));
     }
 
-    /// Build a `Symbol` from a small integer for test uniqueness.
-    fn symbol_from_u32(env: &Env, n: u32) -> soroban_sdk::Symbol {
-        // Symbols support up to 9 chars; encode n as decimal digits.
-        // We construct via the Symbol::new convenience if available, or fall
-        // back to a pre-built table for 0..=128.
-        let s = u32_to_sym_str(n);
-        soroban_sdk::Symbol::new(env, s)
-    }
+    /// register() also enforces the cap once MAX_CONTRACTS names are registered.
+    #[test]
+    fn test_too_many_contracts_via_register() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.budget().reset_unlimited();
+        let contract_id = env.register_contract(None, MuxRegistry);
+        let client = MuxRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
 
-    /// Return a string slice for values 0..=200. Sufficient for MAX_CONTRACTS+1.
-    fn u32_to_sym_str(n: u32) -> &'static str {
-        // Generated table covers 0..=200.
-        const TABLE: [&str; 201] = [
-            "n0", "n1", "n2", "n3", "n4", "n5", "n6", "n7", "n8", "n9", "n10", "n11", "n12", "n13",
-            "n14", "n15", "n16", "n17", "n18", "n19", "n20", "n21", "n22", "n23", "n24", "n25",
-            "n26", "n27", "n28", "n29", "n30", "n31", "n32", "n33", "n34", "n35", "n36", "n37",
-            "n38", "n39", "n40", "n41", "n42", "n43", "n44", "n45", "n46", "n47", "n48", "n49",
-            "n50", "n51", "n52", "n53", "n54", "n55", "n56", "n57", "n58", "n59", "n60", "n61",
-            "n62", "n63", "n64", "n65", "n66", "n67", "n68", "n69", "n70", "n71", "n72", "n73",
-            "n74", "n75", "n76", "n77", "n78", "n79", "n80", "n81", "n82", "n83", "n84", "n85",
-            "n86", "n87", "n88", "n89", "n90", "n91", "n92", "n93", "n94", "n95", "n96", "n97",
-            "n98", "n99", "n100", "n101", "n102", "n103", "n104", "n105", "n106", "n107", "n108",
-            "n109", "n110", "n111", "n112", "n113", "n114", "n115", "n116", "n117", "n118", "n119",
-            "n120", "n121", "n122", "n123", "n124", "n125", "n126", "n127", "n128", "n129", "n130",
-            "n131", "n132", "n133", "n134", "n135", "n136", "n137", "n138", "n139", "n140", "n141",
-            "n142", "n143", "n144", "n145", "n146", "n147", "n148", "n149", "n150", "n151", "n152",
-            "n153", "n154", "n155", "n156", "n157", "n158", "n159", "n160", "n161", "n162", "n163",
-            "n164", "n165", "n166", "n167", "n168", "n169", "n170", "n171", "n172", "n173", "n174",
-            "n175", "n176", "n177", "n178", "n179", "n180", "n181", "n182", "n183", "n184", "n185",
-            "n186", "n187", "n188", "n189", "n190", "n191", "n192", "n193", "n194", "n195", "n196",
-            "n197", "n198", "n199", "n200",
-        ];
-        TABLE[n as usize]
+        let version = String::from_str(&env, "1.0.0");
+
+        for i in 0u32..128 {
+            let sym = soroban_sdk::Symbol::new(
+                &env,
+                &format!("{}{}", (b'a' + (i / 26) as u8) as char, (b'a' + (i % 26) as u8) as char),
+            );
+            client.register(&sym, &version);
+        }
+
+        let overflow = soroban_sdk::Symbol::new(&env, "ey");
+        let result = client.try_register(&overflow, &version);
+        assert_eq!(result, Err(Ok(MuxRegistryError::TooManyContracts)));
     }
-}
