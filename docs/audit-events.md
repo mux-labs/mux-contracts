@@ -67,6 +67,19 @@ Contract tag: `mux_bat`
 
 ---
 
+## mux-wallet-registry events
+
+Contract tag: `mux_wreg`
+
+| Action | Trigger | Data payload |
+|---|---|---|
+| `init` | `initialize` succeeds | `owner: Address` |
+| `wlt_reg` | `register_wallet` succeeds (new entry or overwrite) | `(name: Symbol, wallet: Address)` |
+
+> `get_wallet` is read-only and emits no events.
+
+---
+
 ## Querying events
 
 Use the Soroban RPC `getEvents` endpoint, filtering by `contractId` and topic:

@@ -44,6 +44,10 @@ jobs:
         run: bash scripts/build-wasm.sh --release
       - name: Check contract sizes
         run: bash scripts/check-contract-sizes.sh
+      - name: Check size-check coverage
+        run: bash scripts/test-check-contract-sizes.sh
+      - name: Deploy dry-run (testnet simulation)
+        run: bash scripts/deploy.sh --dry-run --network testnet --skip-build
 
   bindings:
     name: TypeScript Bindings

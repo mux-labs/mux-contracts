@@ -27,8 +27,13 @@ declare -A LIMITS=(
   ["mux_account.wasm"]=65536
   ["mux_account_factory.wasm"]=65536
   ["mux_batcher.wasm"]=65536
+  ["mux_delegation.wasm"]=65536
   ["mux_permissions.wasm"]=65536
+  ["mux_policy.wasm"]=65536
+  ["mux_recovery.wasm"]=65536
   ["mux_registry.wasm"]=65536
+  ["mux_spending_policy.wasm"]=65536
+  ["mux_wallet_registry.wasm"]=65536
 )
 
 FAILED=0
