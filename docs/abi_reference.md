@@ -157,4 +157,29 @@ pub struct RoleInfo {
 
 ---
 
+## mux-wallet-registry
+
+Maps symbolic names (`Symbol`) to wallet addresses. One owner is set at deploy
+time and is the only account permitted to write entries. Reads are open to any
+caller.
+
+### Methods
+
+| Method | Args | Returns | Description |
+|---|---|---|---|
+| `initialize` | `owner: Address` | `Result<(), WalletRegistryError>` | Record the owner; must be called once before any other method. Owner auth required. |
+| `register_wallet` | `name: Symbol, wallet: Address` | `Result<(), WalletRegistryError>` | Register or overwrite the address stored under `name`. Owner auth required. |
+| `get_wallet` | `name: Symbol` | `Result<Address, WalletRegistryError>` | Return the address registered under `name`. No auth required. |
+
+### Errors
+
+| Variant | Code | Description |
+|---|---|---|
+| `NotInitialized` | 1 | `initialize` has not been called; owner is unknown. |
+| `AlreadyInitialized` | 2 | `initialize` was called a second time on the same instance. |
+| `Unauthorized` | 3 | Reserved. Auth failures are surfaced as host errors by `Address::require_auth`. |
+| `WalletNotFound` | 4 | No wallet is registered under the requested name. |
+
+---
+
 For full source, see the `contracts/` directory. TypeScript clients are in `bindings/src/generated/`.
