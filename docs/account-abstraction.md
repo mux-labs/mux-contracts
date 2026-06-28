@@ -333,6 +333,17 @@ Run tests with:
 cargo test --package mux-account
 ```
 
+## Usage Examples
+
+See [`examples/account-factory-usage.ts`](../examples/account-factory-usage.ts) for a complete TypeScript example demonstrating:
+
+- Deploying accounts with and without metadata
+- Retrieving accounts for an owner
+- Fetching account metadata
+- Getting total account count
+
+The example uses the TypeScript bindings from `@mux-protocol/contracts` and supports localnet, testnet, and mainnet environments.
+
 ## Future Enhancements
 
 1. **Transaction Execution** — Implement `execute_with_session()` to actually run authorized transactions
