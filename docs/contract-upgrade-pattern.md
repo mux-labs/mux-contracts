@@ -168,67 +168,28 @@ mod upgrade_tests {
 - Mux deployment scripts: `scripts/deploy-testnet.sh` (see #110)
 - Mux WASM hash verification: `scripts/verify-wasm-hash.sh` (see #113)
 
----
+## v0.1.0 → Unreleased: Registry Upgrade Migration Notes
 
-## MuxAccountFactory — Upgrade Migration Notes
+### mux-registry
 
-### Storage layout (as of initial release)
+No breaking storage changes in this cycle. The `DataKey` enum gained two new
+variants (`Metadata(Symbol)` for rich metadata and `Names` for the contract-name
+index); both are **additive** — existing ledger entries remain valid.
 
-| Key | Type | Scope |
-|-----|------|-------|
-| `DataKey::Accounts(Address)` | `Vec<Address>` | `instance` |
-| `DataKey::AccountCount` | `u64` | `instance` |
+**If you are upgrading a live `mux-registry` instance:**
 
-All state lives in **instance storage**; there is no persistent or temporary
-storage to migrate.
+1. Upload the new WASM and call `upgrade(new_wasm_hash)` as the admin.
+2. No `migrate()` call is required — the `Names` vec is bootstrapped lazily if
+   absent, and `Metadata` entries are optional (reads fall back to
+   `ContractNotFound` rather than panicking).
+3. Verify with `get_version` and `list_contracts` that pre-upgrade registrations
+   are still readable.
 
-### Rules for future upgrades
+### mux-wallet-registry
 
-1. **Do not rename or remove `DataKey` variants.**  
-   Existing `Accounts(owner)` entries on the ledger will be unreadable if the
-   discriminant changes.  Add new variants instead.
+No storage layout changes in v0.1.0. The `DataKey::Wallet(Symbol)` key is
+unchanged. No migration step is needed when upgrading to any patch release in
+this series.
 
-2. **Adding fields to the stored value type** (`Vec<Address>` is currently a
-   primitive; if you introduce a wrapper struct) — use `Option<NewField>` or a
-   versioned enum so old entries remain deserializable.
-
-3. **Changing `MAX_ACCOUNTS_PER_OWNER`** is backward-compatible for decreases
-   (existing over-cap owners are grandfathered; new deployments are capped at
-   the new limit).  Increases require no migration.
-
-4. **The factory has no `admin` or `initialize` entry point** — the upgrade
-   authority must therefore be controlled at the deployer level (key that owns
-   the contract instance).  Ensure the deployer key is retained and
-   hardware-secured before upgrading.
-
-### Migration procedure (breaking storage change)
-
-If a future version must change stored types, implement a `migrate` function:
-
-```rust
-pub fn migrate(env: Env, caller: Address) {
-    caller.require_auth();
-    // Example: rewrite Accounts vec to a new type
-    // Iterate known owners if an owner index exists, otherwise use an
-    // off-chain list from ledger snapshot.
-}
-```
-
-Call `migrate()` **after** `upgrade()` and **before** any user traffic resumes.
-
-### Rollback
-
-The factory has no state that is write-destructive on upgrade (only adds
-entries, never removes).  Rolling back to a prior WASM hash via `upgrade()`
-with the old hash is always safe as long as storage types are unchanged.
-
-If storage types changed and `migrate()` was called, prepare a reverse
-`migrate_rollback()` function before the upgrade and keep it ready.
-
-### Smoke-test checklist after factory upgrade
-
-- [ ] `account_count()` returns the pre-upgrade value
-- [ ] `get_accounts(owner)` for a known owner returns the same list
-- [ ] `deploy_account(owner, new_addr)` succeeds and increments the count
-- [ ] `deploy_account(owner, owner)` returns `InvalidAccount` error
-- [ ] Deploying a 65th account for a capped owner returns `TooManyAccounts`
+**General rule for both registries:** upgrade → smoke-test → keep prior WASM
+hash for rollback. See the [Rollback](#rollback) section above.
