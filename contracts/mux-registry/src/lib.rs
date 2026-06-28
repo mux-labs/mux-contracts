@@ -63,6 +63,8 @@ pub struct ContractMetadata {
     pub description: String,
     /// Author or team identifier.
     pub author: String,
+    /// Source repository URL or additional metadata.
+    pub repository: String,
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────
@@ -146,6 +148,7 @@ impl MuxRegistry {
         version: String,
         description: String,
         author: String,
+        repository: String,
     ) -> Result<(), MuxRegistryError> {
         Self::require_admin(&env)?;
         let mut names: Vec<Symbol> = env
@@ -169,6 +172,7 @@ impl MuxRegistry {
             version: version.clone(),
             description,
             author,
+            repository,
         };
         env.storage()
             .instance()
@@ -287,13 +291,15 @@ mod tests {
         let version = String::from_str(&env, "2.0.0");
         let description = String::from_str(&env, "Account abstraction contract");
         let author = String::from_str(&env, "mux-labs");
+        let repository = String::from_str(&env, "https://github.com/mux-protocol/mux-contracts");
 
-        client.register_with_metadata(&name, &version, &description, &author);
+        client.register_with_metadata(&name, &version, &description, &author, &repository);
 
         let meta = client.get_metadata(&name);
         assert_eq!(meta.version, version);
         assert_eq!(meta.description, description);
         assert_eq!(meta.author, author);
+        assert_eq!(meta.repository, repository);
         // version key also updated
         assert_eq!(client.get_version(&name), version);
         assert!(client.list_contracts().contains(&name));
@@ -314,9 +320,10 @@ mod tests {
         let v2 = String::from_str(&env, "1.1.0");
         let desc = String::from_str(&env, "Batcher contract");
         let author = String::from_str(&env, "mux-labs");
+        let repo = String::from_str(&env, "https://github.com/mux-protocol/mux-contracts");
 
-        client.register_with_metadata(&name, &v1, &desc, &author);
-        client.register_with_metadata(&name, &v2, &desc, &author);
+        client.register_with_metadata(&name, &v1, &desc, &author, &repo);
+        client.register_with_metadata(&name, &v2, &desc, &author, &repo);
 
         let meta = client.get_metadata(&name);
         assert_eq!(meta.version, v2);
