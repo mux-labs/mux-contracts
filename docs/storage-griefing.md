@@ -22,6 +22,8 @@ On Soroban, every contract pays **rent** for the ledger entries it occupies.  Al
 | Contract | Collection | Key | Cap constant | Error on overflow |
 |---|---|---|---|---|
 | `mux-account` | `Delegates` map | `DataKey::Delegates` | `MAX_DELEGATES = 64` | `TooManyDelegates` |
+| `mux-delegation` | `OwnerDelegates` vec | `DataKey::OwnerDelegates(owner)` | `MAX_DELEGATES_PER_OWNER = 128` | `TooManyDelegates` |
+| `mux-delegation` | `DelegatePerms` vec | `DataKey::DelegatePerms(owner, delegate)` | `MAX_DELEGATE_PERMS = 64` | `TooManyPermissions` |
 | `mux-permissions` | `RoleMembers` vec | `DataKey::RoleMembers(role)` | `MAX_ROLE_MEMBERS = 256` | `TooManyMembers` |
 | `mux-permissions` | `AccountRoles` vec | `DataKey::AccountRoles(account)` | `MAX_ROLES_PER_ACCOUNT = 32` | `TooManyRoles` |
 | `mux-wallet-registry` | `WalletCount` counter | `DataKey::WalletCount` | `MAX_WALLETS = 256` | `TooManyWallets` |

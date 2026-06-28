@@ -25,6 +25,9 @@ const TTL_EXTEND_TO: u32 = 518_400;
 /// Maximum permissions that can be granted to a single delegate.
 const MAX_DELEGATE_PERMS: u32 = 64;
 
+/// Maximum delegates an owner can register (storage griefing guard).
+const MAX_DELEGATES_PER_OWNER: u32 = 128;
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 // Issue #83: Store delegate permissions map.
@@ -86,6 +89,9 @@ impl MuxDelegation {
             .get(&DataKey::OwnerDelegates(owner.clone()))
             .unwrap_or_else(|| Vec::new(&env));
         if !delegates.contains(&delegate) {
+            if delegates.len() >= MAX_DELEGATES_PER_OWNER {
+                return Err(MuxDelegationError::TooManyDelegates);
+            }
             delegates.push_back(delegate.clone());
             env.storage()
                 .persistent()
