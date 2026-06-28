@@ -47,6 +47,7 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   EmptyBatch: 400,
   BatchTooLarge: 400,
   InvalidAccount: 400,
+  MetadataTooLarge: 400,
 
   // State conflict → 409
   AlreadyInitialized: 409,

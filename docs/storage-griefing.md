@@ -23,10 +23,13 @@ On Soroban, every contract pays **rent** for the ledger entries it occupies.  Al
 |---|---|---|---|---|
 | `mux-account` | `Delegates` map | `DataKey::Delegates` | `MAX_DELEGATES = 64` | `TooManyDelegates` |
 | `mux-account-factory` | `Accounts` vec | `DataKey::Accounts(owner)` | `MAX_ACCOUNTS_PER_OWNER = 64` | `TooManyAccounts` |
+| `mux-account-factory` | Metadata strings | `version`, `description`, `author` | `MAX_VERSION_LENGTH = 32`, `MAX_DESCRIPTION_LENGTH = 256`, `MAX_AUTHOR_LENGTH = 64` | `MetadataTooLarge` |
 | `mux-permissions` | `RoleMembers` vec | `DataKey::RoleMembers(role)` | `MAX_ROLE_MEMBERS = 256` | `TooManyMembers` |
 | `mux-permissions` | `AccountRoles` vec | `DataKey::AccountRoles(account)` | `MAX_ROLES_PER_ACCOUNT = 32` | `TooManyRoles` |
 
 Caps are enforced on **new insertions only**; updates to existing entries are always allowed.
+
+String size limits are enforced on metadata fields to prevent storage bloat through large strings.
 
 ### TTL auto-extension
 
@@ -90,3 +93,4 @@ Run this job at least once every **25 days** to stay ahead of the 30-day TTL win
 | T-20 | Spend limits accumulate unbounded per-asset keys | No public write path; owner-only |
 | T-21 | Instance storage TTL expiry causes silent data loss | `extend_ttl` on every write + keeper job |
 | T-22 | Owner floods account factory with accounts | `MAX_ACCOUNTS_PER_OWNER = 64` in `deploy_account` |
+| T-23 | Owner floods account factory with large metadata strings | String size limits in `deploy_account_with_metadata` |

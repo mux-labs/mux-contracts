@@ -59,6 +59,10 @@ describe("Factory and registry error HTTP mapping", () => {
     expect(ERROR_HTTP_MAP.MetadataNotFound).toBe(404);
   });
 
+  it("maps MetadataTooLarge to 400", () => {
+    expect(ERROR_HTTP_MAP.MetadataTooLarge).toBe(400);
+  });
+
   it("maps ContractNotFound to 404", () => {
     expect(ERROR_HTTP_MAP.ContractNotFound).toBe(404);
   });
