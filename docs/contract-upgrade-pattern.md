@@ -167,3 +167,29 @@ mod upgrade_tests {
 - [Stellar CLI: `contract upload`](https://developers.stellar.org/docs/tools/stellar-cli)
 - Mux deployment scripts: `scripts/deploy-testnet.sh` (see #110)
 - Mux WASM hash verification: `scripts/verify-wasm-hash.sh` (see #113)
+
+## v0.1.0 → Unreleased: Registry Upgrade Migration Notes
+
+### mux-registry
+
+No breaking storage changes in this cycle. The `DataKey` enum gained two new
+variants (`Metadata(Symbol)` for rich metadata and `Names` for the contract-name
+index); both are **additive** — existing ledger entries remain valid.
+
+**If you are upgrading a live `mux-registry` instance:**
+
+1. Upload the new WASM and call `upgrade(new_wasm_hash)` as the admin.
+2. No `migrate()` call is required — the `Names` vec is bootstrapped lazily if
+   absent, and `Metadata` entries are optional (reads fall back to
+   `ContractNotFound` rather than panicking).
+3. Verify with `get_version` and `list_contracts` that pre-upgrade registrations
+   are still readable.
+
+### mux-wallet-registry
+
+No storage layout changes in v0.1.0. The `DataKey::Wallet(Symbol)` key is
+unchanged. No migration step is needed when upgrading to any patch release in
+this series.
+
+**General rule for both registries:** upgrade → smoke-test → keep prior WASM
+hash for rollback. See the [Rollback](#rollback) section above.

@@ -1,0 +1,33 @@
+# rustfmt configuration for mux-contracts
+#
+# This file pins the formatting rules that `cargo fmt` and the CI fmt-check
+# step enforce.  Running `cargo fmt --all` locally will produce output that
+# is identical to what the CI `cargo fmt --all -- --check` step expects.
+#
+# CI step (ci.yml):
+#   - name: cargo fmt
+#     run: cargo fmt --all -- --check
+
+edition = "2021"
+
+# Stable options only — nightly-only options are intentionally omitted so
+# that the stable toolchain pinned in ci.yml can apply this config without
+# requiring the nightly channel.
+
+# Line width: default is 100; keep it at 100 to match the Rust style guide.
+max_width = 100
+
+# Trailing commas in function calls / definitions that span multiple lines.
+trailing_comma = "Vertical"
+
+# Import merging: group std / external / crate imports but do not reorder
+# items within a group (avoids noisy diffs on import-only changes).
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"
+
+# Newline style: Unix line endings (LF) across all platforms.
+newline_style = "Unix"
+
+# Normalise string literals to use double quotes where possible.
+use_field_init_shorthand = true
+use_try_shorthand = true

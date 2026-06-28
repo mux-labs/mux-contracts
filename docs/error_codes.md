@@ -23,7 +23,16 @@ This document provides a comprehensive reference for all error codes used within
 - `RegistryError::ContractNotFound` (5001) - The specified contract was not found in the registry.
 - `RegistryError::VersionMismatch` (5002) - The contract version does not match the expected version.
 
-## Mux Delegation (`contracts/mux-delegation`)
-- `MuxDelegationError::NotADelegate` (6001) - The specified address is not a delegate of the owner.
-- `MuxDelegationError::TooManyPermissions` (6002) - The permissions list exceeds the maximum allowed (64).
-- `MuxDelegationError::EmptyPermissions` (6003) - The permissions list must not be empty.
+## Mux Wallet Registry (`contracts/mux-wallet-registry`)
+- `WalletRegistryError::NotInitialized` (1) — The registry has not been initialized.
+- `WalletRegistryError::AlreadyInitialized` (2) — The registry has already been initialized.
+- `WalletRegistryError::Unauthorized` (3) — The caller is not the registry owner.
+- `WalletRegistryError::WalletNotFound` (4) — No wallet is registered under the given name.
+
+### HTTP mapping
+| Error variant         | HTTP status |
+|-----------------------|-------------|
+| `NotInitialized`      | 500         |
+| `AlreadyInitialized`  | 409         |
+| `Unauthorized`        | 401         |
+| `WalletNotFound`      | 404         |
