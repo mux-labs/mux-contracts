@@ -72,6 +72,7 @@ Run this job at least once every **25 days** to stay ahead of the 30-day TTL win
 | `Delegates` map | ~72 bytes | 64 | ~4.6 KB |
 | `RoleMembers` vec | ~32 bytes | 256 | ~8 KB |
 | `AccountRoles` vec | ~8 bytes | 32 | ~256 bytes |
+| `Names` vec (`mux-registry`) | ~16 bytes | 128 | ~2 KB |
 | `SpendLimit` per asset | ~80 bytes | owner-controlled | unbounded (owner only) |
 | `Wallet` entries | ~42–50 bytes | 256 | ~12 KB |
 
