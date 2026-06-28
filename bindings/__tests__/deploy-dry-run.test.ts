@@ -84,4 +84,15 @@ describe("deploy.sh --dry-run flag", () => {
     expect(output).not.toMatch(/mux-batcher/);
     expect(output).not.toMatch(/mux-permissions/);
   });
+
+  it("--dry-run simulates mux-wallet-registry when requested", () => {
+    const output = execSync(
+      `bash "${DEPLOY_SCRIPT}" --dry-run --network testnet --skip-build --contract mux-wallet-registry`,
+      { encoding: "utf8", env: { ...process.env } },
+    );
+
+    expect(output).toMatch(/mux-wallet-registry/);
+    expect(output).toMatch(/stellar contract upload/i);
+    expect(output).toMatch(/stellar contract deploy/i);
+  });
 });
