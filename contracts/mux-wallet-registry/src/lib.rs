@@ -2,11 +2,32 @@
  * mux-wallet-registry: Wallet registry contract for Mux Protocol.
  *
  * Allows an owner to register and look up wallet addresses by a symbolic name.
+ *
+ * ## Upgrade Migration Notes
+ *
+ * When upgrading this contract to a new version:
+ *
+ * 1. **Storage Compatibility**: All storage keys (Owner, Wallet) must remain stable.
+ *    Do not change DataKey enum variants or their discriminants.
+ *
+ * 2. **Owner Migration**: The Owner address will persist across upgrades.
+ *    No migration action required for existing owner authorization.
+ *
+ * 3. **Wallet Registry Migration**: All registered wallet entries (Symbol -> Address)
+ *    will remain accessible. Maintain backward compatibility with existing wallet lookups.
+ *
+ * 4. **Breaking Changes**: If introducing new storage fields, ensure they are optional
+ *    to maintain compatibility with existing instances. Use a version marker if needed.
+ *
+ * 5. **Testing**: After upgrade, verify:
+ *    - Owner can still authorize operations
+ *    - All registered wallets can be retrieved
+ *    - New wallets can be registered
  */
 
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, String, Symbol};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol, Vec};
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
@@ -17,20 +38,8 @@ pub enum DataKey {
     Owner,
     /// A registered wallet entry keyed by name: DataKey::Wallet(name).
     Wallet(Symbol),
-    /// Optional metadata keyed by name: DataKey::Metadata(name).
-    Metadata(Symbol),
-}
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-/// Optional metadata associated with a registered wallet entry.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct WalletMetadata {
-    /// Short human-readable label for this wallet entry.
-    pub label: String,
-    /// Optional description providing more context.
-    pub description: String,
+    /// List of wallet names registered in this contract.
+    Names,
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────
@@ -43,7 +52,17 @@ pub enum WalletRegistryError {
     AlreadyInitialized = 2,
     Unauthorized = 3,
     WalletNotFound = 4,
+    TooManyWallets = 5,
 }
+
+// ── Storage limits ─────────────────────────────────────────────────────────────
+
+/// Maximum number of distinct wallet names that may be registered.
+const MAX_WALLETS: u32 = 128;
+
+// ── Storage TTL ─────────────────────────────────────────────────────────────────
+const TTL_THRESHOLD: u32 = 17_280; // ~1 day
+const TTL_EXTEND_TO: u32 = 518_400; // ~30 days
 
 // ── Contract ──────────────────────────────────────────────────────────────────
 
@@ -59,6 +78,10 @@ impl MuxWalletRegistry {
         }
         owner.require_auth();
         env.storage().instance().set(&DataKey::Owner, &owner);
+        env.storage()
+            .instance()
+            .set(&DataKey::Names, &Vec::<Symbol>::new(&env));
+        Self::extend_ttl(&env);
         Ok(())
     }
 
@@ -69,9 +92,24 @@ impl MuxWalletRegistry {
         wallet: Address,
     ) -> Result<(), WalletRegistryError> {
         Self::require_owner(&env)?;
+        let mut names: Vec<Symbol> = env
+            .storage()
+            .instance()
+            .get(&DataKey::Names)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        if !names.contains(&name) {
+            if names.len() >= MAX_WALLETS {
+                return Err(WalletRegistryError::TooManyWallets);
+            }
+            names.push_back(name.clone());
+            env.storage().instance().set(&DataKey::Names, &names);
+        }
+
         env.storage()
             .instance()
             .set(&DataKey::Wallet(name), &wallet);
+        Self::extend_ttl(&env);
         Ok(())
     }
 
@@ -121,6 +159,12 @@ impl MuxWalletRegistry {
         owner.require_auth();
         Ok(())
     }
+
+    fn extend_ttl(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -156,6 +200,31 @@ mod tests {
 
     #[test]
     fn test_register_and_get() {
+        let (env, client, _) = setup();
+        let name = symbol_short!("alice");
+        let wallet = Address::generate(&env);
+        client.register_wallet(&name, &wallet);
+        assert_eq!(client.get_wallet(&name), wallet);
+    }
+
+    #[test]
+    fn test_register_wallet_caps_names() {
+        let (env, client, _) = setup();
+        env.budget().reset_unlimited();
+        for i in 0..MAX_WALLETS {
+            let name = soroban_sdk::Symbol::new(&env, format!("wallet{}", i));
+            let wallet = Address::generate(&env);
+            client.register_wallet(&name, &wallet);
+        }
+
+        let overflow_name = soroban_sdk::Symbol::new(&env, "overflow");
+        let overflow_wallet = Address::generate(&env);
+        let result = client.try_register_wallet(&overflow_name, &overflow_wallet);
+        assert_eq!(result, Err(Ok(WalletRegistryError::TooManyWallets)));
+    }
+
+    #[test]
+    fn test_ttl_extended_on_register_wallet() {
         let (env, client, _) = setup();
         let name = symbol_short!("alice");
         let wallet = Address::generate(&env);
