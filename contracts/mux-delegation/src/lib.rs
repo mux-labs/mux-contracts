@@ -49,6 +49,7 @@ pub enum MuxDelegationError {
     NotADelegate = 6001,
     TooManyPermissions = 6002,
     EmptyPermissions = 6003,
+    TooManyDelegates = 6004,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -315,6 +316,11 @@ mod tests {
     #[test]
     fn test_error_code_empty_permissions() {
         assert_eq!(MuxDelegationError::EmptyPermissions as u32, 6003);
+    }
+
+    #[test]
+    fn test_error_code_too_many_delegates() {
+        assert_eq!(MuxDelegationError::TooManyDelegates as u32, 6004);
     }
 
     #[test]
