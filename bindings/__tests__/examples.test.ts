@@ -5,6 +5,8 @@
  * expected shape without connecting to a live network.
  */
 
+import * as fs from "fs";
+import * as path from "path";
 import * as frontendUsage from "../src/examples/frontend-usage";
 
 describe("frontend-usage example module", () => {
@@ -38,5 +40,11 @@ describe("frontend-usage example module", () => {
     process.env.SOROBAN_NETWORK = "testnet";
     expect(() => frontendUsage.bootstrapNetwork()).toThrow();
     process.env.SOROBAN_NETWORK = originalNetwork;
+  });
+
+  it("includes the wallet registry invoke example file", () => {
+    const repoRoot = path.resolve(__dirname, "..", "..");
+    const examplePath = path.join(repoRoot, "examples", "wallet-registry-invoke.ts");
+    expect(fs.existsSync(examplePath)).toBe(true);
   });
 });
