@@ -1,6 +1,6 @@
 import type { MuxAccountFactoryError } from "./generated/mux-account-factory";
 import type { MuxRegistryError } from "./generated/mux-registry";
-import type { WalletRegistryError } from "./generated/mux-wallet-registry";
+import type { MuxWalletRegistryError } from "./generated/mux-wallet-registry";
 import type {
   MuxAccountError,
   MuxBatcherError,
@@ -19,7 +19,7 @@ type ContractError =
   | MuxPermissionsError
   | MuxAccountFactoryError
   | MuxRegistryError
-  | WalletRegistryError;
+  | MuxWalletRegistryError;
 
 /**
  * Maps contract error variants to HTTP status codes.
@@ -39,6 +39,7 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   AccountNotInRole: 404,
   PermissionNotFound: 404,
   ContractNotFound: 404,
+  WalletNotFound: 404,
 
   // Validation/Constraint errors → 400
   InvalidAmount: 400,
