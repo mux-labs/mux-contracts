@@ -221,6 +221,20 @@ mod tests {
         (env, client, owner)
     }
 
+    /// Extract the action symbol (topics[1]) from a specific event index.
+    fn topic_action(
+        env: &Env,
+        events: &soroban_sdk::Vec<(
+            soroban_sdk::Address,
+            soroban_sdk::Vec<soroban_sdk::Val>,
+            soroban_sdk::Val,
+        )>,
+        idx: u32,
+    ) -> soroban_sdk::Symbol {
+        let (_, topics, _) = events.get(idx).unwrap();
+        soroban_sdk::Symbol::from_val(env, &topics.get(1).unwrap())
+    }
+
     #[test]
     fn test_initialize() {
         let env = Env::default();
