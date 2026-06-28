@@ -42,7 +42,7 @@ export function resolveContractId(
 
   const contractKey = supported[contractName];
   const addresses = loadContractAddresses(network, DEFAULT_ADDRESSES);
-  const contractId = addresses[contractKey];
+  const contractId = (addresses as unknown as Record<string, string | undefined>)[contractKey];
   if (!contractId) {
     throw new Error(
       `Contract address for ${contractName} is not configured on network ${network}. ` +
