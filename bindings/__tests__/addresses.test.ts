@@ -52,6 +52,24 @@ describe("Contract Address Configuration", () => {
 
       delete process.env.TESTNET_MUX_BATCHER_ID;
     });
+
+    it("overrides muxPolicy with environment variable", () => {
+      const testAddress = "CPOLICY_ENV";
+      process.env.LOCALNET_MUX_POLICY_ID = testAddress;
+
+      const addresses = loadContractAddresses("localnet", DEFAULT_ADDRESSES);
+      expect(addresses.muxPolicy).toBe(testAddress);
+
+      delete process.env.LOCALNET_MUX_POLICY_ID;
+    });
+
+    it("loads muxPolicy for each network", () => {
+      for (const network of ["localnet", "testnet", "mainnet"] as const) {
+        const addresses = loadContractAddresses(network, DEFAULT_ADDRESSES);
+        expect(addresses).toHaveProperty("muxPolicy");
+        expect(typeof addresses.muxPolicy).toBe("string");
+      }
+    });
   });
 
   describe("validateAddresses", () => {
@@ -148,6 +166,7 @@ describe("Contract Address Configuration", () => {
       expect(addresses.muxBatcher).toBe("CTest2");
       expect(addresses.muxDelegation).toBe("CTest3");
       expect(addresses.muxPermissions).toBe("CTest4");
+      expect(addresses.muxPolicy).toBe("CTest5");
     });
 
     it("throws if validation fails", () => {

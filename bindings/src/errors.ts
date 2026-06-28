@@ -5,6 +5,7 @@ import type {
   MuxAccountError,
   MuxBatcherError,
   MuxPermissionsError,
+  MuxPolicyError,
 } from "./types";
 
 export interface HttpErrorResponse {
@@ -17,6 +18,7 @@ type ContractError =
   | MuxAccountError
   | MuxBatcherError
   | MuxPermissionsError
+  | MuxPolicyError
   | MuxAccountFactoryError
   | MuxRegistryError
   | MuxWalletRegistryError;
@@ -56,6 +58,10 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
 
   // Security guard violations → 409 Conflict (concurrent/reentrant call)
   ReentrancyDetected: 409,
+
+  // Policy errors → 400 Bad Request
+  LimitNotFound: 404,
+  LimitExceeded: 400,
 
   // Capacity limits → 409 Conflict
   TooManyAccounts: 409,

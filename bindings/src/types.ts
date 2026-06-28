@@ -131,6 +131,15 @@ export interface SpendingPolicyLimit {
   limit: bigint;
 }
 
+export type MuxPolicyError =
+  | "NotInitialized"
+  | "AlreadyInitialized"
+  | "Unauthorized"
+  | "LimitNotFound"
+  | "LimitExceeded"
+  | "InvalidAmount"
+  | "InvalidPeriod";
+
 export type SpendingPolicyError =
   | "NotInitialized"
   | "AlreadyInitialized"
