@@ -54,6 +54,17 @@ Contract tag: `mux_perm`
 
 ---
 
+## mux-delegation events
+
+Contract tag: `mux_dlg`
+
+| Action | Trigger | Data payload |
+|---|---|---|
+| `dlg_grant` | `grant_delegate` succeeds | `(owner: Address, delegate: Address)` |
+| `dlg_rev` | `revoke_delegate` succeeds | `(owner: Address, delegate: Address)` |
+
+---
+
 ## mux-batcher events
 
 Contract tag: `mux_bat`

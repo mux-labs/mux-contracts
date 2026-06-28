@@ -180,8 +180,21 @@ mod tests {
     use soroban_sdk::{
         symbol_short,
         testutils::{Address as _, Events},
-        vec, Env,
+        vec, Env, FromVal,
     };
+
+    fn topic_action(
+        env: &Env,
+        events: &soroban_sdk::Vec<(
+            soroban_sdk::Address,
+            soroban_sdk::Vec<soroban_sdk::Val>,
+            soroban_sdk::Val,
+        )>,
+        idx: u32,
+    ) -> soroban_sdk::Symbol {
+        let (_, topics, _) = events.get(idx).unwrap();
+        soroban_sdk::Symbol::from_val(env, &topics.get(1).unwrap())
+    }
 
     fn setup() -> (Env, MuxDelegationClient<'static>) {
         let env = Env::default();
@@ -359,7 +372,8 @@ mod tests {
         client.grant_delegate(&owner, &delegate, &perms);
 
         let events = env.events().all();
-        assert!(!events.is_empty());
+        assert_eq!(events.len(), 1);
+        assert_eq!(topic_action(&env, &events, 0), symbol_short!("dlg_grant"));
     }
 
     #[test]
@@ -370,9 +384,10 @@ mod tests {
         let perms = vec![&env, symbol_short!("read")];
 
         client.grant_delegate(&owner, &delegate, &perms);
-        let before = env.events().all().len();
-
         client.revoke_delegate(&owner, &delegate);
-        assert!(env.events().all().len() > before);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 2);
+        assert_eq!(topic_action(&env, &events, 1), symbol_short!("dlg_rev"));
     }
 }
