@@ -16,6 +16,7 @@ This repository contains the **core Soroban smart contracts** that power Mux. Co
 | [`contracts/mux-account`](contracts/mux-account/) | Account abstraction: owner, delegates, spend limits, guardian set |
 | [`contracts/mux-batcher`](contracts/mux-batcher/) | Atomic multi-operation batching with optional per-op failure handling |
 | [`contracts/mux-permissions`](contracts/mux-permissions/) | RBAC registry — roles, permissions, grant/revoke |
+| [`contracts/mux-spending-policy`](contracts/mux-spending-policy/) | Spend-limit policy contract — set policies, retrieve them, and check spends |
 
 ## TypeScript Bindings
 
