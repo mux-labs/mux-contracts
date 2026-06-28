@@ -7,7 +7,7 @@ export interface MuxContractIds {
   muxBatcher: string;
   muxDelegation: string;
   muxPermissions: string;
-  muxRegistry?: string;
+  muxWalletRegistry: string;
 }
 
 export interface SpendLimit {
