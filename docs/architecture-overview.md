@@ -11,6 +11,7 @@ The core contracts in the Mux Protocol workspace include:
 - **mux-batcher**: A utility contract for batching multiple operations or contract calls into a single transaction.
 - **mux-permissions**: A module for defining and enforcing role-based access control and granular permissions within Mux accounts.
 - **mux-registry**: A central registry for discovering, verifying, and indexing components, accounts, and valid module implementations.
+- **mux-wallet-registry**: A named address book that maps symbolic names to wallet addresses. Only a designated owner may write entries; reads are permissionless.
 
 ## Diagram
 
@@ -28,6 +29,7 @@ graph TD
     Account -->|Looks up Modules| Registry[mux-registry]
     Factory -->|Registers| Registry
     Permissions -.->|Verified via| Registry
+    Account -->|Resolves wallets| WalletRegistry[mux-wallet-registry]
 ```
 
 ## System Flow

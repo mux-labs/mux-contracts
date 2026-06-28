@@ -1,8 +1,34 @@
 /*!
  * mux-registry: Contract version registry for Mux Protocol.
+ *
+ * This contract maintains a registry of protocol components and their versions.
+ * It supports registration with optional metadata, discovery queries, and
+ * storage griefing guards via capped collections.
+ *
+ * # Public Interface
+ *
+ * - `initialize(admin)` — One-time setup with admin authorization
+ * - `register(name, version)` — Register/update version only (admin)
+ * - `register_with_metadata(name, version, description, author)` — Register with full metadata (admin)
+ * - `check_version(name, version)` — Dry-run validation without state mutation
+ * - `get_version(name)` — Query registered version (public)
+ * - `get_metadata(name)` — Query full metadata (public)
+ * - `list_contracts()` — List all registered names (public)
+ *
+ * # Storage Constraints
+ *
+ * The registry enforces a cap of 128 registered contracts to prevent storage griefing.
+ * Registering more than 128 unique names returns `TooManyContracts`.
+ *
+ * # Events
+ *
+ * - `"init"` — Emitted on initialization
+ * - `"reg"` — Emitted on registration with (name, version)
  */
 
 #![no_std]
+
+extern crate alloc;
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String,
@@ -37,6 +63,8 @@ pub struct ContractMetadata {
     pub description: String,
     /// Author or team identifier.
     pub author: String,
+    /// Source repository URL or additional metadata.
+    pub repository: String,
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────
@@ -69,6 +97,8 @@ pub struct MuxRegistry;
 
 #[contractimpl]
 impl MuxRegistry {
+    /// Initialize the registry with an admin address.
+    /// Must be called exactly once; subsequent calls return `AlreadyInitialized`.
     pub fn initialize(env: Env, admin: Address) -> Result<(), MuxRegistryError> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(MuxRegistryError::AlreadyInitialized);
@@ -84,6 +114,9 @@ impl MuxRegistry {
     }
 
     /// Register or update a contract version. Admin only.
+    /// If the name is new, it is added to the registry (up to MAX_CONTRACTS).
+    /// If already registered, the version is updated without duplicating the name.
+    /// Returns `TooManyContracts` if the registry is at capacity.
     pub fn register(env: Env, name: Symbol, version: String) -> Result<(), MuxRegistryError> {
         Self::require_admin(&env)?;
         let mut names: Vec<Symbol> = env
@@ -115,6 +148,7 @@ impl MuxRegistry {
         version: String,
         description: String,
         author: String,
+        repository: String,
     ) -> Result<(), MuxRegistryError> {
         Self::require_admin(&env)?;
         let mut names: Vec<Symbol> = env
@@ -130,24 +164,36 @@ impl MuxRegistry {
             names.push_back(name.clone());
             env.storage().instance().set(&DataKey::Names, &names);
         }
+        let version_clone = version.clone();
         env.storage()
             .instance()
-            .set(&DataKey::Version(name.clone()), &version.clone());
+            .set(&DataKey::Version(name.clone()), &version_clone);
         let meta = ContractMetadata {
-            version,
+            version: version.clone(),
             description,
             author,
+            repository,
         };
         env.storage()
             .instance()
             .set(&DataKey::Metadata(name.clone()), &meta);
-        emit(&env, symbol_short!("reg_meta"), name);
+        emit(&env, symbol_short!("regmeta"), name);
         Self::extend_ttl(&env);
         Ok(())
     }
 
     /// Get the version string for a registered contract.
     pub fn get_version(env: Env, name: Symbol) -> Result<String, MuxRegistryError> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Version(name))
+            .ok_or(MuxRegistryError::ContractNotFound)
+    }
+
+    /// Dry-run validation of a version query without state mutation.
+    /// Returns the version if registered, otherwise returns `ContractNotFound`.
+    /// This is useful for preflight checks and deployment validation.
+    pub fn check_version(env: Env, name: Symbol) -> Result<String, MuxRegistryError> {
         env.storage()
             .instance()
             .get(&DataKey::Version(name))
@@ -194,7 +240,11 @@ impl MuxRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{symbol_short, testutils::Address as _, Env, String};
+    use soroban_sdk::{
+        symbol_short,
+        testutils::{Address as _, Events},
+        Env, FromVal, String,
+    };
 
     fn setup() -> (Env, MuxRegistryClient<'static>, Address) {
         let env = Env::default();
@@ -229,7 +279,7 @@ mod tests {
 
     #[test]
     fn test_get_unknown_fails() {
-        let (env, client, _) = setup();
+        let (_env, client, _) = setup();
         let result = client.try_get_version(&symbol_short!("ghost"));
         assert!(result.is_err());
     }
@@ -241,13 +291,15 @@ mod tests {
         let version = String::from_str(&env, "2.0.0");
         let description = String::from_str(&env, "Account abstraction contract");
         let author = String::from_str(&env, "mux-labs");
+        let repository = String::from_str(&env, "https://github.com/mux-protocol/mux-contracts");
 
-        client.register_with_metadata(&name, &version, &description, &author);
+        client.register_with_metadata(&name, &version, &description, &author, &repository);
 
         let meta = client.get_metadata(&name);
         assert_eq!(meta.version, version);
         assert_eq!(meta.description, description);
         assert_eq!(meta.author, author);
+        assert_eq!(meta.repository, repository);
         // version key also updated
         assert_eq!(client.get_version(&name), version);
         assert!(client.list_contracts().contains(&name));
@@ -255,7 +307,7 @@ mod tests {
 
     #[test]
     fn test_get_metadata_unknown_fails() {
-        let (env, client, _) = setup();
+        let (_env, client, _) = setup();
         let result = client.try_get_metadata(&symbol_short!("ghost"));
         assert!(result.is_err());
     }
@@ -268,9 +320,10 @@ mod tests {
         let v2 = String::from_str(&env, "1.1.0");
         let desc = String::from_str(&env, "Batcher contract");
         let author = String::from_str(&env, "mux-labs");
+        let repo = String::from_str(&env, "https://github.com/mux-protocol/mux-contracts");
 
-        client.register_with_metadata(&name, &v1, &desc, &author);
-        client.register_with_metadata(&name, &v2, &desc, &author);
+        client.register_with_metadata(&name, &v1, &desc, &author, &repo);
+        client.register_with_metadata(&name, &v2, &desc, &author, &repo);
 
         let meta = client.get_metadata(&name);
         assert_eq!(meta.version, v2);
@@ -280,59 +333,60 @@ mod tests {
         assert_eq!(count, 1);
     }
 
+    /// Filling the registry to MAX_CONTRACTS via register() and then calling
+    /// register_with_metadata() with a new name must return TooManyContracts.
     #[test]
-    fn test_register_with_metadata_extends_ttl() {
-        let (env, client, _) = setup();
-        let name = symbol_short!("account");
+    fn test_too_many_contracts_via_register_with_metadata() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.budget().reset_unlimited();
+        let contract_id = env.register_contract(None, MuxRegistry);
+        let client = MuxRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
         let version = String::from_str(&env, "1.0.0");
-        let description = String::from_str(&env, "desc");
+        let desc = String::from_str(&env, "desc");
         let author = String::from_str(&env, "mux-labs");
-        // TTL extension is called internally — verifying no panic and success return.
-        assert!(client
-            .try_register_with_metadata(&name, &version, &description, &author)
-            .is_ok());
-    }
 
-    #[test]
-    fn test_register_with_metadata_emits_event() {
-        let (env, client, _) = setup();
-        let name = symbol_short!("account");
-        let version = String::from_str(&env, "1.0.0");
-        let description = String::from_str(&env, "desc");
-        let author = String::from_str(&env, "mux-labs");
-        client.register_with_metadata(&name, &version, &description, &author);
-        // Event was emitted — verify by confirming the call succeeded and metadata is stored.
-        let meta = client.get_metadata(&name);
-        assert_eq!(meta.version, version);
-    }
-
-    #[test]
-    fn test_register_with_metadata_enforces_max_contracts() {
-        let (env, client, _) = setup();
-        let version = String::from_str(&env, "1.0.0");
-        let desc = String::from_str(&env, "d");
-        let author = String::from_str(&env, "a");
-
-        // Register MAX_CONTRACTS entries using register().
-        let names: [Symbol; 10] = [
-            symbol_short!("a0"),
-            symbol_short!("a1"),
-            symbol_short!("a2"),
-            symbol_short!("a3"),
-            symbol_short!("a4"),
-            symbol_short!("a5"),
-            symbol_short!("a6"),
-            symbol_short!("a7"),
-            symbol_short!("a8"),
-            symbol_short!("a9"),
-        ];
-        // Register 10 unique names via register_with_metadata to verify the cap check.
-        for name in &names {
-            client.register_with_metadata(name, &version, &desc, &author);
+        // Fill the registry to exactly MAX_CONTRACTS (128) entries.
+        // Two-letter base-26 symbols: "aa"=0 … "ex"=127, "ey"=128.
+        for i in 0u32..128 {
+            let sym = soroban_sdk::Symbol::new(
+                &env,
+                &format!("{}{}", (b'a' + (i / 26) as u8) as char, (b'a' + (i % 26) as u8) as char),
+            );
+            client.register(&sym, &version);
         }
-        // Re-registering an existing name must still succeed (not a new slot).
-        assert!(client
-            .try_register_with_metadata(&names[0], &version, &desc, &author)
-            .is_ok());
+
+        // One more new name must be rejected by register_with_metadata.
+        let overflow = soroban_sdk::Symbol::new(&env, "ey");
+        let result = client.try_register_with_metadata(&overflow, &version, &desc, &author);
+        assert_eq!(result, Err(Ok(MuxRegistryError::TooManyContracts)));
     }
-}
+
+    /// register() also enforces the cap once MAX_CONTRACTS names are registered.
+    #[test]
+    fn test_too_many_contracts_via_register() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.budget().reset_unlimited();
+        let contract_id = env.register_contract(None, MuxRegistry);
+        let client = MuxRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        let version = String::from_str(&env, "1.0.0");
+
+        for i in 0u32..128 {
+            let sym = soroban_sdk::Symbol::new(
+                &env,
+                &format!("{}{}", (b'a' + (i / 26) as u8) as char, (b'a' + (i % 26) as u8) as char),
+            );
+            client.register(&sym, &version);
+        }
+
+        let overflow = soroban_sdk::Symbol::new(&env, "ey");
+        let result = client.try_register(&overflow, &version);
+        assert_eq!(result, Err(Ok(MuxRegistryError::TooManyContracts)));
+    }
