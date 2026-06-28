@@ -36,7 +36,8 @@ The CI pipeline ([`.github/workflows/bindings.yml`](.github/workflows/bindings.y
 
 ### Usage example
 
-See [`examples/bindings-usage.ts`](examples/bindings-usage.ts) for a working end-to-end example showing `check_spend` and `register_wallet`:
+See [`examples/bindings-usage.ts`](examples/bindings-usage.ts) for a working end-to-end example showing `check_spend` and `register_wallet`.
+See [`examples/wallet-registry-invoke.ts`](examples/wallet-registry-invoke.ts) for a dedicated wallet registry invoke script.
 
 ```ts
 import {
