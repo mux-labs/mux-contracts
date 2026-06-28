@@ -46,6 +46,7 @@ CONTRACTS=(
   "mux-account-factory"
   "mux-batcher"
   "mux-permissions"
+  "mux-policy"
   "mux-registry"
 )
 

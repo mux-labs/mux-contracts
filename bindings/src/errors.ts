@@ -1,9 +1,11 @@
 import type { MuxAccountFactoryError } from "./generated/mux-account-factory";
 import type { MuxRegistryError } from "./generated/mux-registry";
+import type { MuxWalletRegistryError } from "./generated/mux-wallet-registry";
 import type {
   MuxAccountError,
   MuxBatcherError,
   MuxPermissionsError,
+  MuxPolicyError,
 } from "./types";
 
 export interface HttpErrorResponse {
@@ -16,8 +18,10 @@ type ContractError =
   | MuxAccountError
   | MuxBatcherError
   | MuxPermissionsError
+  | MuxPolicyError
   | MuxAccountFactoryError
-  | MuxRegistryError;
+  | MuxRegistryError
+  | MuxWalletRegistryError;
 
 /**
  * Maps contract error variants to HTTP status codes.
@@ -37,11 +41,13 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   AccountNotInRole: 404,
   PermissionNotFound: 404,
   ContractNotFound: 404,
+  WalletNotFound: 404,
 
   // Validation/Constraint errors → 400
   InvalidAmount: 400,
   InvalidPeriod: 400,
   SpendLimitExceeded: 400,
+  LimitExceeded: 400,
   DelegateExpired: 400,
   EmptyBatch: 400,
   BatchTooLarge: 400,
@@ -53,9 +59,17 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   // Security guard violations → 409 Conflict (concurrent/reentrant call)
   ReentrancyDetected: 409,
 
+  // Policy errors → 400 Bad Request
+  LimitNotFound: 404,
+  LimitExceeded: 400,
+
   // Capacity limits → 409 Conflict
   TooManyAccounts: 409,
   TooManyContracts: 409,
+  TooManyWallets: 409,
+
+  // Wallet registry not-found → 404
+  WalletNotFound: 404,
 
   // Internal/Uninitialized → 500
   NotInitialized: 500,

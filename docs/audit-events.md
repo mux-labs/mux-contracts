@@ -67,17 +67,16 @@ Contract tag: `mux_bat`
 
 ---
 
----
+## mux-wallet-registry events
 
-## mux-registry events
-
-Contract tag: `mux_reg`
+Contract tag: `mux_wreg`
 
 | Action | Trigger | Data payload |
 |---|---|---|
-| `init` | `initialize` succeeds | `admin: Address` |
-| `reg` | `register` succeeds | `(name: Symbol, version: String)` |
-| `reg_meta` | `register_with_metadata` succeeds | `(name: Symbol, version: String, description: String, author: String)` |
+| `init` | `initialize` succeeds | `owner: Address` |
+| `wlt_reg` | `register_wallet` succeeds (new entry or overwrite) | `(name: Symbol, wallet: Address)` |
+
+> `get_wallet` is read-only and emits no events.
 
 ---
 
