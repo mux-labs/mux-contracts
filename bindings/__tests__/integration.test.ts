@@ -56,5 +56,6 @@ describe("Integration Tests", () => {
     expect(config.contracts.muxAccount).toBeDefined();
     expect(config.contracts.muxBatcher).toBeDefined();
     expect(config.contracts.muxPermissions).toBeDefined();
+    expect(config.contracts.muxPolicy).toBeDefined();
   });
 });
