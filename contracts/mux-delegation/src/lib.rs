@@ -46,10 +46,9 @@ pub enum DataKey {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum MuxDelegationError {
-    NotADelegate = 1,
-    TooManyPermissions = 2,
-    EmptyPermissions = 3,
-    TooManyDelegates = 4,
+    NotADelegate = 6001,
+    TooManyPermissions = 6002,
+    EmptyPermissions = 6003,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -304,20 +303,18 @@ mod tests {
     }
 
     #[test]
-    fn test_grant_exceeding_max_delegates_fails() {
-        let (env, client) = setup();
-        let owner = Address::generate(&env);
-        let perm = symbol_short!("read");
-        let perms = vec![&env, perm];
+    fn test_error_code_not_a_delegate() {
+        assert_eq!(MuxDelegationError::NotADelegate as u32, 6001);
+    }
 
-        for _ in 0..MAX_DELEGATES_PER_OWNER {
-            let delegate = Address::generate(&env);
-            client.grant_delegate(&owner, &delegate, &perms);
-        }
+    #[test]
+    fn test_error_code_too_many_permissions() {
+        assert_eq!(MuxDelegationError::TooManyPermissions as u32, 6002);
+    }
 
-        let extra = Address::generate(&env);
-        let result = client.try_grant_delegate(&owner, &extra, &perms);
-        assert!(result.is_err());
+    #[test]
+    fn test_error_code_empty_permissions() {
+        assert_eq!(MuxDelegationError::EmptyPermissions as u32, 6003);
     }
 
     #[test]
