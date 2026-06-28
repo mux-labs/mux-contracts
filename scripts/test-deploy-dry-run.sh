@@ -66,6 +66,36 @@ assert_exit "dry-run --contract single exits 0" 0 \
 assert_output_contains "dry-run warns about missing DEPLOYER_PRIVATE_KEY" "DEPLOYER_PRIVATE_KEY" \
   bash "$SCRIPT" --dry-run
 
+# ── Batcher-specific dry-run tests ──────────────────────────────────────────
+
+# Dry-run targeting mux-batcher alone should exit 0
+assert_exit "dry-run --contract mux-batcher exits 0" 0 \
+  bash "$SCRIPT" --dry-run --contract mux-batcher
+
+# Output must mention mux-batcher
+assert_output_contains "dry-run --contract mux-batcher mentions contract name" "mux-batcher" \
+  bash "$SCRIPT" --dry-run --contract mux-batcher
+
+# Output must show the expected WASM path for mux-batcher
+assert_output_contains "dry-run --contract mux-batcher shows wasm path" "mux_batcher.wasm" \
+  bash "$SCRIPT" --dry-run --contract mux-batcher
+
+# Output must show stellar contract upload command
+assert_output_contains "dry-run --contract mux-batcher shows upload command" "stellar contract upload" \
+  bash "$SCRIPT" --dry-run --contract mux-batcher
+
+# Output must show stellar contract deploy command
+assert_output_contains "dry-run --contract mux-batcher shows deploy command" "stellar contract deploy" \
+  bash "$SCRIPT" --dry-run --contract mux-batcher
+
+# Batcher dry-run on testnet should exit 0
+assert_exit "dry-run --contract mux-batcher --network testnet exits 0" 0 \
+  bash "$SCRIPT" --dry-run --contract mux-batcher --network testnet
+
+# Batcher dry-run on mainnet should exit 0
+assert_exit "dry-run --contract mux-batcher --network mainnet exits 0" 0 \
+  bash "$SCRIPT" --dry-run --contract mux-batcher --network mainnet
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]] || exit 1
