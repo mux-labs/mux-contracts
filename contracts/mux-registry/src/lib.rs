@@ -1,5 +1,29 @@
 /*!
  * mux-registry: Contract version registry for Mux Protocol.
+ *
+ * This contract maintains a registry of protocol components and their versions.
+ * It supports registration with optional metadata, discovery queries, and
+ * storage griefing guards via capped collections.
+ *
+ * # Public Interface
+ *
+ * - `initialize(admin)` — One-time setup with admin authorization
+ * - `register(name, version)` — Register/update version only (admin)
+ * - `register_with_metadata(name, version, description, author)` — Register with full metadata (admin)
+ * - `check_version(name, version)` — Dry-run validation without state mutation
+ * - `get_version(name)` — Query registered version (public)
+ * - `get_metadata(name)` — Query full metadata (public)
+ * - `list_contracts()` — List all registered names (public)
+ *
+ * # Storage Constraints
+ *
+ * The registry enforces a cap of 128 registered contracts to prevent storage griefing.
+ * Registering more than 128 unique names returns `TooManyContracts`.
+ *
+ * # Events
+ *
+ * - `"init"` — Emitted on initialization
+ * - `"reg"` — Emitted on registration with (name, version)
  */
 
 #![no_std]
@@ -69,6 +93,8 @@ pub struct MuxRegistry;
 
 #[contractimpl]
 impl MuxRegistry {
+    /// Initialize the registry with an admin address.
+    /// Must be called exactly once; subsequent calls return `AlreadyInitialized`.
     pub fn initialize(env: Env, admin: Address) -> Result<(), MuxRegistryError> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(MuxRegistryError::AlreadyInitialized);
@@ -84,6 +110,9 @@ impl MuxRegistry {
     }
 
     /// Register or update a contract version. Admin only.
+    /// If the name is new, it is added to the registry (up to MAX_CONTRACTS).
+    /// If already registered, the version is updated without duplicating the name.
+    /// Returns `TooManyContracts` if the registry is at capacity.
     pub fn register(env: Env, name: Symbol, version: String) -> Result<(), MuxRegistryError> {
         Self::require_admin(&env)?;
         let mut names: Vec<Symbol> = env
@@ -148,6 +177,16 @@ impl MuxRegistry {
 
     /// Get the version string for a registered contract.
     pub fn get_version(env: Env, name: Symbol) -> Result<String, MuxRegistryError> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Version(name))
+            .ok_or(MuxRegistryError::ContractNotFound)
+    }
+
+    /// Dry-run validation of a version query without state mutation.
+    /// Returns the version if registered, otherwise returns `ContractNotFound`.
+    /// This is useful for preflight checks and deployment validation.
+    pub fn check_version(env: Env, name: Symbol) -> Result<String, MuxRegistryError> {
         env.storage()
             .instance()
             .get(&DataKey::Version(name))

@@ -4,6 +4,31 @@
  * Stores and enforces a daily spend limit per wallet address. The daily
  * counter resets automatically once the current day (measured in ledgers)
  * has elapsed.
+ *
+ * # Public Interface
+ *
+ * - `initialize(admin)` — One-time setup with admin authorization
+ * - `set_daily_limit(wallet, limit, day_ledgers)` — Set/update spending policy (admin)
+ * - `get_daily_limit(wallet)` — Query current limit and spent amount (public)
+ * - `record_spend(wallet, amount)` — Debit against limit with auto-reset (wallet auth)
+ * - `reset_daily_counter(wallet)` — Manual reset for emergency corrections (admin)
+ *
+ * # Storage Constraints
+ *
+ * The policy enforces a cap of 256 wallets with configured limits to prevent
+ * storage griefing through unbounded per-wallet storage growth.
+ *
+ * # Registry Metadata
+ *
+ * Each daily limit record includes an optional `registry_id` that links this
+ * policy to a registry contract, enabling cross-contract policy lookup and
+ * validation.
+ *
+ * # Events
+ *
+ * - `"init"` — Emitted on initialization
+ * - `"lmt_set"` — Emitted on limit configuration with (wallet, limit, day_ledgers)
+ * - `"spent"` — Emitted on spend recording with (wallet, amount)
  */
 
 #![no_std]
@@ -28,8 +53,8 @@ fn emit(
 pub enum DataKey {
     Admin,
     /// Per-wallet daily spend limit record.
-    WalletLimit(Address),
-}
+    WalletLimit(Address),    /// List of all wallets with configured limits (for griefing guard).
+    WalletNames,}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -45,6 +70,8 @@ pub struct DailyLimit {
     pub reset_ledger: u32,
     /// Number of ledgers in one day window (set at limit creation time).
     pub day_ledgers: u32,
+    /// Optional registry contract ID for cross-contract policy validation.
+    pub registry_id: Option<Address>,
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────
@@ -60,7 +87,14 @@ pub enum MuxPolicyError {
     LimitExceeded = 5,
     InvalidAmount = 6,
     InvalidPeriod = 7,
+    // STORAGE-GRIEFING: unbounded WalletLimit entries would let admin bloat storage.
+    TooManyWallets = 8,
 }
+
+// ── Constants ─────────────────────────────────────────────────────────────
+
+/// Maximum number of wallets with configured limits to bound storage growth.
+const MAX_WALLETS: u32 = 256;
 
 // ── Storage TTL ───────────────────────────────────────────────────────────────
 const TTL_THRESHOLD: u32 = 17_280; // ~1 day
@@ -80,6 +114,9 @@ impl MuxPolicy {
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::WalletNames, &soroban_sdk::Vec::<Address>::new(&env));
         emit(&env, symbol_short!("init"), admin);
         Self::extend_ttl(&env);
         Ok(())
@@ -89,11 +126,15 @@ impl MuxPolicy {
     ///
     /// `day_ledgers` is the number of ledgers that constitute one day
     /// (≈ 17 280 at 5-second ledger close).
+    /// `registry_id` is an optional registry contract address for policy validation.
+    ///
+    /// Returns `TooManyWallets` if the wallet limit count has reached capacity.
     pub fn set_daily_limit(
         env: Env,
         wallet: Address,
         limit: i128,
         day_ledgers: u32,
+        registry_id: Option<Address>,
     ) -> Result<(), MuxPolicyError> {
         Self::require_admin(&env)?;
         if limit <= 0 {
@@ -102,11 +143,29 @@ impl MuxPolicy {
         if day_ledgers == 0 {
             return Err(MuxPolicyError::InvalidPeriod);
         }
+
+        // Track wallets and enforce storage griefing guard
+        let mut wallet_names: soroban_sdk::Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::WalletNames)
+            .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
+
+        if !wallet_names.contains(&wallet) {
+            // STORAGE-GRIEFING: cap the WalletNames vec to bound storage growth.
+            if wallet_names.len() >= MAX_WALLETS {
+                return Err(MuxPolicyError::TooManyWallets);
+            }
+            wallet_names.push_back(wallet.clone());
+            env.storage().instance().set(&DataKey::WalletNames, &wallet_names);
+        }
+
         let record = DailyLimit {
             limit,
             spent: 0,
             reset_ledger: env.ledger().sequence().saturating_add(day_ledgers),
             day_ledgers,
+            registry_id,
         };
         env.storage()
             .persistent()
@@ -245,10 +304,11 @@ mod tests {
     fn test_set_daily_limit() {
         let (env, client, _) = setup();
         let wallet = Address::generate(&env);
-        client.set_daily_limit(&wallet, &1000_i128, &17280_u32);
+        client.set_daily_limit(&wallet, &1000_i128, &17280_u32, &None);
         let record = client.get_daily_limit(&wallet);
         assert_eq!(record.limit, 1000);
         assert_eq!(record.spent, 0);
+        assert_eq!(record.registry_id, None);
     }
 
     #[test]
@@ -256,10 +316,10 @@ mod tests {
         let (env, client, _) = setup();
         let wallet = Address::generate(&env);
         assert!(client
-            .try_set_daily_limit(&wallet, &0_i128, &17280_u32)
+            .try_set_daily_limit(&wallet, &0_i128, &17280_u32, &None)
             .is_err());
         assert!(client
-            .try_set_daily_limit(&wallet, &-1_i128, &17280_u32)
+            .try_set_daily_limit(&wallet, &-1_i128, &17280_u32, &None)
             .is_err());
     }
 
@@ -268,7 +328,7 @@ mod tests {
         let (env, client, _) = setup();
         let wallet = Address::generate(&env);
         assert!(client
-            .try_set_daily_limit(&wallet, &1000_i128, &0_u32)
+            .try_set_daily_limit(&wallet, &1000_i128, &0_u32, &None)
             .is_err());
     }
 
@@ -276,7 +336,7 @@ mod tests {
     fn test_record_spend_within_limit() {
         let (env, client, _) = setup();
         let wallet = Address::generate(&env);
-        client.set_daily_limit(&wallet, &1000_i128, &17280_u32);
+        client.set_daily_limit(&wallet, &1000_i128, &17280_u32, &None);
         client.record_spend(&wallet, &400_i128);
         let record = client.get_daily_limit(&wallet);
         assert_eq!(record.spent, 400);
@@ -286,7 +346,7 @@ mod tests {
     fn test_record_spend_exceeds_limit() {
         let (env, client, _) = setup();
         let wallet = Address::generate(&env);
-        client.set_daily_limit(&wallet, &500_i128, &17280_u32);
+        client.set_daily_limit(&wallet, &500_i128, &17280_u32, &None);
         client.record_spend(&wallet, &300_i128);
         assert!(client.try_record_spend(&wallet, &300_i128).is_err());
     }
@@ -302,7 +362,7 @@ mod tests {
     fn test_record_spend_emits_event() {
         let (env, client, _) = setup();
         let wallet = Address::generate(&env);
-        client.set_daily_limit(&wallet, &1000_i128, &17280_u32);
+        client.set_daily_limit(&wallet, &1000_i128, &17280_u32, &None);
         client.record_spend(&wallet, &100_i128);
         let events = env.events().all();
         // init + lmt_set + spent
@@ -314,8 +374,8 @@ mod tests {
         let (env, client, _) = setup();
         let wallet_a = Address::generate(&env);
         let wallet_b = Address::generate(&env);
-        client.set_daily_limit(&wallet_a, &500_i128, &17280_u32);
-        client.set_daily_limit(&wallet_b, &200_i128, &17280_u32);
+        client.set_daily_limit(&wallet_a, &500_i128, &17280_u32, &None);
+        client.set_daily_limit(&wallet_b, &200_i128, &17280_u32, &None);
         client.record_spend(&wallet_a, &500_i128);
         // wallet_b limit unaffected
         client.record_spend(&wallet_b, &200_i128);
