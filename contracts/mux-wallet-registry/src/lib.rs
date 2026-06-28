@@ -1,5 +1,5 @@
 /*!
- * mux-wallet-registry: Wallet registry contract for Mux Protocol.
+ * mux-wallet-registry: Named wallet address registry for Mux Protocol.
  *
  * Allows an owner to register and look up wallet addresses by a symbolic name.
  *
@@ -31,12 +31,12 @@ use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, 
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
-/// Storage keys used by the wallet registry contract.
+/// Persistent storage keys used by the wallet registry contract.
 #[contracttype]
 pub enum DataKey {
     /// The owner address authorised to register wallets.
     Owner,
-    /// A registered wallet entry keyed by name: DataKey::Wallet(name).
+    /// A registered wallet entry keyed by name: `DataKey::Wallet(name)`.
     Wallet(Symbol),
     /// List of wallet names registered in this contract.
     Names,
@@ -44,13 +44,22 @@ pub enum DataKey {
 
 // ── Errors ────────────────────────────────────────────────────────────────────
 
+/// Error codes returned by wallet registry contract methods.
+///
+/// The numeric discriminants are part of the on-chain ABI; do not renumber
+/// existing variants.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum WalletRegistryError {
+    /// `initialize` has not been called yet; the owner is unknown.
     NotInitialized = 1,
+    /// `initialize` was called more than once on the same contract instance.
     AlreadyInitialized = 2,
+    /// Reserved for future use. Auth failures are surfaced as host-level
+    /// errors by `Address::require_auth`.
     Unauthorized = 3,
+    /// No wallet is registered under the requested name.
     WalletNotFound = 4,
     TooManyWallets = 5,
 }
@@ -66,12 +75,23 @@ const TTL_EXTEND_TO: u32 = 518_400; // ~30 days
 
 // ── Contract ──────────────────────────────────────────────────────────────────
 
+/// Named wallet address registry.
+///
+/// Deploy one instance per namespace (e.g. one per application, or one shared
+/// registry for the whole protocol). The owner set at initialisation is the
+/// only account that may write entries.
 #[contract]
 pub struct MuxWalletRegistry;
 
 #[contractimpl]
 impl MuxWalletRegistry {
-    /// Initialise the registry with an owner address.
+    /// Initialise the registry and record its owner.
+    ///
+    /// Must be called exactly once, before any other method. The `owner`
+    /// address must authorise this call (via `require_auth`).
+    ///
+    /// # Errors
+    /// - [`WalletRegistryError::AlreadyInitialized`] if called a second time.
     pub fn initialize(env: Env, owner: Address) -> Result<(), WalletRegistryError> {
         if env.storage().instance().has(&DataKey::Owner) {
             return Err(WalletRegistryError::AlreadyInitialized);
@@ -85,7 +105,15 @@ impl MuxWalletRegistry {
         Ok(())
     }
 
-    /// Register (or update) a wallet address under `name`. Owner only.
+    /// Register or overwrite the wallet address stored under `name`.
+    ///
+    /// Only the owner recorded at initialisation may call this method;
+    /// the owner address must authorise the invocation. Calling this with
+    /// an existing `name` silently replaces the previous entry.
+    ///
+    /// # Errors
+    /// - [`WalletRegistryError::NotInitialized`] if `initialize` was never
+    ///   called.
     pub fn register_wallet(
         env: Env,
         name: Symbol,
@@ -114,6 +142,13 @@ impl MuxWalletRegistry {
     }
 
     /// Return the wallet address registered under `name`.
+    ///
+    /// This is a read-only method; no authorisation is required. Any caller
+    /// may look up entries.
+    ///
+    /// # Errors
+    /// - [`WalletRegistryError::WalletNotFound`] if no wallet has been
+    ///   registered under `name`.
     pub fn get_wallet(env: Env, name: Symbol) -> Result<Address, WalletRegistryError> {
         env.storage()
             .instance()
@@ -150,6 +185,8 @@ impl MuxWalletRegistry {
 
     // ── Private helpers ────────────────────────────────────────────────────────
 
+    /// Fetch the stored owner and require their auth. Returns
+    /// [`WalletRegistryError::NotInitialized`] when no owner is recorded.
     fn require_owner(env: &Env) -> Result<(), WalletRegistryError> {
         let owner: Address = env
             .storage()

@@ -18,9 +18,13 @@ import {
 } from "@stellar/stellar-sdk";
 import { pollTransaction } from "../horizon";
 
+/** Options required to construct a {@link MuxWalletRegistryClient}. */
 export interface MuxWalletRegistryClientOptions {
+  /** On-chain contract ID (Stellar account-style address). */
   contractId: string;
+  /** Stellar network passphrase, e.g. `Networks.TESTNET`. */
   networkPassphrase: string;
+  /** Soroban RPC endpoint URL. */
   rpcUrl: string;
 }
 
@@ -46,6 +50,14 @@ export class MuxWalletRegistryClient {
     this.networkPassphrase = opts.networkPassphrase;
   }
 
+  /**
+   * Initialise the registry and record its owner.
+   *
+   * Must be called exactly once before any other method. The `owner` keypair
+   * must be the source and must authorise the transaction.
+   *
+   * @throws if the contract is already initialised.
+   */
   async initialize(sourceKeypair: Keypair, owner: Address): Promise<void> {
     const tx = await this.buildTx(sourceKeypair, "initialize", [
       nativeToScVal(owner.toString(), { type: "address" }),
@@ -53,6 +65,17 @@ export class MuxWalletRegistryClient {
     await this.submit(tx, sourceKeypair);
   }
 
+  /**
+   * Register or overwrite the wallet address stored under `name`.
+   *
+   * `sourceKeypair` must be (or be authorised by) the owner set at
+   * initialisation. Calling this with an existing `name` silently replaces
+   * the previous entry.
+   *
+   * @param name   Symbolic key (max 10 UTF-8 bytes — Soroban `Symbol` limit).
+   * @param wallet Wallet address to associate with `name`.
+   * @throws if the contract is not initialised or the source is not the owner.
+   */
   async registerWallet(
     sourceKeypair: Keypair,
     name: string,
@@ -65,6 +88,16 @@ export class MuxWalletRegistryClient {
     await this.submit(tx, sourceKeypair);
   }
 
+  /**
+   * Return the wallet address registered under `name`.
+   *
+   * This is a read-only simulation; no on-chain transaction is submitted and
+   * no auth is required.
+   *
+   * @param name Symbolic key to look up.
+   * @throws if no wallet is registered under `name` (contract returns
+   *         `WalletNotFound`, error code 4).
+   */
   async getWallet(sourceKeypair: Keypair, name: string): Promise<Address> {
     const tx = await this.buildTx(sourceKeypair, "get_wallet", [
       xdr.ScVal.scvSymbol(name),
