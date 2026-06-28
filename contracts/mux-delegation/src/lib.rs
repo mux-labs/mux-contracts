@@ -25,6 +25,9 @@ const TTL_EXTEND_TO: u32 = 518_400;
 /// Maximum permissions that can be granted to a single delegate.
 const MAX_DELEGATE_PERMS: u32 = 64;
 
+/// Maximum delegates an owner can register (storage griefing guard).
+const MAX_DELEGATES_PER_OWNER: u32 = 128;
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 // Issue #83: Store delegate permissions map.
@@ -43,9 +46,9 @@ pub enum DataKey {
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum MuxDelegationError {
-    NotADelegate = 1,
-    TooManyPermissions = 2,
-    EmptyPermissions = 3,
+    NotADelegate = 6001,
+    TooManyPermissions = 6002,
+    EmptyPermissions = 6003,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -86,6 +89,9 @@ impl MuxDelegation {
             .get(&DataKey::OwnerDelegates(owner.clone()))
             .unwrap_or_else(|| Vec::new(&env));
         if !delegates.contains(&delegate) {
+            if delegates.len() >= MAX_DELEGATES_PER_OWNER {
+                return Err(MuxDelegationError::TooManyDelegates);
+            }
             delegates.push_back(delegate.clone());
             env.storage()
                 .persistent()
@@ -294,6 +300,21 @@ mod tests {
         let stored = client.get_delegate_permissions(&owner, &delegate);
         assert!(!stored.contains(&perm_a));
         assert!(stored.contains(&perm_b));
+    }
+
+    #[test]
+    fn test_error_code_not_a_delegate() {
+        assert_eq!(MuxDelegationError::NotADelegate as u32, 6001);
+    }
+
+    #[test]
+    fn test_error_code_too_many_permissions() {
+        assert_eq!(MuxDelegationError::TooManyPermissions as u32, 6002);
+    }
+
+    #[test]
+    fn test_error_code_empty_permissions() {
+        assert_eq!(MuxDelegationError::EmptyPermissions as u32, 6003);
     }
 
     #[test]

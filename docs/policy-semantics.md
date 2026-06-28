@@ -59,12 +59,6 @@ The window expires when `env.ledger().sequence() >= reset_ledger`. At that point
 - Fails with `InvalidAmount` if `amount <= 0`.
 - Fails with `LimitNotFound` if no limit is configured for `wallet`.
 
-### `reset_daily_counter(wallet)` — admin only
-
-- Explicitly clears `spent` to `0` and advances `reset_ledger` by one full `day_ledgers` window from the current ledger.
-- Intended for emergency resets or administrative corrections.
-- Fails with `LimitNotFound` if no limit is configured for `wallet`.
-- Emits a `ctr_rst` event.
 
 ## Reset Semantics
 
@@ -74,9 +68,8 @@ There are two reset paths:
 |---|---|---|---|
 | Auto-reset | `record_spend` called after window elapsed | Wallet (on next spend) | Yes |
 | View reset | `get_daily_limit` called after window elapsed | Anyone | No |
-| Explicit reset | `reset_daily_counter` called | Admin | Yes |
 
-The auto-reset and explicit reset both advance `reset_ledger` by exactly `day_ledgers` from the current ledger sequence, starting a fresh window.
+The auto-reset advances `reset_ledger` by exactly `day_ledgers` from the current ledger sequence, starting a fresh window.
 
 ## Error Codes
 
@@ -99,7 +92,6 @@ All state-mutating operations emit a structured event with topics `[mux_pol, act
 | `init` | `initialize` | admin address |
 | `lmt_set` | `set_daily_limit` | `(wallet, limit, day_ledgers)` |
 | `spent` | `record_spend` | `(wallet, amount)` |
-| `ctr_rst` | `reset_daily_counter` | wallet address |
 
 ## Storage TTL
 
@@ -107,7 +99,7 @@ Instance storage TTL is extended on every write (`TTL_THRESHOLD = 17 280`, `TTL_
 
 ## Security Considerations
 
-- Only the admin can configure limits and explicitly reset counters.
+- Only the admin can configure limits.
 - `record_spend` requires the wallet to authorize the call, preventing third parties from debiting a wallet's allowance.
 - Arithmetic overflow in `spent + amount` is caught via `checked_add` and returns `LimitExceeded`.
 - Persistent storage is used for `WalletLimit` records so they survive instance TTL expiry.

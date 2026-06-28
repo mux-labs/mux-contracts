@@ -108,12 +108,14 @@ export class MuxPermissionsClient {
     return this.simulateRead<Address[]>(tx);
   }
 
+  // ── Multisig Admin ──────────────────────────────────────────────────────────
+
   async setAdminThreshold(
     sourceKeypair: Keypair,
     threshold: number
   ): Promise<void> {
     const tx = await this.buildTx(sourceKeypair, "set_admin_threshold", [
-      xdr.ScVal.scvU32(threshold),
+      nativeToScVal(threshold, { type: "u32" }),
     ]);
     await this.submit(tx, sourceKeypair);
   }
@@ -143,6 +145,21 @@ export class MuxPermissionsClient {
   async getPendingAdmins(sourceKeypair: Keypair): Promise<Address[]> {
     const tx = await this.buildTx(sourceKeypair, "get_pending_admins", []);
     return this.simulateRead<Address[]>(tx);
+  }
+
+  // ── TTL Management ─────────────────────────────────────────────────────────
+
+  async bumpTtl(sourceKeypair: Keypair): Promise<void> {
+    const tx = await this.buildTx(sourceKeypair, "bump_ttl", []);
+    await this.submit(tx, sourceKeypair);
+  }
+
+  async ttlConfig(
+    sourceKeypair: Keypair
+  ): Promise<{ threshold: number; extendTo: number }> {
+    const tx = await this.buildTx(sourceKeypair, "ttl_config", []);
+    const [threshold, extendTo] = await this.simulateRead<[number, number]>(tx);
+    return { threshold, extendTo };
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────────
