@@ -4,6 +4,63 @@ Soroban contract interfaces for Mux Protocol. All contracts are written in Rust 
 
 ---
 
+## mux-account-factory
+
+Factory contract for deploying and registering `MuxAccount` instances. Maintains
+a per-owner index of deployed accounts and an optional metadata store for each
+registered account.
+
+### Types
+
+```rust
+pub struct AccountMetadata {
+    pub version: String,     // Semantic version, e.g. "1.2.0"
+    pub description: String, // Short human-readable description
+    pub author: String,      // Author or team identifier
+}
+```
+
+### Constants
+
+| Constant | Value | Description |
+|---|---|---|
+| `MAX_ACCOUNTS_PER_OWNER` | 64 | Maximum accounts per owner (storage griefing cap) |
+| `TTL_THRESHOLD` | 17,280 | ~1 day — TTL extension trigger (ledgers) |
+| `TTL_EXTEND_TO` | 518,400 | ~30 days — TTL extended to (ledgers) |
+
+### Methods
+
+| Method | Args | Returns | Auth | Description |
+|---|---|---|---|---|
+| `deploy_account` | `owner: Address, account_address: Address` | `Result<Address, MuxAccountFactoryError>` | `owner` | Register a new account. Returns the registered address. |
+| `deploy_account_with_metadata` | `owner: Address, account_address: Address, version: String, description: String, author: String` | `Result<Address, MuxAccountFactoryError>` | `owner` | Register a new account and store metadata. |
+| `get_accounts` | `owner: Address` | `Vec<Address>` | none | Return all accounts registered for `owner`. |
+| `get_account_metadata` | `owner: Address, account_address: Address` | `Result<AccountMetadata, MuxAccountFactoryError>` | none | Return stored metadata for a specific account. |
+| `account_count` | — | `u64` | none | Return the total number of accounts registered across all owners. |
+
+### Events
+
+| Topic | Data | Condition |
+|---|---|---|
+| `deployed` | `(owner: Address, account_address: Address)` | Every successful `deploy_account` or `deploy_account_with_metadata` call |
+
+### Errors
+
+| Variant | Code | HTTP | Description |
+|---|---|---|---|
+| `Unauthorized` | 1 | 401 | Caller is not the `owner` |
+| `InvalidAccount` | 2 | 400 | `account_address` equals `owner` |
+| `TooManyAccounts` | 3 | 409 | Owner has reached `MAX_ACCOUNTS_PER_OWNER` (64) |
+| `MetadataNotFound` | 4 | 404 | No metadata stored for the specified owner/account pair |
+
+### Notes
+
+- `deploy_account` and `deploy_account_with_metadata` require `owner.require_auth()`.
+- Instance storage TTL is extended on every write (`deploy_account*`); read-only calls do not extend TTL.
+- The per-owner cap of 64 accounts prevents unbounded growth of the `Accounts` storage vector (see `docs/storage-griefing.md`).
+
+---
+
 ## mux-batcher
 
 ### Types
