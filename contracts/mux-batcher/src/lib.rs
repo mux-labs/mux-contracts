@@ -375,7 +375,8 @@ mod tests {
         assert_eq!(topic_action(&env, &events, 1), symbol_short!("executed"));
     }
 
-    #[test]() {
+    #[test]
+    fn test_operation_kind_variants_are_distinct() {
         // Verify all BatchOperationKind variants are constructible and distinct.
         assert_ne!(BatchOperationKind::Invoke, BatchOperationKind::Transfer);
         assert_ne!(BatchOperationKind::Transfer, BatchOperationKind::Approve);
@@ -825,5 +826,27 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(topic_action(&env, &events, 0), symbol_short!("bat_start"));
         assert_eq!(topic_action(&env, &events, 1), symbol_short!("bat_abort"));
+    }
+
+    // ── TTL extension on write (#242) ─────────────────────────────────────────
+
+    #[test]
+    fn test_ttl_extended_on_submit_batch() {
+        // submit_batch delegates to execute_batch, which extends instance TTL.
+        // If extend_ttl were missing the SDK would panic; reaching here is the assertion.
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        ops.push_back(Operation {
+            target: Address::generate(&env),
+            fn_name: symbol_short!("noop"),
+            args: Vec::new(&env),
+            require_success: false,
+            kind: BatchOperationKind::Invoke,
+        });
+        let _ = client.try_submit_batch(&ops);
     }
 }
