@@ -30,9 +30,19 @@ On Soroban, every contract pays **rent** for the ledger entries it occupies.  Al
 
 Caps are enforced on **new insertions only**; updates to existing entries are always allowed.
 
+### Resource cap (mux-batcher)
+
+The batcher holds no growing persistent collections.  Its only instance-storage entry is the `DataKey::Executing` boolean used as a reentrancy guard, which is set and cleared within a single invocation.
+
+To prevent per-transaction resource exhaustion (CPU instructions, memory), `execute_batch` enforces:
+
+| Contract | Guard | Cap constant | Error on overflow |
+|---|---|---|---|
+| `mux-batcher` | `ops` argument length | `MAX_BATCH_SIZE = 50` | `BatchTooLarge` |
+
 ### TTL auto-extension
 
-Every write operation in all three contracts calls:
+Every write path in the Mux contracts calls:
 
 ```rust
 env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
