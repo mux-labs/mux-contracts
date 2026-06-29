@@ -53,18 +53,88 @@ pub struct BatchResult {
 
 ## mux-account
 
+### Types
+
+```rust
+pub struct SpendLimit {
+    pub asset: Address,
+    pub amount: i128,
+    pub period_ledgers: u32,
+    pub spent: i128,
+    pub reset_ledger: u32,
+}
+
+pub struct DelegateInfo {
+    pub address: Address,
+    pub expiry_ledger: u32,
+    pub can_spend: bool,
+}
+
+/// Scope of a session key capability.
+pub struct Scope {
+    pub method: Symbol,
+}
+
+/// Session key record with expiration, scopes, and revocation status.
+pub struct SessionKeyRecord {
+    pub expires_at: u64,
+    pub scopes: Vec<Scope>,
+    pub revoked: bool,
+}
+```
+
+### Constants
+
+| Constant | Value | Description |
+|---|---|---|
+| `MAX_DELEGATES` | 64 | Maximum delegates to bound instance-storage growth |
+| `TTL_THRESHOLD` | 17,280 | ~1 day — TTL extension trigger |
+| `TTL_EXTEND_TO` | 518,400 | ~30 days — TTL extended to |
+
 ### Methods
 
 | Method | Args | Returns | Description |
 |---|---|---|---|
-| `initialize` | `owner: Address, guardians: Vec<Address>` | `Result<(), MuxAccountError>` | Set owner and guardian set |
-| `set_delegate` | `delegate: Address, expiry_ledger: u32, can_spend: bool` | `Result<(), MuxAccountError>` | Add or update a delegate |
-| `remove_delegate` | `delegate: Address` | `Result<(), MuxAccountError>` | Remove a delegate |
-| `set_spend_limit` | `asset: Address, amount: i128, period_ledgers: u32` | `Result<(), MuxAccountError>` | Set per-asset spend limit |
-| `debit_spend` | `asset: Address, spend: i128` | `Result<(), MuxAccountError>` | Check and debit a spend |
+| `initialize` | `owner: Address, guardians: Vec<Address>` | `Result<(), MuxAccountError>` | Set owner and guardian set; can only be called once |
+| `unpause` | — | `Result<(), MuxAccountError>` | Unpause the contract; owner-only |
+| `is_paused` | — | `bool` | Return whether the contract is currently paused |
+| `set_delegate` | `delegate: Address, expiry_ledger: u32, can_spend: bool` | `Result<(), MuxAccountError>` | Add or update a delegate (max 64); owner-only |
+| `remove_delegate` | `delegate: Address` | `Result<(), MuxAccountError>` | Remove a delegate; owner-only |
+| `set_spend_limit` | `asset: Address, amount: i128, period_ledgers: u32` | `Result<(), MuxAccountError>` | Set per-asset spend limit; owner-only |
+| `debit_spend` | `asset: Address, spend: i128` | `Result<(), MuxAccountError>` | Check and debit a spend against the limit; contract-only |
 | `owner` | — | `Result<Address, MuxAccountError>` | Return current owner |
-| `delegates` | — | `Result<Map<Address, DelegateInfo>, MuxAccountError>` | Return all delegates |
+| `delegates` | — | `Result<Map<Address, DelegateInfo>, MuxAccountError>` | Return all active (non-expired) delegates |
+| `get_delegate` | `delegate: Address` | `Result<DelegateInfo, MuxAccountError>` | Return delegate info if currently active |
 | `guardians` | — | `Result<Vec<Address>, MuxAccountError>` | Return guardian set |
+| `execute_with_session` | `session_key: Address, payload: Bytes` | `Result<Bytes, MuxAccountError>` | Execute a payload via an authorized session key (stub — registry integration pending) |
+
+### Events
+
+| Topic | Data | Condition |
+|---|---|---|
+| `init` | `owner: Address` | Contract initialized |
+| `unpaused` | `()` | Contract unpaused |
+| `dlg_set` | `(delegate: Address, expiry_ledger: u32, can_spend: bool)` | Delegate added or updated |
+| `dlg_rm` | `delegate: Address` | Delegate removed |
+| `lmt_set` | `(asset: Address, amount: i128, period_ledgers: u32)` | Spend limit set |
+| `debited` | `(asset: Address, spend: i128)` | Spend debited |
+| `ses_exe` | `(session_key: Address, payload: Bytes)` | Session key execution |
+
+### Errors
+
+| Variant | Code | Description |
+|---|---|---|
+| `NotInitialized` | 1 | Contract not yet initialized |
+| `AlreadyInitialized` | 2 | `initialize` called more than once |
+| `Unauthorized` | 3 | Caller is not the owner or contract is paused |
+| `DelegateNotFound` | 4 | Delegate does not exist |
+| `DelegateExpired` | 5 | Delegate has expired |
+| `SpendLimitExceeded` | 6 | Spend would exceed limit |
+| `InvalidAmount` | 7 | Spend limit amount is zero or negative |
+| `InvalidPeriod` | 8 | Spend limit period is zero |
+| `TooManyDelegates` | 9 | Delegate map has reached `MAX_DELEGATES` (64) |
+| `ReentrancyDetected` | 10 | Reentrant `debit_spend` call detected |
+| `ArithmeticOverflow` | 11 | Arithmetic overflow in spend tracking |
 
 ---
 
