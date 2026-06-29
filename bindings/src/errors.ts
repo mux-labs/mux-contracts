@@ -51,6 +51,8 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   PermissionNotFound: 404,
   ContractNotFound: 404,
   WalletNotFound: 404,
+  MetadataNotFound: 404,
+  AdminNotFound: 404,
 
   // Validation/Constraint errors → 400
   InvalidAmount: 400,
@@ -75,16 +77,15 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
 
   // Policy errors → 400 Bad Request
   LimitNotFound: 404,
-  LimitExceeded: 400,
 
   // Capacity limits → 409 Conflict
   // MuxAccountFactoryError::TooManyAccounts (code 3)
   TooManyAccounts: 409,
   TooManyContracts: 409,
   TooManyWallets: 409,
-
-  // Wallet registry not-found → 404
-  WalletNotFound: 404,
+  TooManyMembers: 409,
+  TooManyRoles: 409,
+  AlreadyApproved: 409,
 
   // Internal/Uninitialized → 500
   NotInitialized: 500,
