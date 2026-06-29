@@ -49,6 +49,7 @@ pub enum MuxDelegationError {
     NotADelegate = 6001,
     TooManyPermissions = 6002,
     EmptyPermissions = 6003,
+    TooManyDelegates = 6004,
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -342,5 +343,30 @@ mod tests {
 
         client.revoke_delegate(&owner, &delegate);
         assert!(env.events().all().len() > before);
+    }
+
+    // ── Delegate count cap (#252) ─────────────────────────────────────────────
+
+    #[test]
+    fn test_too_many_delegates_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.budget().reset_unlimited();
+        let id = env.register_contract(None, MuxDelegation);
+        let client = MuxDelegationClient::new(&env, &id);
+        let owner = Address::generate(&env);
+        let perms = vec![&env, symbol_short!("read")];
+
+        for _ in 0..MAX_DELEGATES_PER_OWNER {
+            client.grant_delegate(&owner, &Address::generate(&env), &perms);
+        }
+
+        let result = client.try_grant_delegate(&owner, &Address::generate(&env), &perms);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_error_code_too_many_delegates() {
+        assert_eq!(MuxDelegationError::TooManyDelegates as u32, 6004);
     }
 }
