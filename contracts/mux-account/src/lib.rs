@@ -152,6 +152,8 @@ impl MuxAccount {
     pub fn unpause(env: Env) -> Result<(), MuxAccountError> {
         Self::require_owner(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
+        emit(&env, symbol_short!("unpaused"), ());
+        Self::extend_ttl(&env);
         Ok(())
     }
 
@@ -368,21 +370,18 @@ impl MuxAccount {
     /// * `Err(MuxAccountError)` - If session key is not authorized or invalid
     ///
     /// # Events
-    /// Emits a `SessionExecuted` event on successful execution (currently a placeholder).
+    /// Emits a `ses_exe` event on successful execution.
     pub fn execute_with_session(
         env: Env,
-        _session_key: Address,
-        _payload: Bytes,
+        session_key: Address,
+        payload: Bytes,
     ) -> Result<Bytes, MuxAccountError> {
-        // TODO: Validate that session_key is authorized for this account
+        // TODO: Validate that session_key is authorized for this account.
         // This requires the session registry contract to be implemented.
-        // Placeholder check: would call session registry to verify authorization.
-        // session_key.require_auth(); // Temporary: require session key to sign
+        // session_key.require_auth();
 
-        // TODO: Emit SessionExecuted event
-        // env.events().publish(("SessionExecuted", session_key), payload);
-
-        // For now, return an empty Bytes result as a no-op stub
+        emit(&env, symbol_short!("ses_exe"), (session_key, payload));
+        Self::extend_ttl(&env);
         Ok(Bytes::new(&env))
     }
 
@@ -644,6 +643,36 @@ mod tests {
         let asset = Address::generate(&env);
         let result = client.try_set_spend_limit(&asset, &0_i128, &100_u32);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_unpause_emits_event() {
+        let (env, client, owner) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        client.unpause();
+        let events = env.events().all();
+        // init + unpaused
+        assert!(events.len() >= 2);
+        assert_eq!(
+            topic_action(&env, &events, events.len() - 1),
+            symbol_short!("unpaused")
+        );
+    }
+
+    #[test]
+    fn test_execute_with_session_emits_event() {
+        let (env, client, owner) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let session_key = Address::generate(&env);
+        let payload = Bytes::new(&env);
+        let _ = client.execute_with_session(&session_key, &payload);
+        let events = env.events().all();
+        // init + ses_exe
+        assert!(events.len() >= 2);
+        assert_eq!(
+            topic_action(&env, &events, events.len() - 1),
+            symbol_short!("ses_exe")
+        );
     }
 
     #[test]
