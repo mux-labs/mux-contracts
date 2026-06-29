@@ -222,6 +222,38 @@ impl MuxAccountFactory {
             .ok_or(MuxAccountFactoryError::MetadataNotFound)
     }
 
+    /// Validate a deploy_account call without writing any state (dry-run).
+    ///
+    /// Returns the account address that *would* be registered, or the same
+    /// error that `deploy_account` would return.  No storage is modified and
+    /// no events are emitted.
+    pub fn simulate_deploy(
+        _env: Env,
+        owner: Address,
+        account_address: Address,
+    ) -> Result<Address, MuxAccountFactoryError> {
+        if account_address == owner {
+            return Err(MuxAccountFactoryError::InvalidAccount);
+        }
+        Ok(account_address)
+    }
+
+    /// Validate a deploy_account_with_metadata call without writing any state
+    /// (dry-run).  No storage is modified and no events are emitted.
+    pub fn simulate_deploy_with_metadata(
+        _env: Env,
+        owner: Address,
+        account_address: Address,
+        _version: String,
+        _description: String,
+        _author: String,
+    ) -> Result<Address, MuxAccountFactoryError> {
+        if account_address == owner {
+            return Err(MuxAccountFactoryError::InvalidAccount);
+        }
+        Ok(account_address)
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────────
 
     fn extend_ttl(env: &Env) {
@@ -469,5 +501,82 @@ mod tests {
             &author,
         );
         assert!(result.is_err());
+    }
+
+    // ── simulate_deploy tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_simulate_deploy_returns_account_address() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        let result = client.simulate_deploy(&owner, &account_addr);
+        assert_eq!(result, account_addr);
+    }
+
+    #[test]
+    fn test_simulate_deploy_rejects_owner_as_account() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let result = client.try_simulate_deploy(&owner, &owner);
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::InvalidAccount)));
+    }
+
+    #[test]
+    fn test_simulate_deploy_does_not_write_state() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        client.simulate_deploy(&owner, &account_addr);
+        // No accounts should have been registered
+        assert_eq!(client.get_accounts(&owner).len(), 0);
+        assert_eq!(client.account_count(), 0);
+    }
+
+    #[test]
+    fn test_simulate_deploy_does_not_emit_events() {
+        use soroban_sdk::testutils::Events;
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        client.simulate_deploy(&owner, &account_addr);
+        assert_eq!(env.events().all().len(), 0);
+    }
+
+    #[test]
+    fn test_simulate_deploy_with_metadata_returns_account_address() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        let version = String::from_str(&env, "1.0.0");
+        let description = String::from_str(&env, "Test");
+        let author = String::from_str(&env, "test");
+        let result =
+            client.simulate_deploy_with_metadata(&owner, &account_addr, &version, &description, &author);
+        assert_eq!(result, account_addr);
+    }
+
+    #[test]
+    fn test_simulate_deploy_with_metadata_rejects_owner_as_account() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let version = String::from_str(&env, "1.0.0");
+        let description = String::from_str(&env, "Test");
+        let author = String::from_str(&env, "test");
+        let result = client.try_simulate_deploy_with_metadata(&owner, &owner, &version, &description, &author);
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::InvalidAccount)));
+    }
+
+    #[test]
+    fn test_simulate_deploy_with_metadata_does_not_write_state() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        let version = String::from_str(&env, "1.0.0");
+        let description = String::from_str(&env, "Test");
+        let author = String::from_str(&env, "test");
+        client.simulate_deploy_with_metadata(&owner, &account_addr, &version, &description, &author);
+        assert_eq!(client.get_accounts(&owner).len(), 0);
+        assert_eq!(client.account_count(), 0);
     }
 }

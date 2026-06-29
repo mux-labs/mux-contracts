@@ -41,6 +41,12 @@ export function loadContractAddresses(
     muxWalletRegistry:
       process.env[`${envPrefix}_MUX_WALLET_REGISTRY_ID`] ||
       networkConfig.muxWalletRegistry,
+    muxPolicy:
+      process.env[`${envPrefix}_MUX_POLICY_ID`] || networkConfig.muxPolicy || "",
+    muxAccountFactory:
+      process.env[`${envPrefix}_MUX_ACCOUNT_FACTORY_ID`] || networkConfig.muxAccountFactory || "",
+    muxRegistry:
+      process.env[`${envPrefix}_MUX_REGISTRY_ID`] || networkConfig.muxRegistry || "",
   };
 
   return addresses;

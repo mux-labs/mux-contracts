@@ -96,6 +96,36 @@ assert_exit "dry-run --contract mux-batcher --network testnet exits 0" 0 \
 assert_exit "dry-run --contract mux-batcher --network mainnet exits 0" 0 \
   bash "$SCRIPT" --dry-run --contract mux-batcher --network mainnet
 
+# ── Account-factory-specific dry-run tests ──────────────────────────────────
+
+# Dry-run targeting mux-account-factory alone should exit 0
+assert_exit "dry-run --contract mux-account-factory exits 0" 0 \
+  bash "$SCRIPT" --dry-run --contract mux-account-factory
+
+# Output must mention mux-account-factory
+assert_output_contains "dry-run --contract mux-account-factory mentions contract name" "mux-account-factory" \
+  bash "$SCRIPT" --dry-run --contract mux-account-factory
+
+# Output must show the expected WASM path for mux-account-factory
+assert_output_contains "dry-run --contract mux-account-factory shows wasm path" "mux_account_factory.wasm" \
+  bash "$SCRIPT" --dry-run --contract mux-account-factory
+
+# Output must show stellar contract upload command
+assert_output_contains "dry-run --contract mux-account-factory shows upload command" "stellar contract upload" \
+  bash "$SCRIPT" --dry-run --contract mux-account-factory
+
+# Output must show stellar contract deploy command
+assert_output_contains "dry-run --contract mux-account-factory shows deploy command" "stellar contract deploy" \
+  bash "$SCRIPT" --dry-run --contract mux-account-factory
+
+# Account-factory dry-run on testnet should exit 0
+assert_exit "dry-run --contract mux-account-factory --network testnet exits 0" 0 \
+  bash "$SCRIPT" --dry-run --contract mux-account-factory --network testnet
+
+# Account-factory dry-run on mainnet should exit 0
+assert_exit "dry-run --contract mux-account-factory --network mainnet exits 0" 0 \
+  bash "$SCRIPT" --dry-run --contract mux-account-factory --network mainnet
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]] || exit 1
