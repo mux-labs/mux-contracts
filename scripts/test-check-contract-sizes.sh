@@ -13,6 +13,7 @@ CONTRACTS_DIR="${REPO_ROOT}/contracts"
 
 FAILED=0
 
+# Forward check: every contract directory must have a LIMITS entry.
 for dir in "${CONTRACTS_DIR}"/mux-*/; do
   name="$(basename "$dir")"
   wasm_name="${name//-/_}.wasm"
@@ -23,9 +24,21 @@ for dir in "${CONTRACTS_DIR}"/mux-*/; do
   fi
 done
 
+# Reverse check: every LIMITS entry must have a matching contract directory.
+# This catches stale entries that linger after a contract is removed.
+while IFS= read -r wasm_name; do
+  [[ -z "${wasm_name}" ]] && continue
+  wasm_base="${wasm_name%.wasm}"
+  dir_name="${wasm_base//_/-}"
+  if [[ ! -d "${CONTRACTS_DIR}/${dir_name}" ]]; then
+    echo "STALE: ${wasm_name} has a LIMITS entry but no contract directory at contracts/${dir_name}"
+    FAILED=1
+  fi
+done < <(grep -oP '\[\"\K[^\"]+\.wasm' "${SIZE_SCRIPT}")
+
 if (( FAILED )); then
-  echo "ERROR: Some contracts are missing from the size check script." >&2
+  echo "ERROR: Size check coverage is incomplete." >&2
   exit 1
 fi
 
-echo "All contract directories have matching size check entries."
+echo "All contract directories have matching size check entries, and vice versa."
