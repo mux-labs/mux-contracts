@@ -149,8 +149,11 @@ ALL_CONTRACTS=(
   "mux-account"
   "mux-account-factory"
   "mux-batcher"
+  "mux-delegation"
   "mux-permissions"
+  "mux-recovery"
   "mux-registry"
+  "mux-spending-policy"
   "mux-wallet-registry"
 )
 
@@ -230,7 +233,32 @@ deploy_contract() {
     log_dry "  WASM path : $wasm_path"
     log_dry "  Upload    : stellar contract upload --wasm $wasm_path --network-passphrase \"$NETWORK_PASSPHRASE\" --rpc-url $RPC_URL"
     log_dry "  Deploy    : stellar contract deploy --wasm-hash <hash> --network-passphrase \"$NETWORK_PASSPHRASE\" --rpc-url $RPC_URL"
-    log_dry "  Init      : stellar contract invoke --id <contract_id> -- initialize --admin \${ADMIN_ADDRESS}"
+    case "$name" in
+      mux-account)
+        log_dry "  Init      : stellar contract invoke --id <contract_id> -- initialize --owner \${OWNER_ADDRESS} --guardians '[]'"
+        ;;
+      mux-account-factory)
+        log_dry "  Init      : (no explicit init — factory is used directly)"
+        ;;
+      mux-batcher)
+        log_dry "  Init      : stellar contract invoke --id <contract_id> -- initialize"
+        ;;
+      mux-delegation)
+        log_dry "  Init      : stellar contract invoke --id <contract_id> -- initialize --admin \${ADMIN_ADDRESS}"
+        ;;
+      mux-permissions)
+        log_dry "  Init      : stellar contract invoke --id <contract_id> -- initialize --admin \${ADMIN_ADDRESS}"
+        ;;
+      mux-registry)
+        log_dry "  Init      : stellar contract invoke --id <contract_id> -- initialize --admin \${ADMIN_ADDRESS}"
+        ;;
+      mux-wallet-registry)
+        log_dry "  Init      : stellar contract invoke --id <contract_id> -- initialize --admin \${ADMIN_ADDRESS}"
+        ;;
+      *)
+        log_dry "  Init      : stellar contract invoke --id <contract_id> -- initialize --admin \${ADMIN_ADDRESS}"
+        ;;
+    esac
     return
   fi
 
