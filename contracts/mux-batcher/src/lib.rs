@@ -8,7 +8,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, Env, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, Env, String,
+    Vec,
 };
 
 // ── Batch operation kind ──────────────────────────────────────────────────────
@@ -47,9 +48,21 @@ fn emit(
 #[contracttype]
 enum DataKey {
     Executing,
+    /// Stores optional contract-level metadata set once at deployment.
+    Meta,
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+
+/// Contract-level metadata stored once at deployment for registry discovery.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BatcherMeta {
+    /// Short human-readable description of the contract.
+    pub description: String,
+    /// Author or team identifier.
+    pub author: String,
+}
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -90,6 +103,7 @@ pub enum MuxBatcherError {
     RequiredOperationFailed = 3,
     Unauthorized = 4,
     ReentrancyDetected = 5,
+    MetadataAlreadySet = 6,
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -276,6 +290,32 @@ impl MuxBatcher {
             return Err(MuxBatcherError::BatchTooLarge);
         }
         Ok(op_count.saturating_mul(FEE_PER_OP))
+    }
+
+    /// Store registry metadata (description, author) for this batcher instance.
+    ///
+    /// Can only be called once; subsequent calls return `MetadataAlreadySet`.
+    /// No authorization is required because metadata is informational only and
+    /// is expected to be set by the deployer immediately after deployment.
+    pub fn set_registry_metadata(
+        env: Env,
+        description: String,
+        author: String,
+    ) -> Result<(), MuxBatcherError> {
+        if env.storage().instance().has(&DataKey::Meta) {
+            return Err(MuxBatcherError::MetadataAlreadySet);
+        }
+        let meta = BatcherMeta { description, author };
+        env.storage().instance().set(&DataKey::Meta, &meta);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+        Ok(())
+    }
+
+    /// Return the registry metadata for this batcher instance, or `None` if not set.
+    pub fn get_registry_metadata(env: Env) -> Option<BatcherMeta> {
+        env.storage().instance().get(&DataKey::Meta)
     }
 
     /// Simulate a batch without writing state — useful for preflight checks.
@@ -826,6 +866,44 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(topic_action(&env, &events, 0), symbol_short!("bat_start"));
         assert_eq!(topic_action(&env, &events, 1), symbol_short!("bat_abort"));
+    }
+
+    // ── Registry metadata (#243) ──────────────────────────────────────────────
+
+    #[test]
+    fn test_set_and_get_registry_metadata() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let description = String::from_str(&env, "Multi-operation batching contract");
+        let author = String::from_str(&env, "mux-labs");
+
+        assert!(client.try_set_registry_metadata(&description, &author).is_ok());
+        let meta = client.get_registry_metadata().unwrap();
+        assert_eq!(meta.description, description);
+        assert_eq!(meta.author, author);
+    }
+
+    #[test]
+    fn test_set_registry_metadata_twice_fails() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let description = String::from_str(&env, "Multi-operation batching contract");
+        let author = String::from_str(&env, "mux-labs");
+
+        client.set_registry_metadata(&description, &author);
+        assert!(client.try_set_registry_metadata(&description, &author).is_err());
+    }
+
+    #[test]
+    fn test_get_registry_metadata_before_set_returns_none() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+        assert!(client.get_registry_metadata().is_none());
     }
 
     // ── TTL extension on write (#242) ─────────────────────────────────────────
