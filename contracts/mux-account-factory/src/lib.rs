@@ -193,7 +193,7 @@ impl MuxAccountFactory {
 
         // Store metadata
         let meta = AccountMetadata {
-            version,
+            version: version.clone(),
             description,
             author,
         };
@@ -204,7 +204,12 @@ impl MuxAccountFactory {
         emit(
             &env,
             symbol_short!("deployed"),
-            (owner, account_address.clone()),
+            (owner.clone(), account_address.clone()),
+        );
+        emit(
+            &env,
+            symbol_short!("meta_set"),
+            (owner, account_address.clone(), version),
         );
         Self::extend_ttl(&env);
         Ok(account_address)
@@ -295,7 +300,8 @@ mod tests {
     fn test_invalid_account_same_as_owner() {
         let (env, client) = setup();
         let owner = Address::generate(&env);
-        assert!(client.try_deploy_account(&owner, &owner).is_err());
+        let result = client.try_deploy_account(&owner, &owner);
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::InvalidAccount)));
     }
 
     #[test]
@@ -322,6 +328,64 @@ mod tests {
         let (_, topics, _) = events.get(0).unwrap();
         let action = soroban_sdk::Symbol::from_val(&env, &topics.get(1).unwrap());
         assert_eq!(action, symbol_short!("deployed"));
+    }
+
+    #[test]
+    fn test_deploy_with_metadata_emits_deployed_and_meta_set_events() {
+        use soroban_sdk::testutils::Events;
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        let version = String::from_str(&env, "1.0.0");
+        let description = String::from_str(&env, "Test account");
+        let author = String::from_str(&env, "mux-labs");
+
+        client.deploy_account_with_metadata(
+            &owner,
+            &account_addr,
+            &version,
+            &description,
+            &author,
+        );
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 2);
+
+        let (_, topics0, _) = events.get(0).unwrap();
+        let action0 =
+            soroban_sdk::Symbol::from_val(&env, &topics0.get(1).unwrap());
+        let (_, topics1, _) = events.get(1).unwrap();
+        let action1 =
+            soroban_sdk::Symbol::from_val(&env, &topics1.get(1).unwrap());
+
+        assert_eq!(action0, symbol_short!("deployed"));
+        assert_eq!(action1, symbol_short!("meta_set"));
+    }
+
+    #[test]
+    fn test_deploy_account_does_not_emit_meta_set() {
+        use soroban_sdk::testutils::Events;
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        client.deploy_account(&owner, &account_addr);
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        let (_, topics, _) = events.get(0).unwrap();
+        let action = soroban_sdk::Symbol::from_val(&env, &topics.get(1).unwrap());
+        assert_ne!(action, symbol_short!("meta_set"));
+    }
+
+    #[test]
+    fn test_accounts_cap_returns_too_many_accounts() {
+        let (env, client) = setup();
+        env.budget().reset_unlimited();
+        let owner = Address::generate(&env);
+        for _ in 0..64 {
+            client.deploy_account(&owner, &Address::generate(&env));
+        }
+        let result = client.try_deploy_account(&owner, &Address::generate(&env));
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::TooManyAccounts)));
     }
 
     #[test]

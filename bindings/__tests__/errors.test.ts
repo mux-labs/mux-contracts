@@ -31,6 +31,14 @@ describe("Error Mapping", () => {
       expect(ERROR_HTTP_MAP.ReentrancyDetected).toBe(409);
     });
 
+    it("maps TooManyDelegates to 409", () => {
+      expect(ERROR_HTTP_MAP.TooManyDelegates).toBe(409);
+    });
+
+    it("maps MetadataNotFound to 404", () => {
+      expect(ERROR_HTTP_MAP.MetadataNotFound).toBe(404);
+    });
+
     it("maps arithmetic overflow to 500", () => {
       expect(ERROR_HTTP_MAP.ArithmeticOverflow).toBe(500);
     });
@@ -79,6 +87,7 @@ describe("Error Mapping", () => {
         "SpendLimitExceeded",
         "InvalidAmount",
         "InvalidPeriod",
+        "TooManyDelegates",
         "ReentrancyDetected",
         "ArithmeticOverflow",
       ];
@@ -128,6 +137,7 @@ describe("Error Mapping", () => {
         "Unauthorized",
         "InvalidAccount",
         "TooManyAccounts",
+        "MetadataNotFound",
       ];
 
       factoryErrors.forEach((error) => {
