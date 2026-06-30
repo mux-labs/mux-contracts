@@ -3,9 +3,22 @@
 This document provides a comprehensive reference for all error codes used within the Mux Protocol contracts.
 
 ## Mux Account (`contracts/mux-account`)
-- `AccountError::NotAuthorized` (1001) - The caller is not authorized to perform the action.
-- `AccountError::InvalidSignature` (1002) - The provided signature is invalid.
-- `AccountError::NonceTooLow` (1003) - The provided nonce is too low.
+
+Errors are defined in `MuxAccountError` (`contracts/mux-account/src/lib.rs`).
+
+| Variant | Code | HTTP | Description |
+|---|---|---|---|
+| `NotInitialized` | 1 | 500 | Contract not yet initialized; call `initialize` first |
+| `AlreadyInitialized` | 2 | 409 | `initialize` called more than once |
+| `Unauthorized` | 3 | 401 | Caller is not the owner or contract is paused |
+| `DelegateNotFound` | 4 | 404 | Delegate does not exist in the delegate map |
+| `DelegateExpired` | 5 | 410 | Delegate has expired (current ledger ≥ `expiry_ledger`) |
+| `SpendLimitExceeded` | 6 | 429 | Spend would exceed the configured per-asset limit |
+| `InvalidAmount` | 7 | 400 | Spend limit amount is zero or negative |
+| `InvalidPeriod` | 8 | 400 | Spend limit period is zero |
+| `TooManyDelegates` | 9 | 409 | Delegate map has reached `MAX_DELEGATES` (64) |
+| `ReentrancyDetected` | 10 | 409 | Reentrant `debit_spend` call detected |
+| `ArithmeticOverflow` | 11 | 500 | Arithmetic overflow in spend tracking |
 
 ## Mux Account Factory (`contracts/mux-account-factory`)
 - `MuxAccountFactoryError::Unauthorized` (1) → HTTP 401 - The caller is not the registered owner; `require_auth()` failed.
