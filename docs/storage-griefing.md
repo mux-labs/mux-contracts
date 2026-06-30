@@ -34,7 +34,7 @@ String size limits are enforced on metadata fields to prevent storage bloat thro
 
 ### TTL auto-extension
 
-Every write operation in all three contracts calls:
+Every write path in the Mux contracts calls:
 
 ```rust
 env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
