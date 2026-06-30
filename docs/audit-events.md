@@ -37,6 +37,19 @@ Contract tag: `mux_acct`
 
 ---
 
+## mux-account-factory events
+
+Contract tag: `mux_fac`
+
+| Action | Trigger | Data payload |
+|---|---|---|
+| `deployed` | `deploy_account` or `deploy_account_with_metadata` succeeds | `(owner: Address, account_address: Address)` |
+| `meta_set` | `deploy_account_with_metadata` succeeds | `(owner: Address, account_address: Address, version: String)` |
+
+> `get_accounts`, `account_count`, and `get_account_metadata` are read-only and emit no events.
+
+---
+
 ## mux-permissions events
 
 Contract tag: `mux_perm`
