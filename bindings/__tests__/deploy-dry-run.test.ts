@@ -99,6 +99,18 @@ describe("deploy.sh --dry-run flag", () => {
     expect(output).toMatch(/stellar contract upload/i);
     expect(output).toMatch(/stellar contract deploy/i);
   });
+
+  it("--dry-run shows mux-account init params with --owner and --guardians", () => {
+    const output = execSync(
+      `bash "${DEPLOY_SCRIPT}" --dry-run --network testnet --skip-build --contract mux-account`,
+      { encoding: "utf8", env: { ...process.env } },
+    );
+
+    expect(output).toMatch(/--owner/);
+    expect(output).toMatch(/--guardians/);
+    expect(output).toMatch(/mux-account/);
+    expect(output).toMatch(/stellar contract invoke/);
+  });
 });
 
 describe("MuxAccountFactoryClient — dry-run API shape", () => {

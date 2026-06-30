@@ -23,7 +23,7 @@ assert_output_contains() {
   local label="$1" pattern="$2"; shift 2
   local out
   out=$("$@" 2>&1) || true
-  if echo "$out" | grep -q "$pattern"; then
+  if echo "$out" | grep -q -F -- "$pattern"; then
     echo "  PASS: $label"
     PASS=$((PASS + 1))
   else
@@ -96,35 +96,31 @@ assert_exit "dry-run --contract mux-batcher --network testnet exits 0" 0 \
 assert_exit "dry-run --contract mux-batcher --network mainnet exits 0" 0 \
   bash "$SCRIPT" --dry-run --contract mux-batcher --network mainnet
 
-# ── Account-factory-specific dry-run tests ──────────────────────────────────
+# ── Mux-account-specific dry-run tests ─────────────────────────────────────
 
-# Dry-run targeting mux-account-factory alone should exit 0
-assert_exit "dry-run --contract mux-account-factory exits 0" 0 \
-  bash "$SCRIPT" --dry-run --contract mux-account-factory
+# Dry-run targeting mux-account alone should exit 0
+assert_exit "dry-run --contract mux-account exits 0" 0 \
+  bash "$SCRIPT" --dry-run --contract mux-account
 
-# Output must mention mux-account-factory
-assert_output_contains "dry-run --contract mux-account-factory mentions contract name" "mux-account-factory" \
-  bash "$SCRIPT" --dry-run --contract mux-account-factory
+# Output must mention mux-account
+assert_output_contains "dry-run --contract mux-account mentions contract name" "mux-account" \
+  bash "$SCRIPT" --dry-run --contract mux-account
 
-# Output must show the expected WASM path for mux-account-factory
-assert_output_contains "dry-run --contract mux-account-factory shows wasm path" "mux_account_factory.wasm" \
-  bash "$SCRIPT" --dry-run --contract mux-account-factory
+# Output must show the expected WASM path for mux-account
+assert_output_contains "dry-run --contract mux-account shows wasm path" "mux_account.wasm" \
+  bash "$SCRIPT" --dry-run --contract mux-account
 
-# Output must show stellar contract upload command
-assert_output_contains "dry-run --contract mux-account-factory shows upload command" "stellar contract upload" \
-  bash "$SCRIPT" --dry-run --contract mux-account-factory
+# Output must show --owner flag in the init step
+assert_output_contains "dry-run --contract mux-account shows --owner in init" "--owner" \
+  bash "$SCRIPT" --dry-run --contract mux-account
 
-# Output must show stellar contract deploy command
-assert_output_contains "dry-run --contract mux-account-factory shows deploy command" "stellar contract deploy" \
-  bash "$SCRIPT" --dry-run --contract mux-account-factory
+# Output must show --guardians flag in the init step
+assert_output_contains "dry-run --contract mux-account shows --guardians in init" "--guardians" \
+  bash "$SCRIPT" --dry-run --contract mux-account
 
-# Account-factory dry-run on testnet should exit 0
-assert_exit "dry-run --contract mux-account-factory --network testnet exits 0" 0 \
-  bash "$SCRIPT" --dry-run --contract mux-account-factory --network testnet
-
-# Account-factory dry-run on mainnet should exit 0
-assert_exit "dry-run --contract mux-account-factory --network mainnet exits 0" 0 \
-  bash "$SCRIPT" --dry-run --contract mux-account-factory --network mainnet
+# Mux account dry-run on testnet should exit 0
+assert_exit "dry-run --contract mux-account --network testnet exits 0" 0 \
+  bash "$SCRIPT" --dry-run --contract mux-account --network testnet
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

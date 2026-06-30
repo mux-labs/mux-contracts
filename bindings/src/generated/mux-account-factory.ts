@@ -1,5 +1,5 @@
 /**
- * AUTO-GENERATED — do not edit by hand.
+ * AUTO-GENERATED â€” do not edit by hand.
  * Run `npm run generate` to regenerate from the compiled contract WASM.
  *
  * Contract: mux-account-factory
@@ -42,12 +42,16 @@ export class MuxAccountFactoryClient {
   async deployAccount(
     sourceKeypair: Keypair,
     owner: Address,
-    accountAddress: Address
+    accountAddress: Address,
+    simulateOnly = false
   ): Promise<Address> {
     const tx = await this.buildTx(sourceKeypair, "deploy_account", [
       nativeToScVal(owner.toString(), { type: "address" }),
       nativeToScVal(accountAddress.toString(), { type: "address" }),
     ]);
+    if (simulateOnly) {
+      return this.simulate<Address>(tx);
+    }
     return this.submitAndRead<Address>(tx, sourceKeypair);
   }
 
@@ -166,7 +170,7 @@ export class MuxAccountFactoryClient {
     return retval.value() as unknown as bigint;
   }
 
-  // ── Private helpers ──────────────────────────────────────────────────────────
+  // â”€â”€ Private helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   private async buildTx(
     sourceKeypair: Keypair,
@@ -199,6 +203,16 @@ export class MuxAccountFactoryClient {
     }
     const confirmed = await pollTransaction(this.server, sendResult.hash);
     const retval = confirmed.returnValue;
+    if (!retval) return {} as T;
+    return retval.value() as unknown as T;
+  }
+
+  private async simulate<T>(tx: Transaction): Promise<T> {
+    const result = await this.server.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(result)) {
+      throw new Error(`Simulation failed: ${result.error}`);
+    }
+    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
     if (!retval) return {} as T;
     return retval.value() as unknown as T;
   }

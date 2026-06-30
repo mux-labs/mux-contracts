@@ -61,12 +61,22 @@ pub enum MuxAccountFactoryError {
     TooManyAccounts = 3,
     /// Metadata not found for the specified account.
     MetadataNotFound = 4,
+    // STORAGE-GRIEFING: unbounded metadata string sizes would let an owner
+    // bloat instance storage indefinitely.
+    MetadataTooLarge = 5,
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 /// Maximum accounts per owner to bound the Accounts vec in instance storage.
 const MAX_ACCOUNTS_PER_OWNER: u32 = 64;
+
+// STORAGE-GRIEFING: bound metadata string sizes to prevent owners from bloating
+// instance storage with large strings. Each account can have metadata, so with
+// 64 accounts per owner, unbounded strings could cause significant storage bloat.
+const MAX_VERSION_LENGTH: u32 = 32; // e.g., "1.2.3" or "v1.2.3-beta"
+const MAX_DESCRIPTION_LENGTH: u32 = 256; // Short human-readable description
+const MAX_AUTHOR_LENGTH: u32 = 64; // Author or team identifier
 
 // ── Storage TTL ───────────────────────────────────────────────────────────────
 // STORAGE-GRIEFING (T-21): extend instance TTL on every write so the factory
@@ -177,6 +187,17 @@ impl MuxAccountFactory {
             return Err(MuxAccountFactoryError::TooManyAccounts);
         }
 
+        // STORAGE-GRIEFING: validate metadata string sizes to prevent storage bloat.
+        if version.len() > MAX_VERSION_LENGTH as u32 {
+            return Err(MuxAccountFactoryError::MetadataTooLarge);
+        }
+        if description.len() > MAX_DESCRIPTION_LENGTH as u32 {
+            return Err(MuxAccountFactoryError::MetadataTooLarge);
+        }
+        if author.len() > MAX_AUTHOR_LENGTH as u32 {
+            return Err(MuxAccountFactoryError::MetadataTooLarge);
+        }
+
         accounts.push_back(account_address.clone());
         env.storage()
             .instance()
@@ -193,7 +214,7 @@ impl MuxAccountFactory {
 
         // Store metadata
         let meta = AccountMetadata {
-            version,
+            version: version.clone(),
             description,
             author,
         };
@@ -204,7 +225,12 @@ impl MuxAccountFactory {
         emit(
             &env,
             symbol_short!("deployed"),
-            (owner, account_address.clone()),
+            (owner.clone(), account_address.clone()),
+        );
+        emit(
+            &env,
+            symbol_short!("meta_set"),
+            (owner, account_address.clone(), version),
         );
         Self::extend_ttl(&env);
         Ok(account_address)
@@ -327,7 +353,8 @@ mod tests {
     fn test_invalid_account_same_as_owner() {
         let (env, client) = setup();
         let owner = Address::generate(&env);
-        assert!(client.try_deploy_account(&owner, &owner).is_err());
+        let result = client.try_deploy_account(&owner, &owner);
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::InvalidAccount)));
     }
 
     #[test]
@@ -339,7 +366,7 @@ mod tests {
             client.deploy_account(&owner, &Address::generate(&env));
         }
         let result = client.try_deploy_account(&owner, &Address::generate(&env));
-        assert!(result.is_err());
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::TooManyAccounts)));
     }
 
     #[test]
@@ -354,6 +381,64 @@ mod tests {
         let (_, topics, _) = events.get(0).unwrap();
         let action = soroban_sdk::Symbol::from_val(&env, &topics.get(1).unwrap());
         assert_eq!(action, symbol_short!("deployed"));
+    }
+
+    #[test]
+    fn test_deploy_with_metadata_emits_deployed_and_meta_set_events() {
+        use soroban_sdk::testutils::Events;
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        let version = String::from_str(&env, "1.0.0");
+        let description = String::from_str(&env, "Test account");
+        let author = String::from_str(&env, "mux-labs");
+
+        client.deploy_account_with_metadata(
+            &owner,
+            &account_addr,
+            &version,
+            &description,
+            &author,
+        );
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 2);
+
+        let (_, topics0, _) = events.get(0).unwrap();
+        let action0 =
+            soroban_sdk::Symbol::from_val(&env, &topics0.get(1).unwrap());
+        let (_, topics1, _) = events.get(1).unwrap();
+        let action1 =
+            soroban_sdk::Symbol::from_val(&env, &topics1.get(1).unwrap());
+
+        assert_eq!(action0, symbol_short!("deployed"));
+        assert_eq!(action1, symbol_short!("meta_set"));
+    }
+
+    #[test]
+    fn test_deploy_account_does_not_emit_meta_set() {
+        use soroban_sdk::testutils::Events;
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        client.deploy_account(&owner, &account_addr);
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        let (_, topics, _) = events.get(0).unwrap();
+        let action = soroban_sdk::Symbol::from_val(&env, &topics.get(1).unwrap());
+        assert_ne!(action, symbol_short!("meta_set"));
+    }
+
+    #[test]
+    fn test_accounts_cap_returns_too_many_accounts() {
+        let (env, client) = setup();
+        env.budget().reset_unlimited();
+        let owner = Address::generate(&env);
+        for _ in 0..64 {
+            client.deploy_account(&owner, &Address::generate(&env));
+        }
+        let result = client.try_deploy_account(&owner, &Address::generate(&env));
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::TooManyAccounts)));
     }
 
     #[test]
@@ -456,6 +541,48 @@ mod tests {
     }
 
     #[test]
+    fn test_get_account_metadata_not_found_after_deploy_without_metadata() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        client.deploy_account(&owner, &account_addr);
+        let result = client.try_get_account_metadata(&owner, &account_addr);
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::MetadataNotFound)));
+    }
+
+    #[test]
+    fn test_get_account_metadata_wrong_owner() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let other_owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        let version = String::from_str(&env, "1.0.0");
+        let description = String::from_str(&env, "Test");
+        let author = String::from_str(&env, "test");
+
+        client.deploy_account_with_metadata(
+            &owner,
+            &account_addr,
+            &version,
+            &description,
+            &author,
+        );
+        let result = client.try_get_account_metadata(&other_owner, &account_addr);
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::MetadataNotFound)));
+    }
+
+    #[test]
+    fn test_deploy_account_unauthorized_without_auth() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxAccountFactory);
+        let client = MuxAccountFactoryClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        let result = client.try_deploy_account(&owner, &account_addr);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_deploy_account_with_metadata_enforces_cap() {
         let (env, client) = setup();
         env.budget().reset_unlimited();
@@ -482,7 +609,7 @@ mod tests {
             &description,
             &author,
         );
-        assert!(result.is_err());
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::TooManyAccounts)));
     }
 
     #[test]
@@ -500,7 +627,87 @@ mod tests {
             &description,
             &author,
         );
-        assert!(result.is_err());
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::InvalidAccount)));
+    }
+
+    #[test]
+    fn test_metadata_version_too_long() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        // Create a version string longer than MAX_VERSION_LENGTH (32)
+        let version = String::from_str(&env, "a".repeat(33).as_str());
+        let description = String::from_str(&env, "Test");
+        let author = String::from_str(&env, "test");
+
+        let result = client.try_deploy_account_with_metadata(
+            &owner,
+            &account_addr,
+            &version,
+            &description,
+            &author,
+        );
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::MetadataTooLarge)));
+    }
+
+    #[test]
+    fn test_metadata_description_too_long() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        let version = String::from_str(&env, "1.0.0");
+        // Create a description string longer than MAX_DESCRIPTION_LENGTH (256)
+        let description = String::from_str(&env, "a".repeat(257).as_str());
+        let author = String::from_str(&env, "test");
+
+        let result = client.try_deploy_account_with_metadata(
+            &owner,
+            &account_addr,
+            &version,
+            &description,
+            &author,
+        );
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::MetadataTooLarge)));
+    }
+
+    #[test]
+    fn test_metadata_author_too_long() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        let version = String::from_str(&env, "1.0.0");
+        let description = String::from_str(&env, "Test");
+        // Create an author string longer than MAX_AUTHOR_LENGTH (64)
+        let author = String::from_str(&env, "a".repeat(65).as_str());
+
+        let result = client.try_deploy_account_with_metadata(
+            &owner,
+            &account_addr,
+            &version,
+            &description,
+            &author,
+        );
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::MetadataTooLarge)));
+    }
+
+    #[test]
+    fn test_metadata_at_max_length_succeeds() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        // Create strings at exactly the maximum allowed length
+        let version = String::from_str(&env, "a".repeat(32).as_str());
+        let description = String::from_str(&env, "a".repeat(256).as_str());
+        let author = String::from_str(&env, "a".repeat(64).as_str());
+
+        let result = client.try_deploy_account_with_metadata(
+            &owner,
+            &account_addr,
+            &version,
+            &description,
+            &author,
+        );
+        assert!(result.is_ok());
     }
 
     // ── simulate_deploy tests ─────────────────────────────────────────────────
