@@ -11,6 +11,10 @@ describe("MuxAccountFactoryClient shape", () => {
     expect(typeof MuxAccountFactoryClient.prototype.deployAccount).toBe("function");
   });
 
+  it("supports simulateOnly as an optional deployAccount argument", () => {
+    expect(MuxAccountFactoryClient.prototype.deployAccount.length).toBeGreaterThanOrEqual(4);
+  });
+
   it("exposes deployAccountWithMetadata as a function", () => {
     expect(typeof MuxAccountFactoryClient.prototype.deployAccountWithMetadata).toBe("function");
   });
