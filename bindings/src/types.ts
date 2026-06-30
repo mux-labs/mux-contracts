@@ -52,7 +52,16 @@ export type MuxAccountError =
   | "InvalidPeriod"
   | "TooManyDelegates"
   | "ReentrancyDetected"
-  | "ArithmeticOverflow";
+  | "ArithmeticOverflow"
+  | "TooManySessionKeys";
+
+export type MuxRecoveryError =
+  | "NotInitialized"
+  | "AlreadyInitialized"
+  | "Unauthorized"
+  | "RecoveryAlreadyPending"
+  | "NoActiveRecovery"
+  | "TimelockNotExpired";
 
 export type MuxBatcherError =
   | "EmptyBatch"

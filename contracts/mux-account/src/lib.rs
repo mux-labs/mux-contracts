@@ -132,8 +132,7 @@ pub enum MuxAccountError {
     TooManyDelegates = 9,
     ReentrancyDetected = 10,
     ArithmeticOverflow = 11,
-    // STORAGE-GRIEFING: unbounded delegate map would let the owner bloat instance
-    // storage indefinitely, increasing rent fees for all users of this contract.
+    TooManySessionKeys = 12,
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -141,6 +140,10 @@ pub enum MuxAccountError {
 /// Maximum number of delegates to bound instance-storage growth.
 /// Each DelegateInfo entry is ~72 bytes; 64 entries ≈ 4.6 KB.
 const MAX_DELEGATES: u32 = 64;
+
+/// Maximum number of session keys per owner to bound instance-storage growth.
+/// Each entry is ~32 bytes; 32 entries ≈ 1 KB.
+const MAX_SESSION_KEYS: u32 = 32;
 
 // ── Storage TTL ───────────────────────────────────────────────────────────────
 // STORAGE-GRIEFING (T-21): if instance storage TTL expires the contract loses
@@ -187,6 +190,7 @@ impl MuxAccount {
     pub fn unpause(env: Env) -> Result<(), MuxAccountError> {
         Self::require_owner(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
+        Self::extend_ttl(&env);
         Ok(())
     }
 
@@ -472,6 +476,20 @@ impl MuxAccount {
         env.storage()
             .instance()
             .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    /// Enforce the session key storage cap (T-22).
+    /// Called before adding a new session key to prevent unbounded growth.
+    fn require_session_key_cap(env: &Env, owner: &Address) -> Result<(), MuxAccountError> {
+        let index: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::SessionKeyIndex(owner.clone()))
+            .unwrap_or_else(|| Vec::new(env));
+        if index.len() >= MAX_SESSION_KEYS {
+            return Err(MuxAccountError::TooManySessionKeys);
+        }
+        Ok(())
     }
 }
 

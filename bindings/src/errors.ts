@@ -7,6 +7,7 @@ import type {
   MuxDelegationError,
   MuxPermissionsError,
   MuxPolicyError,
+  MuxRecoveryError,
 } from "./types";
 
 export interface HttpErrorResponse {
@@ -23,7 +24,8 @@ type ContractError =
   | MuxPolicyError
   | MuxAccountFactoryError
   | MuxRegistryError
-  | MuxWalletRegistryError;
+  | MuxWalletRegistryError
+  | MuxRecoveryError;
 
 /**
  * Maps contract error variants to HTTP status codes.
@@ -90,7 +92,6 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
 
   // Policy errors → 400 Bad Request
   LimitNotFound: 404,
-  LimitExceeded: 400,
 
   // Capacity limits → 409 Conflict
   // MuxAccountError::TooManyDelegates (code 9)
@@ -98,7 +99,11 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   // MuxAccountFactoryError::TooManyAccounts (code 3)
   TooManyAccounts: 409,
   TooManyContracts: 409,
+  TooManyDelegates: 409,
+  TooManyMembers: 409,
+  TooManyRoles: 409,
   TooManyWallets: 409,
+  TooManySessionKeys: 409,
 
   // MuxAccountFactoryError::MetadataNotFound (code 4)
   MetadataNotFound: 404,

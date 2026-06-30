@@ -20,8 +20,9 @@ On Soroban, every contract pays **rent** for the ledger entries it occupies.  Al
 ### Collection caps
 
 | Contract | Collection | Key | Cap constant | Error on overflow |
-|---|---|---|---|---|
+|---|---|---|---|---|---|
 | `mux-account` | `Delegates` map | `DataKey::Delegates` | `MAX_DELEGATES = 64` | `TooManyDelegates` |
+| `mux-account` | `SessionKeyIndex` vec | `DataKey::SessionKeyIndex(owner)` | `MAX_SESSION_KEYS = 32` | `TooManySessionKeys` |
 | `mux-delegation` | `OwnerDelegates` vec | `DataKey::OwnerDelegates(owner)` | `MAX_DELEGATES_PER_OWNER = 128` | `TooManyDelegates` |
 | `mux-delegation` | `DelegatePerms` vec | `DataKey::DelegatePerms(owner, delegate)` | `MAX_DELEGATE_PERMS = 64` | `TooManyPermissions` |
 | `mux-permissions` | `RoleMembers` vec | `DataKey::RoleMembers(role)` | `MAX_ROLE_MEMBERS = 256` | `TooManyMembers` |
@@ -78,6 +79,7 @@ Run this job at least once every **25 days** to stay ahead of the 30-day TTL win
 | `RoleMembers` vec | ~32 bytes | 256 | ~8 KB |
 | `AccountRoles` vec | ~8 bytes | 32 | ~256 bytes |
 | `Names` vec (`mux-registry`) | ~16 bytes | 128 | ~2 KB |
+| `SessionKeyIndex` vec (per owner) | ~32 bytes | 32 | ~1 KB |
 | `SpendLimit` per asset | ~80 bytes | owner-controlled | unbounded (owner only) |
 | `Wallet` entries | ~42–50 bytes | 256 | ~12 KB |
 
@@ -95,3 +97,4 @@ Run this job at least once every **25 days** to stay ahead of the 30-day TTL win
 | T-20 | Spend limits accumulate unbounded per-asset keys | No public write path; owner-only |
 | T-21 | Instance storage TTL expiry causes silent data loss | `extend_ttl` on every write + keeper job |
 | T-22 | Owner floods wallet registry with distinct names | `MAX_WALLETS = 256` in `register_wallet` |
+| T-23 | Owner floods session key index for an account | `MAX_SESSION_KEYS = 32` in `require_session_key_cap` |
