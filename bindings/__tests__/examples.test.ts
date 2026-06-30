@@ -48,3 +48,14 @@ describe("frontend-usage example module", () => {
     expect(fs.existsSync(examplePath)).toBe(true);
   });
 });
+
+describe("account-invoke example module", () => {
+  it("exports all expected functions from account-invoke", () => {
+    const accountExamples = require("../src/examples/account-invoke");
+    expect(typeof accountExamples.initializeAccount).toBe("function");
+    expect(typeof accountExamples.getOwner).toBe("function");
+    expect(typeof accountExamples.grantDelegate).toBe("function");
+    expect(typeof accountExamples.revokeDelegate).toBe("function");
+    expect(typeof accountExamples.setSpendLimit).toBe("function");
+  });
+});

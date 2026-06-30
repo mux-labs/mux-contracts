@@ -3,13 +3,28 @@
  *
  * Provides delegated signing, guardian management, and spending limits
  * on top of a Stellar Soroban account.
+ *
+ * ## Upgrade Migration Notes
+ *
+ * When upgrading this contract to a new version:
+ *
+ * 1. **Storage Compatibility**: All existing `DataKey` variants must remain
+ *    stable. Do not change enum discriminants for keys already on-chain.
+ * 2. **Owner Migration**: The `Owner` address persists across upgrades; no
+ *    migration action is required for existing authorization.
+ * 3. **Additive Fields**: New storage keys (e.g. `Metadata`) must be optional
+ *    so pre-upgrade instances deserialise without migration.
+ * 4. **Testing**: After upgrade, verify owner auth, delegates, spend limits,
+ *    and guardian set remain accessible.
+ *
+ * See `docs/account-upgrade-migration.md` for the full migration guide.
  */
 
 #![no_std]
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, Env, Map,
-    Vec,
+    String, Vec,
 };
 
 // ── Audit events ──────────────────────────────────────────────────────────────
@@ -41,6 +56,26 @@ pub enum DataKey {
     SessionKeyIndex(Address),
     Paused,
     Executing,
+    /// Optional registry-level metadata for this account instance.
+    Metadata,
+}
+
+// ── Registry metadata ─────────────────────────────────────────────────────────
+
+/// Descriptive metadata attached to this account contract instance.
+///
+/// Stored under [`DataKey::Metadata`] and writable only by the account owner.
+/// Useful for off-chain tooling (indexers, dashboards) that need to identify
+/// or version a deployed account instance.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct RegistryMeta {
+    /// Human-readable name for this account instance (e.g. `"mux-mainnet-acct"`).
+    pub name: String,
+    /// Semantic version string (e.g. `"1.0.0"`).
+    pub version: String,
+    /// Optional free-form description / notes.
+    pub description: String,
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -97,8 +132,7 @@ pub enum MuxAccountError {
     TooManyDelegates = 9,
     ReentrancyDetected = 10,
     ArithmeticOverflow = 11,
-    // STORAGE-GRIEFING: unbounded delegate map would let the owner bloat instance
-    // storage indefinitely, increasing rent fees for all users of this contract.
+    TooManySessionKeys = 12,
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -106,6 +140,10 @@ pub enum MuxAccountError {
 /// Maximum number of delegates to bound instance-storage growth.
 /// Each DelegateInfo entry is ~72 bytes; 64 entries ≈ 4.6 KB.
 const MAX_DELEGATES: u32 = 64;
+
+/// Maximum number of session keys per owner to bound instance-storage growth.
+/// Each entry is ~32 bytes; 32 entries ≈ 1 KB.
+const MAX_SESSION_KEYS: u32 = 32;
 
 // ── Storage TTL ───────────────────────────────────────────────────────────────
 // STORAGE-GRIEFING (T-21): if instance storage TTL expires the contract loses
@@ -152,6 +190,7 @@ impl MuxAccount {
     pub fn unpause(env: Env) -> Result<(), MuxAccountError> {
         Self::require_owner(&env)?;
         env.storage().instance().set(&DataKey::Paused, &false);
+        Self::extend_ttl(&env);
         Ok(())
     }
 
@@ -386,6 +425,24 @@ impl MuxAccount {
         Ok(Bytes::new(&env))
     }
 
+    // ── Registry metadata ──────────────────────────────────────────────────────
+
+    /// Store registry-level metadata. Owner only.
+    ///
+    /// Overwrites any previously stored metadata. Emits a `meta_set` audit event.
+    pub fn set_metadata(env: Env, meta: RegistryMeta) -> Result<(), MuxAccountError> {
+        Self::require_owner(&env)?;
+        env.storage().instance().set(&DataKey::Metadata, &meta);
+        emit(&env, symbol_short!("meta_set"), meta.name.clone());
+        Self::extend_ttl(&env);
+        Ok(())
+    }
+
+    /// Return the currently stored registry metadata, or `None` if not set.
+    pub fn get_metadata(env: Env) -> Option<RegistryMeta> {
+        env.storage().instance().get(&DataKey::Metadata)
+    }
+
     // ── Private helpers ────────────────────────────────────────────────────────
 
     fn require_owner(env: &Env) -> Result<(), MuxAccountError> {
@@ -420,6 +477,20 @@ impl MuxAccount {
             .instance()
             .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
     }
+
+    /// Enforce the session key storage cap (T-22).
+    /// Called before adding a new session key to prevent unbounded growth.
+    fn require_session_key_cap(env: &Env, owner: &Address) -> Result<(), MuxAccountError> {
+        let index: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::SessionKeyIndex(owner.clone()))
+            .unwrap_or_else(|| Vec::new(env));
+        if index.len() >= MAX_SESSION_KEYS {
+            return Err(MuxAccountError::TooManySessionKeys);
+        }
+        Ok(())
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -430,7 +501,7 @@ mod tests {
     use soroban_sdk::{
         symbol_short,
         testutils::{Address as _, Events, Ledger as _},
-        Env, FromVal, Vec,
+        Env, FromVal, String, Vec,
     };
 
     fn topic_action(
@@ -658,6 +729,79 @@ mod tests {
         // environment when TTL_EXTEND_TO > remaining TTL.  Reaching here means
         // the call succeeded without error.
         assert_eq!(client.owner(), owner);
+    }
+
+    // ── Registry metadata tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_set_and_get_metadata() {
+        let (env, client, owner) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let meta = RegistryMeta {
+            name: String::from_str(&env, "mux-testnet-acct"),
+            version: String::from_str(&env, "1.0.0"),
+            description: String::from_str(&env, "Account contract for testnet"),
+        };
+        client.set_metadata(&meta);
+        let stored = client.get_metadata().unwrap();
+        assert_eq!(stored.name, meta.name);
+        assert_eq!(stored.version, meta.version);
+        assert_eq!(stored.description, meta.description);
+    }
+
+    #[test]
+    fn test_set_metadata_overwrites_previous() {
+        let (env, client, owner) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let meta1 = RegistryMeta {
+            name: String::from_str(&env, "v1"),
+            version: String::from_str(&env, "1.0.0"),
+            description: String::from_str(&env, "first"),
+        };
+        let meta2 = RegistryMeta {
+            name: String::from_str(&env, "v2"),
+            version: String::from_str(&env, "2.0.0"),
+            description: String::from_str(&env, "second"),
+        };
+        client.set_metadata(&meta1);
+        client.set_metadata(&meta2);
+        let stored = client.get_metadata().unwrap();
+        assert_eq!(stored.version, meta2.version);
+    }
+
+    #[test]
+    fn test_get_metadata_returns_none_when_unset() {
+        let (env, client, owner) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        assert!(client.get_metadata().is_none());
+    }
+
+    #[test]
+    fn test_set_metadata_emits_event() {
+        let (env, client, owner) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let meta = RegistryMeta {
+            name: String::from_str(&env, "registry"),
+            version: String::from_str(&env, "1.0.0"),
+            description: String::from_str(&env, ""),
+        };
+        client.set_metadata(&meta);
+        let events = env.events().all();
+        // init + meta_set
+        assert_eq!(events.len(), 2);
+        assert_eq!(topic_action(&env, &events, 1), symbol_short!("meta_set"));
+    }
+
+    #[test]
+    fn test_set_metadata_before_initialize_fails() {
+        let (_env, client, _owner) = setup();
+        let meta = RegistryMeta {
+            name: String::from_str(&_env, "registry"),
+            version: String::from_str(&_env, "1.0.0"),
+            description: String::from_str(&_env, ""),
+        };
+        let result = client.try_set_metadata(&meta);
+        assert!(result.is_err());
     }
 }
 pub mod smart_wallet;

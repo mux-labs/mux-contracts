@@ -7,9 +7,9 @@ export const DEFAULT_ADDRESSES = {
     muxDelegation: "",
     muxPermissions: "",
     muxWalletRegistry: "",
+    muxPolicy: "",
     muxAccountFactory: "",
     muxRegistry: "",
-    muxPolicy: "",
   },
   testnet: {
     muxAccount: "",
@@ -17,9 +17,9 @@ export const DEFAULT_ADDRESSES = {
     muxDelegation: "",
     muxPermissions: "",
     muxWalletRegistry: "",
+    muxPolicy: "",
     muxAccountFactory: "",
     muxRegistry: "",
-    muxPolicy: "",
   },
   mainnet: {
     muxAccount: "",
@@ -27,8 +27,8 @@ export const DEFAULT_ADDRESSES = {
     muxDelegation: "",
     muxPermissions: "",
     muxWalletRegistry: "",
+    muxPolicy: "",
     muxAccountFactory: "",
     muxRegistry: "",
-    muxPolicy: "",
   },
 };

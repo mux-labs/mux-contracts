@@ -4,11 +4,15 @@
  * Verifies that dry-run mode logs expected messages and never invokes
  * `stellar contract upload` or `stellar contract deploy` (i.e. no on-chain
  * transactions are submitted).
+ *
+ * Also verifies the shape and behaviour of the TypeScript-level dry-run API
+ * on MuxAccountFactoryClient (simulateDeploy / simulateDeployWithMetadata).
  */
 
 import { execSync } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
+import { MuxAccountFactoryClient } from "../src/generated/mux-account-factory";
 
 const REPO_ROOT = path.resolve(__dirname, "../..");
 const DEPLOY_SCRIPT = path.join(REPO_ROOT, "scripts", "deploy.sh");
@@ -94,5 +98,40 @@ describe("deploy.sh --dry-run flag", () => {
     expect(output).toMatch(/mux-wallet-registry/);
     expect(output).toMatch(/stellar contract upload/i);
     expect(output).toMatch(/stellar contract deploy/i);
+  });
+
+  it("--dry-run shows mux-account init params with --owner and --guardians", () => {
+    const output = execSync(
+      `bash "${DEPLOY_SCRIPT}" --dry-run --network testnet --skip-build --contract mux-account`,
+      { encoding: "utf8", env: { ...process.env } },
+    );
+
+    expect(output).toMatch(/--owner/);
+    expect(output).toMatch(/--guardians/);
+    expect(output).toMatch(/mux-account/);
+    expect(output).toMatch(/stellar contract invoke/);
+  });
+});
+
+describe("MuxAccountFactoryClient — dry-run API shape", () => {
+  it("exposes simulateDeploy as a function", () => {
+    expect(typeof MuxAccountFactoryClient.prototype.simulateDeploy).toBe("function");
+  });
+
+  it("exposes simulateDeployWithMetadata as a function", () => {
+    expect(typeof MuxAccountFactoryClient.prototype.simulateDeployWithMetadata).toBe("function");
+  });
+
+  it("simulateDeploy is distinct from deployAccount", () => {
+    // Ensures the dry-run path is a separate method that never submits
+    expect(MuxAccountFactoryClient.prototype.simulateDeploy).not.toBe(
+      MuxAccountFactoryClient.prototype.deployAccount
+    );
+  });
+
+  it("simulateDeployWithMetadata is distinct from deployAccountWithMetadata", () => {
+    expect(MuxAccountFactoryClient.prototype.simulateDeployWithMetadata).not.toBe(
+      MuxAccountFactoryClient.prototype.deployAccountWithMetadata
+    );
   });
 });

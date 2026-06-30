@@ -57,6 +57,14 @@ jobs:
       - name: Test deploy dry-run for mux-batcher
         run: bash scripts/test-deploy-dry-run.sh
 
+  size-check-coverage:
+    name: Size check coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test size-check script coverage and behavior
+        run: bash scripts/test-check-contract-sizes.sh
+
   bindings:
     name: TypeScript Bindings
     runs-on: ubuntu-latest

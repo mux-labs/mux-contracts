@@ -1,5 +1,5 @@
 /**
- * AUTO-GENERATED — do not edit by hand.
+ * AUTO-GENERATED â€” do not edit by hand.
  * Run `npm run generate` to regenerate from the compiled contract WASM.
  *
  * Contract: mux-account-factory
@@ -43,12 +43,16 @@ export class MuxAccountFactoryClient {
   async deployAccount(
     sourceKeypair: Keypair,
     owner: Address,
-    accountAddress: Address
+    accountAddress: Address,
+    simulateOnly = false
   ): Promise<Address> {
     const tx = await this.buildTx(sourceKeypair, "deploy_account", [
       nativeToScVal(owner.toString(), { type: "address" }),
       nativeToScVal(accountAddress.toString(), { type: "address" }),
     ]);
+    if (simulateOnly) {
+      return this.simulate<Address>(tx);
+    }
     return this.submitAndRead<Address>(tx, sourceKeypair);
   }
 
@@ -68,6 +72,58 @@ export class MuxAccountFactoryClient {
       nativeToScVal(author, { type: "string" }),
     ]);
     return this.submitAndRead<Address>(tx, sourceKeypair);
+  }
+
+  /**
+   * Simulate a deploy_account call without submitting any on-chain transaction
+   * (dry-run). Validates inputs and returns the account address that would be
+   * registered, or throws if validation fails.
+   */
+  async simulateDeploy(
+    sourceKeypair: Keypair,
+    owner: Address,
+    accountAddress: Address
+  ): Promise<Address> {
+    const tx = await this.buildTx(sourceKeypair, "simulate_deploy", [
+      nativeToScVal(owner.toString(), { type: "address" }),
+      nativeToScVal(accountAddress.toString(), { type: "address" }),
+    ]);
+    const result = await this.server.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(result)) {
+      throw new Error(`Simulation failed: ${result.error}`);
+    }
+    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+    if (!retval) throw new Error("Simulation returned no value");
+    return retval.value() as unknown as Address;
+  }
+
+  /**
+   * Simulate a deploy_account_with_metadata call without submitting any
+   * on-chain transaction (dry-run). Validates inputs and returns the account
+   * address that would be registered, or throws if validation fails.
+   */
+  async simulateDeployWithMetadata(
+    sourceKeypair: Keypair,
+    owner: Address,
+    accountAddress: Address,
+    version: string,
+    description: string,
+    author: string
+  ): Promise<Address> {
+    const tx = await this.buildTx(sourceKeypair, "simulate_deploy_with_metadata", [
+      nativeToScVal(owner.toString(), { type: "address" }),
+      nativeToScVal(accountAddress.toString(), { type: "address" }),
+      nativeToScVal(version, { type: "string" }),
+      nativeToScVal(description, { type: "string" }),
+      nativeToScVal(author, { type: "string" }),
+    ]);
+    const result = await this.server.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(result)) {
+      throw new Error(`Simulation failed: ${result.error}`);
+    }
+    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+    if (!retval) throw new Error("Simulation returned no value");
+    return retval.value() as unknown as Address;
   }
 
   async getAccounts(
@@ -115,7 +171,7 @@ export class MuxAccountFactoryClient {
     return retval.value() as unknown as bigint;
   }
 
-  // ── Private helpers ──────────────────────────────────────────────────────────
+  // â”€â”€ Private helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   private async buildTx(
     sourceKeypair: Keypair,
@@ -148,6 +204,16 @@ export class MuxAccountFactoryClient {
     }
     const confirmed = await pollTransaction(this.server, sendResult.hash);
     const retval = confirmed.returnValue;
+    if (!retval) return {} as T;
+    return retval.value() as unknown as T;
+  }
+
+  private async simulate<T>(tx: Transaction): Promise<T> {
+    const result = await this.server.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(result)) {
+      throw new Error(`Simulation failed: ${result.error}`);
+    }
+    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
     if (!retval) return {} as T;
     return retval.value() as unknown as T;
   }

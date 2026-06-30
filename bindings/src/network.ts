@@ -24,12 +24,12 @@ function getContractAddresses(
       process.env[`${envPrefix}_MUX_PERMISSIONS_ID`] || defaults.muxPermissions,
     muxWalletRegistry:
       process.env[`${envPrefix}_MUX_WALLET_REGISTRY_ID`] || defaults.muxWalletRegistry,
+    muxPolicy:
+      process.env[`${envPrefix}_MUX_POLICY_ID`] || defaults.muxPolicy || "",
     muxAccountFactory:
       process.env[`${envPrefix}_MUX_ACCOUNT_FACTORY_ID`] || defaults.muxAccountFactory || "",
     muxRegistry:
       process.env[`${envPrefix}_MUX_REGISTRY_ID`] || defaults.muxRegistry || "",
-    muxPolicy:
-      process.env[`${envPrefix}_MUX_POLICY_ID`] || defaults.muxPolicy || "",
   };
 }
 
