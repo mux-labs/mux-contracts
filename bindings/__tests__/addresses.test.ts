@@ -152,6 +152,7 @@ describe("Contract Address Configuration", () => {
           muxDelegation: "CTest3",
           muxPermissions: "CTest4",
           muxWalletRegistry: "CTest5",
+          muxPolicy: "CTest5",
         },
         mainnet: {
           muxAccount: "",

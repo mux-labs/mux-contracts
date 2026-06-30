@@ -26,8 +26,20 @@ Errors are defined in `MuxAccountError` (`contracts/mux-account/src/lib.rs`).
 - `MuxAccountFactoryError::TooManyAccounts` (3) → HTTP 409 - Owner has reached the 64-account-per-owner cap (storage-griefing guard).
 
 ## Mux Batcher (`contracts/mux-batcher`)
-- `BatcherError::BatchTooLarge` (3001) - The batch contains too many transactions.
-- `BatcherError::ExecutionFailed` (3002) - Execution of a batched transaction failed.
+- `MuxBatcherError::EmptyBatch` (1) → HTTP 400 — The batch contains no operations.
+- `MuxBatcherError::BatchTooLarge` (2) → HTTP 400 — The batch exceeds the 50-operation cap.
+- `MuxBatcherError::RequiredOperationFailed` (3) → HTTP 500 — A required operation failed; the batch was aborted.
+- `MuxBatcherError::Unauthorized` (4) → HTTP 401 — `require_auth()` failed for the caller.
+- `MuxBatcherError::ReentrancyDetected` (5) → HTTP 409 — A reentrant call into the batcher was detected.
+
+### HTTP mapping
+| Error variant             | HTTP status |
+|---------------------------|-------------|
+| `EmptyBatch`              | 400         |
+| `BatchTooLarge`           | 400         |
+| `RequiredOperationFailed` | 500         |
+| `Unauthorized`            | 401         |
+| `ReentrancyDetected`      | 409         |
 
 ## Mux Permissions (`contracts/mux-permissions`)
 - `PermissionError::RoleNotFound` (4001) - The specified role does not exist.

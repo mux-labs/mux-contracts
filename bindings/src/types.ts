@@ -8,6 +8,9 @@ export interface MuxContractIds {
   muxDelegation: string;
   muxPermissions: string;
   muxWalletRegistry: string;
+  muxAccountFactory?: string;
+  muxRegistry?: string;
+  muxPolicy?: string;
 }
 
 export interface SpendLimit {
@@ -50,8 +53,18 @@ export type MuxAccountError =
   | "SpendLimitExceeded"
   | "InvalidAmount"
   | "InvalidPeriod"
+  | "TooManyDelegates"
   | "ReentrancyDetected"
-  | "ArithmeticOverflow";
+  | "ArithmeticOverflow"
+  | "TooManySessionKeys";
+
+export type MuxRecoveryError =
+  | "NotInitialized"
+  | "AlreadyInitialized"
+  | "Unauthorized"
+  | "RecoveryAlreadyPending"
+  | "NoActiveRecovery"
+  | "TimelockNotExpired";
 
 export type MuxBatcherError =
   | "EmptyBatch"
@@ -118,6 +131,55 @@ export function muxPermissionsErrorMessage(
     TooManyRoles: 8,
     AdminNotFound: 9,
     AlreadyApproved: 10,
+  };
+
+  const code =
+    typeof error === "number" ? error : nameMap[error] ?? -1;
+  return codeMap[code] ?? "unknown error code";
+}
+
+/**
+ * Maps a `MuxAccountError` variant or its raw `u32` contract error code to
+ * a human-readable description.
+ *
+ * Mirrors the on-chain `MuxAccountError` enum in `contracts/mux-account`.
+ *
+ * @example
+ * ```ts
+ * import { muxAccountErrorMessage } from "./types";
+ * console.log(muxAccountErrorMessage("DelegateNotFound")); // "delegate not found"
+ * console.log(muxAccountErrorMessage(4));                  // "delegate not found"
+ * ```
+ */
+export function muxAccountErrorMessage(
+  error: MuxAccountError | number
+): string {
+  const codeMap: Record<number, string> = {
+    1: "contract not initialized",
+    2: "contract already initialized",
+    3: "caller is not authorized",
+    4: "delegate not found",
+    5: "delegate has expired",
+    6: "spend limit exceeded",
+    7: "invalid amount",
+    8: "invalid period",
+    9: "too many delegates",
+    10: "reentrancy detected",
+    11: "arithmetic overflow",
+  };
+
+  const nameMap: Record<MuxAccountError, number> = {
+    NotInitialized: 1,
+    AlreadyInitialized: 2,
+    Unauthorized: 3,
+    DelegateNotFound: 4,
+    DelegateExpired: 5,
+    SpendLimitExceeded: 6,
+    InvalidAmount: 7,
+    InvalidPeriod: 8,
+    TooManyDelegates: 9,
+    ReentrancyDetected: 10,
+    ArithmeticOverflow: 11,
   };
 
   const code =

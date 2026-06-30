@@ -32,6 +32,10 @@ describe("Batcher error HTTP mapping", () => {
     expect(ERROR_HTTP_MAP.RequiredOperationFailed).toBe(500);
   });
 
+  it("maps Unauthorized to 401", () => {
+    expect(ERROR_HTTP_MAP.Unauthorized).toBe(401);
+  });
+
   it("maps ReentrancyDetected to 409", () => {
     expect(ERROR_HTTP_MAP.ReentrancyDetected).toBe(409);
   });
