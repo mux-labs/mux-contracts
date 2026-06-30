@@ -62,6 +62,7 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   BatchTooLarge: 400,
   // MuxAccountFactoryError::InvalidAccount (code 2)
   InvalidAccount: 400,
+  MetadataTooLarge: 400,
 
   // Delegation constraint errors → 400
   TooManyPermissions: 400,

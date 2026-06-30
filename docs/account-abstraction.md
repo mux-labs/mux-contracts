@@ -190,6 +190,7 @@ DataKey::GuardianSet                        // Vec<Guardian addresses>
 DataKey::Nonce                              // Transaction counter
 DataKey::SessionKey(owner, session_key)    // SessionKeyRecord
 DataKey::SessionKeyIndex(owner)             // Vec<session key addresses>
+DataKey::Metadata                           // Optional RegistryMeta for this account instance
 ```
 
 ### Record Structures
@@ -230,6 +231,12 @@ struct SessionKeyRecord {
 struct Scope {
   method: Symbol,  // e.g., "pay", "transfer"
 }
+
+struct RegistryMeta {
+  name: String,         // Human-readable instance name
+  version: String,      // Semantic version string, e.g. "1.2.0"
+  description: String,  // Optional free-form notes
+}
 ```
 
 ## API Reference
@@ -253,11 +260,17 @@ Register a new account for the given owner with associated metadata.
 **Parameters:**
 - `owner` — Account owner (must be authenticated)
 - `account_address` — Address of the deployed account contract
-- `version` — Semantic version string (e.g., "1.0.0")
-- `description` — Human-readable description of the account
-- `author` — Author or team identifier
+- `version` — Semantic version string (e.g., "1.0.0"), max 32 characters
+- `description` — Human-readable description of the account, max 256 characters
+- `author` — Author or team identifier, max 64 characters
 
 **Returns:** Ok with account address if successful, Err if unauthorized or invalid
+
+**Errors:**
+- `Unauthorized` — Caller is not the owner
+- `InvalidAccount` — account_address equals owner
+- `TooManyAccounts` — Owner has reached the 64 account cap
+- `MetadataTooLarge` — Any metadata string exceeds its maximum length
 
 #### `get_account_metadata(owner, account_address) -> Result<AccountMetadata, Error>`
 
@@ -285,6 +298,19 @@ Get the total count of registered accounts across all owners.
 **Returns:** Total number of registered accounts
 
 ### Account Contract Public Functions
+
+#### `set_metadata(meta) -> Result<(), Error>`
+
+Store registry-level metadata for this account instance. Owner only.
+
+**Parameters:**
+- `meta` — `RegistryMeta` with name, version, and description
+
+**Returns:** Ok if successful, Err if not initialized or unauthorized
+
+#### `get_metadata() -> Option<RegistryMeta>`
+
+Return the stored registry metadata, or `None` if not set.
 
 #### `register_session_key(owner, session_key, expires_at, scopes) -> Result<(), Error>`
 
