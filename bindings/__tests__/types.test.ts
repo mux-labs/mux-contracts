@@ -6,6 +6,7 @@ import {
 } from "../src/network";
 import { MuxSpendingPolicyClient, MuxWalletRegistryClient } from "../src/index";
 import type { BatchOperationKind, Operation } from "../src/types";
+import { muxAccountErrorMessage } from "../src/types";
 
 describe("NETWORK_CONFIGS", () => {
   it("defines localnet config", () => {
@@ -103,6 +104,24 @@ describe("Network selection", () => {
     } else {
       delete process.env.SOROBAN_NETWORK;
     }
+  });
+});
+
+describe("muxAccountErrorMessage", () => {
+  it("resolves variant names to descriptions", () => {
+    expect(muxAccountErrorMessage("DelegateNotFound")).toBe("delegate not found");
+    expect(muxAccountErrorMessage("TooManyDelegates")).toBe("too many delegates");
+    expect(muxAccountErrorMessage("SpendLimitExceeded")).toBe("spend limit exceeded");
+  });
+
+  it("resolves numeric codes to descriptions", () => {
+    expect(muxAccountErrorMessage(4)).toBe("delegate not found");
+    expect(muxAccountErrorMessage(9)).toBe("too many delegates");
+    expect(muxAccountErrorMessage(11)).toBe("arithmetic overflow");
+  });
+
+  it("returns unknown for unmapped codes", () => {
+    expect(muxAccountErrorMessage(99)).toBe("unknown error code");
   });
 });
 

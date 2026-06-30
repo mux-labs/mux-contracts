@@ -37,6 +37,19 @@ Contract tag: `mux_acct`
 
 ---
 
+## mux-account-factory events
+
+Contract tag: `mux_fac`
+
+| Action | Trigger | Data payload |
+|---|---|---|
+| `deployed` | `deploy_account` or `deploy_account_with_metadata` succeeds | `(owner: Address, account_address: Address)` |
+| `meta_set` | `deploy_account_with_metadata` succeeds | `(owner: Address, account_address: Address, version: String)` |
+
+> `get_accounts`, `account_count`, and `get_account_metadata` are read-only and emit no events.
+
+---
+
 ## mux-permissions events
 
 Contract tag: `mux_perm`
@@ -51,6 +64,17 @@ Contract tag: `mux_perm`
 | `adm_prp` | `propose_admin` adds a new candidate | `new_admin: Address` |
 | `adm_apr` | `approve_admin` records an approval (threshold not yet reached) | `(approver: Address, new_admin: Address)` |
 | `adm_prm` | `approve_admin` promotes a candidate (threshold reached) | `new_admin: Address` |
+
+---
+
+## mux-delegation events
+
+Contract tag: `mux_dlg`
+
+| Action | Trigger | Data payload |
+|---|---|---|
+| `dlg_grant` | `grant_delegate` succeeds | `(owner: Address, delegate: Address)` |
+| `dlg_rev` | `revoke_delegate` succeeds | `(owner: Address, delegate: Address)` |
 
 ---
 
