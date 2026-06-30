@@ -26,7 +26,8 @@ export interface MuxAccountFactoryClientOptions {
 export type MuxAccountFactoryError =
   | "Unauthorized"
   | "InvalidAccount"
-  | "TooManyAccounts";
+  | "TooManyAccounts"
+  | "MetadataNotFound";
 
 export class MuxAccountFactoryClient {
   private contract: Contract;
