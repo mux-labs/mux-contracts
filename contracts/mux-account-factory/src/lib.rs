@@ -61,12 +61,22 @@ pub enum MuxAccountFactoryError {
     TooManyAccounts = 3,
     /// Metadata not found for the specified account.
     MetadataNotFound = 4,
+    // STORAGE-GRIEFING: unbounded metadata string sizes would let an owner
+    // bloat instance storage indefinitely.
+    MetadataTooLarge = 5,
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 /// Maximum accounts per owner to bound the Accounts vec in instance storage.
 const MAX_ACCOUNTS_PER_OWNER: u32 = 64;
+
+// STORAGE-GRIEFING: bound metadata string sizes to prevent owners from bloating
+// instance storage with large strings. Each account can have metadata, so with
+// 64 accounts per owner, unbounded strings could cause significant storage bloat.
+const MAX_VERSION_LENGTH: u32 = 32; // e.g., "1.2.3" or "v1.2.3-beta"
+const MAX_DESCRIPTION_LENGTH: u32 = 256; // Short human-readable description
+const MAX_AUTHOR_LENGTH: u32 = 64; // Author or team identifier
 
 // ── Storage TTL ───────────────────────────────────────────────────────────────
 // STORAGE-GRIEFING (T-21): extend instance TTL on every write so the factory
@@ -175,6 +185,17 @@ impl MuxAccountFactory {
         // STORAGE-GRIEFING: cap per-owner account list.
         if accounts.len() >= MAX_ACCOUNTS_PER_OWNER {
             return Err(MuxAccountFactoryError::TooManyAccounts);
+        }
+
+        // STORAGE-GRIEFING: validate metadata string sizes to prevent storage bloat.
+        if version.len() > MAX_VERSION_LENGTH as u32 {
+            return Err(MuxAccountFactoryError::MetadataTooLarge);
+        }
+        if description.len() > MAX_DESCRIPTION_LENGTH as u32 {
+            return Err(MuxAccountFactoryError::MetadataTooLarge);
+        }
+        if author.len() > MAX_AUTHOR_LENGTH as u32 {
+            return Err(MuxAccountFactoryError::MetadataTooLarge);
         }
 
         accounts.push_back(account_address.clone());
@@ -469,5 +490,85 @@ mod tests {
             &author,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_metadata_version_too_long() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        // Create a version string longer than MAX_VERSION_LENGTH (32)
+        let version = String::from_str(&env, "a".repeat(33).as_str());
+        let description = String::from_str(&env, "Test");
+        let author = String::from_str(&env, "test");
+
+        let result = client.try_deploy_account_with_metadata(
+            &owner,
+            &account_addr,
+            &version,
+            &description,
+            &author,
+        );
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::MetadataTooLarge)));
+    }
+
+    #[test]
+    fn test_metadata_description_too_long() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        let version = String::from_str(&env, "1.0.0");
+        // Create a description string longer than MAX_DESCRIPTION_LENGTH (256)
+        let description = String::from_str(&env, "a".repeat(257).as_str());
+        let author = String::from_str(&env, "test");
+
+        let result = client.try_deploy_account_with_metadata(
+            &owner,
+            &account_addr,
+            &version,
+            &description,
+            &author,
+        );
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::MetadataTooLarge)));
+    }
+
+    #[test]
+    fn test_metadata_author_too_long() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        let version = String::from_str(&env, "1.0.0");
+        let description = String::from_str(&env, "Test");
+        // Create an author string longer than MAX_AUTHOR_LENGTH (64)
+        let author = String::from_str(&env, "a".repeat(65).as_str());
+
+        let result = client.try_deploy_account_with_metadata(
+            &owner,
+            &account_addr,
+            &version,
+            &description,
+            &author,
+        );
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::MetadataTooLarge)));
+    }
+
+    #[test]
+    fn test_metadata_at_max_length_succeeds() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        // Create strings at exactly the maximum allowed length
+        let version = String::from_str(&env, "a".repeat(32).as_str());
+        let description = String::from_str(&env, "a".repeat(256).as_str());
+        let author = String::from_str(&env, "a".repeat(64).as_str());
+
+        let result = client.try_deploy_account_with_metadata(
+            &owner,
+            &account_addr,
+            &version,
+            &description,
+            &author,
+        );
+        assert!(result.is_ok());
     }
 }

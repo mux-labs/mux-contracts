@@ -253,11 +253,17 @@ Register a new account for the given owner with associated metadata.
 **Parameters:**
 - `owner` — Account owner (must be authenticated)
 - `account_address` — Address of the deployed account contract
-- `version` — Semantic version string (e.g., "1.0.0")
-- `description` — Human-readable description of the account
-- `author` — Author or team identifier
+- `version` — Semantic version string (e.g., "1.0.0"), max 32 characters
+- `description` — Human-readable description of the account, max 256 characters
+- `author` — Author or team identifier, max 64 characters
 
 **Returns:** Ok with account address if successful, Err if unauthorized or invalid
+
+**Errors:**
+- `Unauthorized` — Caller is not the owner
+- `InvalidAccount` — account_address equals owner
+- `TooManyAccounts` — Owner has reached the 64 account cap
+- `MetadataTooLarge` — Any metadata string exceeds its maximum length
 
 #### `get_account_metadata(owner, account_address) -> Result<AccountMetadata, Error>`
 

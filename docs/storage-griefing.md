@@ -30,6 +30,8 @@ On Soroban, every contract pays **rent** for the ledger entries it occupies.  Al
 
 Caps are enforced on **new insertions only**; updates to existing entries are always allowed.
 
+String size limits are enforced on metadata fields to prevent storage bloat through large strings.
+
 ### TTL auto-extension
 
 Every write operation in all three contracts calls:
