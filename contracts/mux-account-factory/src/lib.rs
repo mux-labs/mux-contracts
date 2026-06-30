@@ -316,7 +316,8 @@ mod tests {
     fn test_invalid_account_same_as_owner() {
         let (env, client) = setup();
         let owner = Address::generate(&env);
-        assert!(client.try_deploy_account(&owner, &owner).is_err());
+        let result = client.try_deploy_account(&owner, &owner);
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::InvalidAccount)));
     }
 
     #[test]
@@ -328,7 +329,7 @@ mod tests {
             client.deploy_account(&owner, &Address::generate(&env));
         }
         let result = client.try_deploy_account(&owner, &Address::generate(&env));
-        assert!(result.is_err());
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::TooManyAccounts)));
     }
 
     #[test]
@@ -445,6 +446,48 @@ mod tests {
     }
 
     #[test]
+    fn test_get_account_metadata_not_found_after_deploy_without_metadata() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        client.deploy_account(&owner, &account_addr);
+        let result = client.try_get_account_metadata(&owner, &account_addr);
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::MetadataNotFound)));
+    }
+
+    #[test]
+    fn test_get_account_metadata_wrong_owner() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let other_owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        let version = String::from_str(&env, "1.0.0");
+        let description = String::from_str(&env, "Test");
+        let author = String::from_str(&env, "test");
+
+        client.deploy_account_with_metadata(
+            &owner,
+            &account_addr,
+            &version,
+            &description,
+            &author,
+        );
+        let result = client.try_get_account_metadata(&other_owner, &account_addr);
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::MetadataNotFound)));
+    }
+
+    #[test]
+    fn test_deploy_account_unauthorized_without_auth() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxAccountFactory);
+        let client = MuxAccountFactoryClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        let result = client.try_deploy_account(&owner, &account_addr);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_deploy_account_with_metadata_enforces_cap() {
         let (env, client) = setup();
         env.budget().reset_unlimited();
@@ -471,7 +514,7 @@ mod tests {
             &description,
             &author,
         );
-        assert!(result.is_err());
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::TooManyAccounts)));
     }
 
     #[test]
@@ -489,7 +532,7 @@ mod tests {
             &description,
             &author,
         );
-        assert!(result.is_err());
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::InvalidAccount)));
     }
 
     #[test]

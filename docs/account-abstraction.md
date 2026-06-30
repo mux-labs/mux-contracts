@@ -190,6 +190,7 @@ DataKey::GuardianSet                        // Vec<Guardian addresses>
 DataKey::Nonce                              // Transaction counter
 DataKey::SessionKey(owner, session_key)    // SessionKeyRecord
 DataKey::SessionKeyIndex(owner)             // Vec<session key addresses>
+DataKey::Metadata                           // Optional RegistryMeta for this account instance
 ```
 
 ### Record Structures
@@ -229,6 +230,12 @@ struct SessionKeyRecord {
 
 struct Scope {
   method: Symbol,  // e.g., "pay", "transfer"
+}
+
+struct RegistryMeta {
+  name: String,         // Human-readable instance name
+  version: String,      // Semantic version string, e.g. "1.2.0"
+  description: String,  // Optional free-form notes
 }
 ```
 
@@ -291,6 +298,19 @@ Get the total count of registered accounts across all owners.
 **Returns:** Total number of registered accounts
 
 ### Account Contract Public Functions
+
+#### `set_metadata(meta) -> Result<(), Error>`
+
+Store registry-level metadata for this account instance. Owner only.
+
+**Parameters:**
+- `meta` — `RegistryMeta` with name, version, and description
+
+**Returns:** Ok if successful, Err if not initialized or unauthorized
+
+#### `get_metadata() -> Option<RegistryMeta>`
+
+Return the stored registry metadata, or `None` if not set.
 
 #### `register_session_key(owner, session_key, expires_at, scopes) -> Result<(), Error>`
 
