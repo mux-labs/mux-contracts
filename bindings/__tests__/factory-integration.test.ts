@@ -21,7 +21,7 @@ const config = NETWORK_CONFIGS[NETWORK];
 /** Contract ID for the factory on the active network (env-override supported). */
 const FACTORY_CONTRACT_ID =
   process.env[`${NETWORK.toUpperCase()}_MUX_ACCOUNT_FACTORY_ID`] ||
-  (config.contracts as Record<string, string>).muxAccountFactory ||
+  config.contracts.muxAccountFactory ||
   "";
 
 async function isNetworkAvailable(): Promise<boolean> {

@@ -55,6 +55,76 @@ export class MuxAccountFactoryClient {
     return this.submitAndRead<Address>(tx, sourceKeypair);
   }
 
+  async deployAccountWithMetadata(
+    sourceKeypair: Keypair,
+    owner: Address,
+    accountAddress: Address,
+    version: string,
+    description: string,
+    author: string
+  ): Promise<Address> {
+    const tx = await this.buildTx(sourceKeypair, "deploy_account_with_metadata", [
+      nativeToScVal(owner.toString(), { type: "address" }),
+      nativeToScVal(accountAddress.toString(), { type: "address" }),
+      nativeToScVal(version, { type: "string" }),
+      nativeToScVal(description, { type: "string" }),
+      nativeToScVal(author, { type: "string" }),
+    ]);
+    return this.submitAndRead<Address>(tx, sourceKeypair);
+  }
+
+  /**
+   * Simulate a deploy_account call without submitting any on-chain transaction
+   * (dry-run). Validates inputs and returns the account address that would be
+   * registered, or throws if validation fails.
+   */
+  async simulateDeploy(
+    sourceKeypair: Keypair,
+    owner: Address,
+    accountAddress: Address
+  ): Promise<Address> {
+    const tx = await this.buildTx(sourceKeypair, "simulate_deploy", [
+      nativeToScVal(owner.toString(), { type: "address" }),
+      nativeToScVal(accountAddress.toString(), { type: "address" }),
+    ]);
+    const result = await this.server.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(result)) {
+      throw new Error(`Simulation failed: ${result.error}`);
+    }
+    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+    if (!retval) throw new Error("Simulation returned no value");
+    return retval.value() as unknown as Address;
+  }
+
+  /**
+   * Simulate a deploy_account_with_metadata call without submitting any
+   * on-chain transaction (dry-run). Validates inputs and returns the account
+   * address that would be registered, or throws if validation fails.
+   */
+  async simulateDeployWithMetadata(
+    sourceKeypair: Keypair,
+    owner: Address,
+    accountAddress: Address,
+    version: string,
+    description: string,
+    author: string
+  ): Promise<Address> {
+    const tx = await this.buildTx(sourceKeypair, "simulate_deploy_with_metadata", [
+      nativeToScVal(owner.toString(), { type: "address" }),
+      nativeToScVal(accountAddress.toString(), { type: "address" }),
+      nativeToScVal(version, { type: "string" }),
+      nativeToScVal(description, { type: "string" }),
+      nativeToScVal(author, { type: "string" }),
+    ]);
+    const result = await this.server.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(result)) {
+      throw new Error(`Simulation failed: ${result.error}`);
+    }
+    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+    if (!retval) throw new Error("Simulation returned no value");
+    return retval.value() as unknown as Address;
+  }
+
   async getAccounts(
     sourceKeypair: Keypair,
     owner: Address
@@ -69,6 +139,24 @@ export class MuxAccountFactoryClient {
     const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
     if (!retval) return [];
     return retval.value() as unknown as Address[];
+  }
+
+  async getAccountMetadata(
+    sourceKeypair: Keypair,
+    owner: Address,
+    accountAddress: Address
+  ): Promise<{ version: string; description: string; author: string }> {
+    const tx = await this.buildTx(sourceKeypair, "get_account_metadata", [
+      nativeToScVal(owner.toString(), { type: "address" }),
+      nativeToScVal(accountAddress.toString(), { type: "address" }),
+    ]);
+    const result = await this.server.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(result)) {
+      throw new Error(`Simulation failed: ${result.error}`);
+    }
+    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+    if (!retval) throw new Error("Simulation returned no value");
+    return retval.value() as unknown as { version: string; description: string; author: string };
   }
 
   async accountCount(sourceKeypair: Keypair): Promise<bigint> {

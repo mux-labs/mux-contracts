@@ -67,6 +67,8 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   PermissionNotFound: 404,
   ContractNotFound: 404,
   WalletNotFound: 404,
+  MetadataNotFound: 404,
+  AdminNotFound: 404,
 
   // Validation/Constraint errors → 400
   InvalidAmount: 400,
