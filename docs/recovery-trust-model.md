@@ -192,7 +192,8 @@ This entrypoint is read-only (no event emitted) and is designed primarily for of
 - **M-of-N quorum implemented.** `execute_recovery` now requires `approvals.len() >= quorum_threshold`. Guardians call `approve_recovery(guardian)` to add their approval after `initiate_recovery` records the first. The threshold is set at `initialize` time and adjustable by the owner via `set_quorum_threshold`.
 - **Immutable guardian set after initialization.** Guardians cannot be rotated without redeploying the contract. A guardian rotation mechanism with its own timelock is planned.
 - **No guardian liveness check.** If all guardians lose their keys, recovery is impossible.
-- **No on-chain registry validation.** The `registry_id` field stores an address but does not call the registry at initialization time. Off-chain tooling must verify the link is correct and that the registry entry matches the deployed contract.
+  See [§8 Guardian Liveness and Last-Resort Recovery](#8-guardian-liveness-and-last-resort-recovery)
+  for operational guidance and recommended mitigations.
 
 ---
 

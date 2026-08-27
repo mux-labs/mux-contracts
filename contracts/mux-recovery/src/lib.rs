@@ -611,6 +611,18 @@ impl MuxRecovery {
             return Err(RecoveryError::Unauthorized);
         }
         owner.require_auth();
+
+        // Cross-contract registry validation (fail-closed).
+        // Call list_contracts on the registry to confirm it is live.
+        let result = env.try_invoke_contract::<soroban_sdk::Vec<soroban_sdk::Symbol>, soroban_sdk::Error>(
+            &registry_id,
+            &soroban_sdk::Symbol::new(&env, "list_contracts"),
+            soroban_sdk::Vec::new(&env),
+        );
+        if result.is_err() {
+            return Err(RecoveryError::RegistryNotFound);
+        }
+
         env.storage()
             .instance()
             .set(&DataKey::RegistryId, &registry_id);
@@ -1240,14 +1252,23 @@ mod tests {
         assert_eq!(client.recovery_request().unwrap().status, RecoveryStatus::Executed);
     }
 
-    // ── registry link (#403) ──────────────────────────────────────────────────
+    // ── registry link (#403 / #616) ───────────────────────────────────────────
 
     #[test]
-    fn test_set_registry_stores_address() {
+    fn test_set_registry_with_invalid_address_returns_registry_not_found() {
+        // A random address (not a deployed contract) must return RegistryNotFound.
+        // This is the regression guard: if cross-contract validation is removed the
+        // call would succeed against an invalid registry.
         let (_env, client, owner, _) = setup();
-        let registry = Address::generate(&_env);
-        client.set_registry(&owner, &registry);
-        assert_eq!(client.registry_id(), Some(registry));
+        let invalid_registry = Address::generate(&_env);
+        let result = client.try_set_registry(&owner, &invalid_registry);
+        assert_eq!(
+            result,
+            Err(Ok(RecoveryError::RegistryNotFound)),
+            "set_registry must reject a non-existent registry address"
+        );
+        // Registry must not be stored on failure.
+        assert!(client.registry_id().is_none());
     }
 
     #[test]
@@ -1257,27 +1278,18 @@ mod tests {
     }
 
     #[test]
-    fn test_set_registry_emits_event() {
+    fn test_set_registry_emits_no_event_on_failure() {
+        // On RegistryNotFound no reg_link event should be emitted.
         let (env, client, owner, _) = setup();
-        let registry = Address::generate(&env);
-        client.set_registry(&owner, &registry);
+        let invalid_registry = Address::generate(&env);
+        let _ = client.try_set_registry(&owner, &invalid_registry);
         let events = env.events().all();
-        // init + reg_link
-        assert_eq!(events.len(), 2);
-        assert_eq!(topic_action(&env, &events, 1), symbol_short!("reg_link"));
+        // Only the init event from setup() should be present.
+        assert_eq!(events.len(), 1);
+        assert_eq!(topic_action(&env, &events, 0), symbol_short!("init"));
     }
 
-    #[test]
-    fn test_set_registry_requires_owner_auth() {
-        // mock_all_auths() satisfies any auth requirement, so the call must
-        // succeed — this test verifies the method compiles and executes without
-        // panicking when auth is mocked.
-        let (env, client, owner, _) = setup();
-        let registry = Address::generate(&env);
-        client.set_registry(&owner, &registry);
-        assert_eq!(client.registry_id(), Some(registry));
-    }
-
+    /// RegistryNotFound error code must be 12 — stable ABI.
     #[test]
     fn test_set_registry_non_owner_rejected() {
         // Fail-closed: even with auth fully mocked, a caller-supplied `owner`
