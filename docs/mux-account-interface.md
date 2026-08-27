@@ -17,7 +17,9 @@ extend instance-storage TTL.
 | `set_metadata` | stored owner |
 | `register_session_key` | stored owner |
 | `revoke_session_key` | stored owner |
-| `execute_with_session` | authorized session key (`session_key.require_auth()`); payload dispatch itself is not yet implemented |
+| `execute_with_session` | authorized session key (`session_key.require_auth()`) |
+| `execute_with_session_sponsored` | allowlisted sponsor **and** authorized session key |
+| `set_sponsor` | stored owner |
 | Read-only entrypoints | none |
 
 Owner-only calls fail with a host authorization error when the signature is
@@ -67,15 +69,23 @@ missing. Contract validation failures use `MuxAccountError`.
   owner.
 - `revoke_session_key(session_key) -> Result<(), MuxAccountError>` marks a
   registered session key as revoked.
-- `execute_with_session(session_key, payload) -> Result<Bytes, MuxAccountError>`
+- `execute_with_session(session_key, target, function, args) -> Result<Val, MuxAccountError>`
   validates that `session_key` is authorized, registered, non-revoked, and
-  non-expired, then emits an execution audit event and returns empty bytes.
-  **Fail-closed scope enforcement (T-40):** a key registered with an empty
-  `scopes` list is rejected with `Unauthorized` — a key with zero granted
-  capabilities cannot execute anything. It does not decode or dispatch
-  `payload`, so a **non-empty** scope list is not matched against the
-  payload's target method. See [aa_sequence_diagram.md](aa_sequence_diagram.md)
-  for the gap between this and the intended account-abstraction execution flow.
+  non-expired, then invokes `function` on `target` and forwards its return
+  value. **Fail-closed scope enforcement:** a key registered with an empty
+  `scopes` list is rejected with `Unauthorized` (T-40), and a `function` that is
+  not named in a non-empty `scopes` list is rejected with `ScopeNotGranted`.
+  The reentrancy guard is held across the invocation, so a callback into
+  `execute`, `debit_spend`, or this entrypoint is rejected. Emits `ses_exe`.
+- `execute_with_session_sponsored(session_key, sponsor, target, function, args) -> Result<Val, MuxAccountError>`
+  is the gas-abstracted variant: the relayer submits and pays, and both the
+  sponsor and the session key must authorize. The sponsor must be on the
+  owner-managed allowlist or the call is rejected with `SponsorNotAuthorized`
+  before any session state is read. Sponsorship never widens a session key's
+  scopes. See [relayer-integration.md](relayer-integration.md).
+- `set_sponsor(sponsor, allowed) -> Result<(), MuxAccountError>` adds or removes
+  a relayer from the sponsorship allowlist. Owner only; emits `spn_set`.
+- `is_sponsor(sponsor) -> bool` returns allowlist membership.
 - `set_metadata(meta) -> Result<(), MuxAccountError>` stores owner-controlled
   `RegistryMeta`.
 - `get_metadata() -> Option<RegistryMeta>` returns metadata when present.
@@ -96,11 +106,14 @@ missing. Contract validation failures use `MuxAccountError`.
 | 10 | `ReentrancyDetected` | Spend accounting is already executing |
 | 11 | `ArithmeticOverflow` | Spend addition overflowed |
 | 12 | `TooManySessionKeys` | Session-key cap is reached |
+| 13 | `ScopeNotGranted` | Invoked method is not in the session key's scopes |
+| 14 | `SponsorNotAuthorized` | Relayer is not on the sponsor allowlist |
 
 ## Events
 
 Events use topics `(mux_acct, action)`. The actions are `init`, `unpaused`,
-`dlg_set`, `dlg_rm`, `lmt_set`, `debited`, `ses_exe`, and `meta_set`.
+`dlg_set`, `dlg_rm`, `lmt_set`, `debited`, `ses_exe`, `spn_set`, and
+`meta_set`.
 See [audit events](audit-events.md) for payload shapes.
 
 ## Binding notes

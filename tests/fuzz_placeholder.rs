@@ -91,10 +91,23 @@ mod fuzz_instruction_data {
 #[cfg(test)]
 mod fuzz_account {
     use mux_account::{MuxAccount, MuxAccountClient, MuxAccountError, Scope};
-    use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Bytes, Env, Vec};
+    use soroban_sdk::{
+        contract, contractimpl, symbol_short, testutils::Address as _, vec, Address, Env, Val, Vec,
+    };
 
     const MAX_DELEGATES: u32 = 64;
     const MAX_SESSION_KEYS: u32 = 32;
+
+    /// Minimal dispatch target exposing the `pay` method the flood tests grant.
+    #[contract]
+    struct PayTarget;
+
+    #[contractimpl]
+    impl PayTarget {
+        pub fn pay() -> u32 {
+            1
+        }
+    }
 
     fn setup() -> (Env, MuxAccountClient<'static>, Address) {
         let env = Env::default();
@@ -244,14 +257,18 @@ mod fuzz_account {
 
         // The overflowing key must never have been authorized to execute —
         // the cap rejection must not silently fall through to a usable key.
-        let overflow_exec = client.try_execute_with_session(&overflow, &Bytes::new(&env));
+        let target = env.register_contract(None, PayTarget);
+        let pay = symbol_short!("pay");
+        let args: Vec<Val> = Vec::new(&env);
+        let overflow_exec =
+            client.try_execute_with_session(&overflow, &target, &pay, &args);
         assert_eq!(overflow_exec, Err(Ok(MuxAccountError::Unauthorized)));
 
         // Every key registered before the cap was hit must still authorize —
         // rejecting the flood must not have silently skipped or corrupted
         // the entries already within bounds.
         for sk in keys.iter() {
-            let exec = client.try_execute_with_session(&sk, &Bytes::new(&env));
+            let exec = client.try_execute_with_session(&sk, &target, &pay, &args);
             assert!(
                 exec.is_ok(),
                 "pre-cap session key must still authorize: {exec:?}"
@@ -281,7 +298,13 @@ mod fuzz_account {
             "updating an existing session key at the cap must succeed: {result:?}"
         );
 
-        let exec = client.try_execute_with_session(&existing, &Bytes::new(&env));
+        let target = env.register_contract(None, PayTarget);
+        let exec = client.try_execute_with_session(
+            &existing,
+            &target,
+            &symbol_short!("pay"),
+            &Vec::<Val>::new(&env),
+        );
         assert!(exec.is_ok(), "updated key must still authorize: {exec:?}");
     }
 }

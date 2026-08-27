@@ -51,7 +51,8 @@ Contract tags (`topics[0]`) identify the emitting crate. The action tag in `topi
 
 | Reserved action tag | Contract | Event | Indexer meaning |
 |---|---|---|---|
-| `ses_exe` | `mux-account` | `execute_with_session` | A session-authorized call completed |
+| `ses_exe` | `mux-account` | `execute_with_session`, `execute_with_session_sponsored` | A session-authorized call was dispatched and completed |
+| `spn_set` | `mux-account` | `set_sponsor` | A relayer was added to or removed from the sponsorship allowlist |
 | `bat_ok` | `mux-batcher` | `execute_batch` | A batch completed with zero failures |
 | `rec_init` | `mux-recovery` | `initiate_recovery` | A recovery timelock was started |
 

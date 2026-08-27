@@ -29,8 +29,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, Env, Map,
-    String, Symbol, Val, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Map, String,
+    Symbol, Val, Vec,
 };
 
 // ── Audit events ──────────────────────────────────────────────────────────────
@@ -64,6 +64,8 @@ pub enum DataKey {
     Executing,
     /// Optional registry-level metadata for this account instance.
     Metadata,
+    /// Relayer allowlist entry: DataKey::Sponsor(relayer) -> bool
+    Sponsor(Address),
 }
 
 // ── Registry metadata ─────────────────────────────────────────────────────────
@@ -123,11 +125,17 @@ pub struct SessionKeyRecord {
 }
 
 /// Audit payload emitted after a successful session execution.
+///
+/// `sponsor` is `None` for a directly submitted session call and carries the
+/// relayer address when the call was gas-sponsored via
+/// [`MuxAccount::execute_with_session_sponsored`].
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct SessionExecutedEvent {
     pub session_key: Address,
-    pub payload_len: u32,
+    pub target: Address,
+    pub function: Symbol,
+    pub sponsor: Option<Address>,
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────
@@ -148,6 +156,8 @@ pub enum MuxAccountError {
     ReentrancyDetected = 10,
     ArithmeticOverflow = 11,
     TooManySessionKeys = 12,
+    ScopeNotGranted = 13,
+    SponsorNotAuthorized = 14,
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -579,59 +589,136 @@ impl MuxAccount {
         Ok(())
     }
 
-    /// Execute a transaction payload on behalf of the account using a delegated session key.
+    // === Relayer sponsorship
+
+    /// Add or remove a relayer from the gas-sponsorship allowlist. Owner only.
     ///
-    /// This function allows a delegated session key to execute a transaction payload
-    /// without requiring the account owner's direct authorization. The session key
-    /// must be authorized for the current account (validated via the session registry).
+    /// Sponsorship is fail-closed: a relayer that was never allowlisted (or was
+    /// removed) cannot submit a sponsored session call, even if it holds a
+    /// valid session-key signature. Emits a `spn_set` audit event.
+    pub fn set_sponsor(
+        env: Env,
+        sponsor: Address,
+        allowed: bool,
+    ) -> Result<(), MuxAccountError> {
+        Self::require_not_paused(&env)?;
+        Self::require_owner(&env)?;
+        if allowed {
+            env.storage()
+                .instance()
+                .set(&DataKey::Sponsor(sponsor.clone()), &true);
+        } else {
+            env.storage()
+                .instance()
+                .remove(&DataKey::Sponsor(sponsor.clone()));
+        }
+        emit(&env, symbol_short!("spn_set"), (sponsor, allowed));
+        Self::extend_ttl(&env);
+        Ok(())
+    }
+
+    /// Return whether `sponsor` is currently allowed to relay session calls.
+    pub fn is_sponsor(env: Env, sponsor: Address) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Sponsor(sponsor))
+            .unwrap_or(false)
+    }
+
+    // === Session execution
+
+    /// Execute a call on `target` on behalf of the account using a delegated
+    /// session key.
+    ///
+    /// The session key signs instead of the owner: the owner pre-authorizes the
+    /// key out of band with a scope list, and the key may afterwards invoke only
+    /// the methods that list names. The call is dispatched under this contract's
+    /// authorization context while the reentrancy guard is held, so a callback
+    /// into `execute`, `debit_spend`, or this entrypoint is rejected.
     ///
     /// # Arguments
-    /// * `env` - The Soroban environment
     /// * `session_key` - The address of the authorized session key
-    /// * `payload` - The serialized transaction payload to execute
+    /// * `target` - Contract to invoke
+    /// * `function` - Method on `target`; must be present in the key's scopes
+    /// * `args` - Arguments forwarded verbatim to `target`
     ///
     /// # Returns
-    /// * `Ok(Bytes)` - Empty result on successful execution
-    /// * `Err(MuxAccountError)` - If session key is not authorized or invalid
+    /// * `Ok(Val)` - The target's return value
+    /// * `Err(MuxAccountError)` - If the session key or the scope is invalid
     ///
     /// # Events
     /// Emits a `ses_exe` event on successful execution.
     pub fn execute_with_session(
         env: Env,
         session_key: Address,
-        payload: Bytes,
-    ) -> Result<Bytes, MuxAccountError> {
+        target: Address,
+        function: Symbol,
+        args: Vec<Val>,
+    ) -> Result<Val, MuxAccountError> {
         Self::require_not_paused(&env)?;
         session_key.require_auth();
-        let owner = Self::stored_owner(&env)?;
-        let record: SessionKeyRecord = env
-            .storage()
-            .instance()
-            .get(&DataKey::SessionKey(owner, session_key.clone()))
-            .ok_or(MuxAccountError::Unauthorized)?;
-        if record.revoked || env.ledger().timestamp() >= record.expires_at {
-            return Err(MuxAccountError::Unauthorized);
-        }
-        // FAIL-CLOSED (T-08 in docs/threat-model.md): a session key granted
-        // **no** scopes has zero capabilities and must not be able to execute
-        // anything. Accepting it would be a silent skip of scope enforcement
-        // — `scopes` is the capability list the owner granted at registration,
-        // and an empty list means "no capabilities". Reject instead of
-        // returning Ok.
-        if record.scopes.is_empty() {
-            return Err(MuxAccountError::Unauthorized);
-        }
+        Self::authorize_session(&env, &session_key, &function)?;
+        let result = Self::dispatch(&env, &target, &function, args)?;
 
         emit(
             &env,
             symbol_short!("ses_exe"),
             SessionExecutedEvent {
                 session_key,
-                payload_len: payload.len(),
+                target,
+                function,
+                sponsor: None,
             },
         );
         Self::extend_ttl(&env);
-        Ok(Bytes::new(&env))
+        Ok(result)
+    }
+
+    /// Gas-abstracted variant of [`Self::execute_with_session`]: a relayer
+    /// submits (and pays the network fee for) a call authorized by a session
+    /// key it does not own.
+    ///
+    /// Both parties must authorize: `sponsor` proves it submitted the call and
+    /// `session_key` proves the account granted the capability. The sponsor must
+    /// also be on the owner-managed allowlist — sponsorship never widens what a
+    /// session key may do, it only decides who may pay for it.
+    ///
+    /// # Events
+    /// Emits a `ses_exe` event carrying `sponsor: Some(relayer)`.
+    pub fn execute_with_session_sponsored(
+        env: Env,
+        session_key: Address,
+        sponsor: Address,
+        target: Address,
+        function: Symbol,
+        args: Vec<Val>,
+    ) -> Result<Val, MuxAccountError> {
+        Self::require_not_paused(&env)?;
+        sponsor.require_auth();
+        if !env
+            .storage()
+            .instance()
+            .get(&DataKey::Sponsor(sponsor.clone()))
+            .unwrap_or(false)
+        {
+            return Err(MuxAccountError::SponsorNotAuthorized);
+        }
+        session_key.require_auth();
+        Self::authorize_session(&env, &session_key, &function)?;
+        let result = Self::dispatch(&env, &target, &function, args)?;
+
+        emit(
+            &env,
+            symbol_short!("ses_exe"),
+            SessionExecutedEvent {
+                session_key,
+                target,
+                function,
+                sponsor: Some(sponsor),
+            },
+        );
+        Self::extend_ttl(&env);
+        Ok(result)
     }
 
     // ── Registry metadata ──────────────────────────────────────────────────────
@@ -688,6 +775,62 @@ impl MuxAccount {
         env.storage()
             .instance()
             .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    /// Validate a session key against the stored `SessionKeyRecord` and the
+    /// method it is trying to reach.
+    ///
+    /// FAIL-CLOSED (T-08, T-40 in docs/threat-model.md): every rejection path
+    /// returns an error rather than falling through. A key that is unknown,
+    /// revoked, or expired is rejected; a key granted **no** scopes has zero
+    /// capabilities and is rejected; and a key whose scope list does not name
+    /// `function` is rejected with `ScopeNotGranted`. `scopes` is the capability
+    /// list the owner granted at registration, so a non-empty list is not a
+    /// blanket permit — it is matched against the method actually invoked.
+    fn authorize_session(
+        env: &Env,
+        session_key: &Address,
+        function: &Symbol,
+    ) -> Result<(), MuxAccountError> {
+        let owner = Self::stored_owner(env)?;
+        let record: SessionKeyRecord = env
+            .storage()
+            .instance()
+            .get(&DataKey::SessionKey(owner, session_key.clone()))
+            .ok_or(MuxAccountError::Unauthorized)?;
+        if record.revoked || env.ledger().timestamp() >= record.expires_at {
+            return Err(MuxAccountError::Unauthorized);
+        }
+        if record.scopes.is_empty() {
+            return Err(MuxAccountError::Unauthorized);
+        }
+        let mut granted = false;
+        for scope in record.scopes.iter() {
+            if scope.method == *function {
+                granted = true;
+                break;
+            }
+        }
+        if !granted {
+            return Err(MuxAccountError::ScopeNotGranted);
+        }
+        Ok(())
+    }
+
+    /// Invoke `target` while holding the reentrancy guard, releasing it on
+    /// every exit path. Session execution keeps no spend accounting of its own;
+    /// a target that moves funds must call back into `debit_spend`, which the
+    /// held guard rejects for the duration of this call.
+    fn dispatch(
+        env: &Env,
+        target: &Address,
+        function: &Symbol,
+        args: Vec<Val>,
+    ) -> Result<Val, MuxAccountError> {
+        Self::acquire_guard(env)?;
+        let result = env.invoke_contract::<Val>(target, function, args);
+        Self::release_guard(env);
+        Ok(result)
     }
 
     /// Enforce the session key storage cap (T-22).
@@ -1299,18 +1442,34 @@ mod tests {
         ]
     }
 
+    /// Scope list granting exactly the `ping` method of `ExecuteTarget`, used
+    /// by the dispatch tests.
+    fn ping_scope(env: &Env) -> soroban_sdk::Vec<Scope> {
+        soroban_sdk::vec![
+            &env,
+            Scope {
+                method: symbol_short!("ping"),
+            },
+        ]
+    }
+
     #[test]
     fn test_execute_with_session_emits_event() {
         let (env, client, owner, _cid) = setup();
         client.initialize(&owner, &Vec::new(&env));
+        let target = env.register_contract(None, ExecuteTarget);
         let session_key = Address::generate(&env);
         client.register_session_key(
             &session_key,
             &(env.ledger().timestamp() + 60),
-            &pay_scope(&env),
+            &ping_scope(&env),
         );
-        let payload = Bytes::new(&env);
-        let _ = client.execute_with_session(&session_key, &payload);
+        let _ = client.execute_with_session(
+            &session_key,
+            &target,
+            &symbol_short!("ping"),
+            &Vec::new(&env),
+        );
         let events = env.events().all();
         // init + ses_exe
         assert!(events.len() >= 2);
@@ -1320,31 +1479,197 @@ mod tests {
         );
     }
 
+    /// Phase 2 milestone: `execute_with_session` must actually dispatch to the
+    /// target contract, not just validate the key and return an empty value.
+    /// This test fails if the entrypoint regresses to a validation-only stub.
+    #[test]
+    fn test_execute_with_session_dispatches_to_target() {
+        let (env, client, owner, _cid) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let target = env.register_contract(None, ExecuteTarget);
+        let session_key = Address::generate(&env);
+        client.register_session_key(
+            &session_key,
+            &(env.ledger().timestamp() + 60),
+            &ping_scope(&env),
+        );
+
+        let value = client.execute_with_session(
+            &session_key,
+            &target,
+            &symbol_short!("ping"),
+            &Vec::new(&env),
+        );
+        assert_eq!(
+            u32::from_val(&env, &value),
+            7,
+            "the target's return value must be forwarded to the caller"
+        );
+
+        let events = env.events().all();
+        let (_, _, data) = events.get(events.len() - 1).unwrap();
+        let payload = SessionExecutedEvent::from_val(&env, &data);
+        assert_eq!(payload.target, target);
+        assert_eq!(payload.function, symbol_short!("ping"));
+        assert_eq!(payload.sponsor, None);
+    }
+
+    /// Fail-closed scope matching: a non-empty scope list is not a blanket
+    /// permit. A key scoped to `pay` must not be able to reach `ping`.
+    #[test]
+    fn test_execute_with_session_rejects_method_outside_scopes() {
+        let (env, client, owner, _cid) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let target = env.register_contract(None, ExecuteTarget);
+        let session_key = Address::generate(&env);
+        client.register_session_key(
+            &session_key,
+            &(env.ledger().timestamp() + 60),
+            &pay_scope(&env),
+        );
+
+        assert_eq!(
+            client.try_execute_with_session(
+                &session_key,
+                &target,
+                &symbol_short!("ping"),
+                &Vec::new(&env),
+            ),
+            Err(Ok(MuxAccountError::ScopeNotGranted)),
+            "a method absent from the granted scopes must fail closed"
+        );
+        // Nothing may be emitted on the rejected path.
+        assert_eq!(env.events().all().len(), 1);
+    }
+
+    // ── Relayer sponsorship ──────────────────────────────────────────────────
+
+    /// Sponsorship is fail-closed: a relayer that was never allowlisted cannot
+    /// relay a session call even when the session key itself is valid.
+    #[test]
+    fn test_sponsored_execution_rejects_unknown_sponsor() {
+        let (env, client, owner, _cid) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let target = env.register_contract(None, ExecuteTarget);
+        let session_key = Address::generate(&env);
+        client.register_session_key(
+            &session_key,
+            &(env.ledger().timestamp() + 60),
+            &ping_scope(&env),
+        );
+        let relayer = Address::generate(&env);
+
+        assert_eq!(
+            client.try_execute_with_session_sponsored(
+                &session_key,
+                &relayer,
+                &target,
+                &symbol_short!("ping"),
+                &Vec::new(&env),
+            ),
+            Err(Ok(MuxAccountError::SponsorNotAuthorized))
+        );
+    }
+
+    #[test]
+    fn test_sponsored_execution_dispatches_and_records_sponsor() {
+        let (env, client, owner, _cid) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let target = env.register_contract(None, ExecuteTarget);
+        let session_key = Address::generate(&env);
+        client.register_session_key(
+            &session_key,
+            &(env.ledger().timestamp() + 60),
+            &ping_scope(&env),
+        );
+        let relayer = Address::generate(&env);
+        client.set_sponsor(&relayer, &true);
+        assert!(client.is_sponsor(&relayer));
+
+        let value = client.execute_with_session_sponsored(
+            &session_key,
+            &relayer,
+            &target,
+            &symbol_short!("ping"),
+            &Vec::new(&env),
+        );
+        assert_eq!(u32::from_val(&env, &value), 7);
+
+        let events = env.events().all();
+        let (_, _, data) = events.get(events.len() - 1).unwrap();
+        let payload = SessionExecutedEvent::from_val(&env, &data);
+        assert_eq!(payload.sponsor, Some(relayer.clone()));
+
+        // Removal is immediate and fail-closed.
+        client.set_sponsor(&relayer, &false);
+        assert!(!client.is_sponsor(&relayer));
+        assert_eq!(
+            client.try_execute_with_session_sponsored(
+                &session_key,
+                &relayer,
+                &target,
+                &symbol_short!("ping"),
+                &Vec::new(&env),
+            ),
+            Err(Ok(MuxAccountError::SponsorNotAuthorized))
+        );
+    }
+
+    /// A sponsor never widens a session key's capabilities — the scope check
+    /// still applies on the sponsored path.
+    #[test]
+    fn test_sponsored_execution_still_enforces_scopes() {
+        let (env, client, owner, _cid) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let target = env.register_contract(None, ExecuteTarget);
+        let session_key = Address::generate(&env);
+        client.register_session_key(
+            &session_key,
+            &(env.ledger().timestamp() + 60),
+            &pay_scope(&env),
+        );
+        let relayer = Address::generate(&env);
+        client.set_sponsor(&relayer, &true);
+
+        assert_eq!(
+            client.try_execute_with_session_sponsored(
+                &session_key,
+                &relayer,
+                &target,
+                &symbol_short!("ping"),
+                &Vec::new(&env),
+            ),
+            Err(Ok(MuxAccountError::ScopeNotGranted))
+        );
+    }
+
     #[test]
     fn test_execute_with_session_rejects_unknown_revoked_and_expired_keys() {
         let (env, client, owner, _cid) = setup();
         client.initialize(&owner, &Vec::new(&env));
+        let target = env.register_contract(None, ExecuteTarget);
         let session_key = Address::generate(&env);
-        let payload = Bytes::new(&env);
+        let ping = symbol_short!("ping");
+        let args: Vec<Val> = Vec::new(&env);
         assert_eq!(
-            client.try_execute_with_session(&session_key, &payload),
+            client.try_execute_with_session(&session_key, &target, &ping, &args),
             Err(Ok(MuxAccountError::Unauthorized))
         );
 
         client.register_session_key(
             &session_key,
             &(env.ledger().timestamp() + 60),
-            &pay_scope(&env),
+            &ping_scope(&env),
         );
         client.revoke_session_key(&session_key);
         assert_eq!(
-            client.try_execute_with_session(&session_key, &payload),
+            client.try_execute_with_session(&session_key, &target, &ping, &args),
             Err(Ok(MuxAccountError::Unauthorized))
         );
 
-        client.register_session_key(&session_key, &env.ledger().timestamp(), &pay_scope(&env));
+        client.register_session_key(&session_key, &env.ledger().timestamp(), &ping_scope(&env));
         assert_eq!(
-            client.try_execute_with_session(&session_key, &payload),
+            client.try_execute_with_session(&session_key, &target, &ping, &args),
             Err(Ok(MuxAccountError::Unauthorized))
         );
     }
@@ -1362,9 +1687,14 @@ mod tests {
             &(env.ledger().timestamp() + 60),
             &Vec::new(&env),
         );
-        let payload = Bytes::new(&env);
+        let target = env.register_contract(None, ExecuteTarget);
         assert_eq!(
-            client.try_execute_with_session(&session_key, &payload),
+            client.try_execute_with_session(
+                &session_key,
+                &target,
+                &symbol_short!("ping"),
+                &Vec::new(&env),
+            ),
             Err(Ok(MuxAccountError::Unauthorized)),
             "empty-scope session key must fail closed"
         );
@@ -1560,10 +1890,15 @@ mod tests {
         client.register_session_key(
             &session_key,
             &(env.ledger().timestamp() + 60),
-            &pay_scope(&env),
+            &ping_scope(&env),
         );
-        let payload = Bytes::new(&env);
-        let _ = client.execute_with_session(&session_key, &payload);
+        let target = env.register_contract(None, ExecuteTarget);
+        let _ = client.execute_with_session(
+            &session_key,
+            &target,
+            &symbol_short!("ping"),
+            &Vec::new(&env),
+        );
 
         let ttl_after = instance_ttl(&env, &cid);
         assert!(
@@ -1611,6 +1946,7 @@ mod tests {
             symbol_short!("ses_exe"),
             symbol_short!("meta_set"),
             symbol_short!("unpaused"),
+            symbol_short!("spn_set"),
         ];
         // symbol_short! validates length at compile time; reaching here is sufficient.
     }

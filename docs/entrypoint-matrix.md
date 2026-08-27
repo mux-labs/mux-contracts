@@ -42,9 +42,10 @@ by a specific actor; public entrypoints are callable by anyone.
 | `guardians()` | P | Read-only |
 | `register_session_key(session_key, expires_at, scopes)` | A | Owner only; paused check; capped at `MAX_SESSION_KEYS` |
 | `revoke_session_key(session_key)` | A | Owner only; paused check |
-| `execute_with_session(session_key, payload)` | U | Session key auth; validates registration/revocation/expiry **and enforces scopes fail-closed** — a key registered with an empty `scopes` list is rejected with `Unauthorized` (T-40 in [threat-model.md](threat-model.md)). Does not execute `payload` (see [aa_sequence_diagram.md](aa_sequence_diagram.md)) |
-| `set_metadata(meta)` | A | Owner only |
-| `execute_with_session(session_key, payload)` | U | Session key auth; validates registration/revocation/expiry only — does not execute `payload` (see [aa_sequence_diagram.md](aa_sequence_diagram.md)) |
+| `execute_with_session(session_key, target, function, args)` | U | Session key auth; validates registration/revocation/expiry **and enforces scopes fail-closed** — an empty `scopes` list is rejected with `Unauthorized` (T-40 in [threat-model.md](threat-model.md)) and a `function` absent from a non-empty list with `ScopeNotGranted`. Dispatches to `target` while the reentrancy guard is held; emits `ses_exe` |
+| `execute_with_session_sponsored(session_key, sponsor, target, function, args)` | U | Sponsor auth **and** session key auth; sponsor must be on the owner-managed allowlist (`SponsorNotAuthorized` otherwise); identical session validation and dispatch as above. See [relayer-integration.md](relayer-integration.md) |
+| `set_sponsor(sponsor, allowed)` | A | Owner only; paused check; adds/removes a relayer from the sponsorship allowlist; emits `spn_set` |
+| `is_sponsor(sponsor)` | P | Read-only |
 | `set_metadata(meta)` | A | Owner only; emits `meta_set` event |
 | `get_metadata()` | P | Read-only |
 

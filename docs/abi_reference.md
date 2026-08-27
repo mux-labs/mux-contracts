@@ -190,6 +190,14 @@ pub struct SessionKeyRecord {
     pub revoked: bool,
 }
 
+/// Audit payload emitted after a successful session execution.
+pub struct SessionExecutedEvent {
+    pub session_key: Address,
+    pub target: Address,
+    pub function: Symbol,
+    pub sponsor: Option<Address>,
+}
+
 /// Registry-level metadata for this account instance.
 pub struct RegistryMeta {
     pub name: String,
@@ -224,7 +232,10 @@ pub struct RegistryMeta {
 | `guardians` | — | `Result<Vec<Address>, MuxAccountError>` | Return guardian set |
 | `register_session_key` | `session_key: Address, expires_at: u64, scopes: Vec<Scope>` | `Result<(), MuxAccountError>` | Register or replace a session key (max `MAX_SESSION_KEYS` per owner); owner-only |
 | `revoke_session_key` | `session_key: Address` | `Result<(), MuxAccountError>` | Revoke a registered session key; owner-only |
-| `execute_with_session` | `session_key: Address, payload: Bytes` | `Result<Bytes, MuxAccountError>` | Validate an authorized, non-expired, non-revoked session key; **fail-closed scope check (T-40)** — a key with an empty `scopes` list is rejected with `Unauthorized`. Does not decode or execute `payload`; returns empty `Bytes` on success. See [`docs/aa_sequence_diagram.md`](aa_sequence_diagram.md) for the remaining gap (non-empty scopes are not matched against the payload's target method) |
+| `execute_with_session` | `session_key: Address, target: Address, function: Symbol, args: Vec<Val>` | `Result<Val, MuxAccountError>` | Session-key-authorized contract call. Validates registration, revocation, and expiry; **fail-closed scope check** — an empty `scopes` list is rejected with `Unauthorized` (T-40) and a `function` absent from a non-empty list with `ScopeNotGranted`. Dispatches to `target` while the reentrancy guard is held and forwards its return value |
+| `execute_with_session_sponsored` | `session_key: Address, sponsor: Address, target: Address, function: Symbol, args: Vec<Val>` | `Result<Val, MuxAccountError>` | As above, submitted and paid for by an allowlisted relayer; both `sponsor` and `session_key` authorize. `SponsorNotAuthorized` if the relayer is not allowlisted. See [`docs/relayer-integration.md`](relayer-integration.md) |
+| `set_sponsor` | `sponsor: Address, allowed: bool` | `Result<(), MuxAccountError>` | Add or remove a relayer from the gas-sponsorship allowlist; owner-only |
+| `is_sponsor` | `sponsor: Address` | `bool` | Return whether a relayer may currently sponsor session calls |
 | `set_metadata` | `meta: RegistryMeta` | `Result<(), MuxAccountError>` | Store registry-level metadata for this account instance; owner-only |
 | `get_metadata` | — | `Option<RegistryMeta>` | Return stored registry metadata, or `None` if not set |
 
@@ -238,7 +249,8 @@ pub struct RegistryMeta {
 | `dlg_rm` | `delegate: Address` | Delegate removed |
 | `lmt_set` | `(asset: Address, amount: i128, period_ledgers: u32)` | Spend limit set |
 | `debited` | `(asset: Address, spend: i128)` | Spend debited |
-| `ses_exe` | `SessionExecutedEvent { session_key: Address, payload_len: u32 }` | Session key execution without duplicating payload data |
+| `ses_exe` | `SessionExecutedEvent { session_key: Address, target: Address, function: Symbol, sponsor: Option<Address> }` | A session-authorized call was dispatched; `sponsor` is `Some(relayer)` when sponsored |
+| `spn_set` | `(sponsor: Address, allowed: bool)` | `set_sponsor` succeeds |
 | `meta_set` | `name: String` | `set_metadata` succeeds |
 
 ### Errors
@@ -257,6 +269,8 @@ pub struct RegistryMeta {
 | `ReentrancyDetected` | 10 | Reentrant `debit_spend` call detected |
 | `ArithmeticOverflow` | 11 | Arithmetic overflow in spend tracking |
 | `TooManySessionKeys` | 12 | Owner has reached `MAX_SESSION_KEYS` (32) |
+| `ScopeNotGranted` | 13 | Invoked method is not named in the session key's `scopes` |
+| `SponsorNotAuthorized` | 14 | Relayer is not on the account's sponsor allowlist |
 
 ---
 

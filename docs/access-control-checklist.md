@@ -39,9 +39,10 @@ Legend:
       `invoke_contract` returns (checks-effects-interactions; see §5.2);
       emits `executed` event on success.
 - [ ] `register_session_key` / `revoke_session_key` — `require_owner` helper called.
-- [ ] `execute_with_session` — `session_key.require_auth()` called, plus revocation/expiry check against the stored `SessionKeyRecord`. **Fail-closed scope enforcement (T-40):** a key registered with an empty `scopes` list is rejected with `Unauthorized` (unit test: `test_execute_with_session_rejects_empty_scopes`). Remaining limitation: `payload` is not decoded or dispatched, so a **non-empty** scope list is not matched against the payload's target method — see `docs/aa_sequence_diagram.md`.
+- [ ] `execute_with_session` — `session_key.require_auth()` called, plus revocation/expiry check against the stored `SessionKeyRecord`. **Fail-closed scope enforcement (T-40):** a key registered with an empty `scopes` list is rejected with `Unauthorized` (unit test: `test_execute_with_session_rejects_empty_scopes`), and the invoked `function` must be named in a non-empty `scopes` list or the call is rejected with `ScopeNotGranted` (unit test: `test_execute_with_session_rejects_method_outside_scopes`). The target is invoked while the reentrancy guard is held; emits `ses_exe` on success.
+- [ ] `execute_with_session_sponsored` — `sponsor.require_auth()` **and** `session_key.require_auth()` called; the sponsor must be on the owner-managed allowlist or the call is rejected with `SponsorNotAuthorized` before any session state is read (unit test: `test_sponsored_execution_rejects_unknown_sponsor`). Sponsorship never widens the session key's scopes (unit test: `test_sponsored_execution_still_enforces_scopes`).
+- [ ] `set_sponsor` — `require_owner` helper called; emits `spn_set` event.
 - [ ] `set_metadata` — `require_owner` helper called.
-- [ ] `execute_with_session` — `session_key.require_auth()` called, plus revocation/expiry check against the stored `SessionKeyRecord`. **Note:** this validates the session key only; it does not decode or dispatch `payload`, and `SessionKeyRecord.scopes` is stored but not enforced here (tracked gap — see `docs/aa_sequence_diagram.md`); emits `ses_exe` event on success.
 - [ ] `set_metadata` — `require_owner` helper called; emits `meta_set` event.
 - [ ] No public function mutates storage without an auth check.
 

@@ -44,7 +44,8 @@ Contract tag: `mux_acct`
 | `lmt_set` | `set_spend_limit` succeeds | `(asset: Address, amount: i128, period_ledgers: u32)` |
 | `debited` | `debit_spend` succeeds | `(asset: Address, spend: i128)` |
 | `executed` | `execute` succeeds | `(target: Address, asset: Address, spend: i128)` |
-| `ses_exe` | `execute_with_session` succeeds | `SessionExecutedEvent { session_key: Address, payload_len: u32 }` |
+| `ses_exe` | `execute_with_session` or `execute_with_session_sponsored` succeeds | `SessionExecutedEvent { session_key: Address, target: Address, function: Symbol, sponsor: Option<Address> }`; `sponsor` is `None` for a direct call and `Some(relayer)` for a sponsored one |
+| `spn_set` | `set_sponsor` succeeds | `(sponsor: Address, allowed: bool)` |
 | `meta_set` | `set_metadata` succeeds | `name: String` (from the `RegistryMeta` argument) |
 
 > `execute` follows checks-effects-interactions: the spend limit is checked
@@ -57,9 +58,11 @@ Contract tag: `mux_acct`
 > `register_session_key` and `revoke_session_key` do not currently emit
 > dedicated audit events.
 >
-> `execute_with_session` emits `ses_exe` only on the success path. A rejected
-> call — unknown/revoked/expired key, or an **empty-scope key rejected
-> fail-closed (T-40)** — emits nothing, matching the no-events-on-error
+> `execute_with_session` emits `ses_exe` only on the success path — after the
+> target has been invoked and returned. A rejected call — unknown/revoked/expired
+> key, an **empty-scope key rejected fail-closed (T-40)**, a method outside the
+> granted scopes (`ScopeNotGranted`), or an un-allowlisted relayer
+> (`SponsorNotAuthorized`) — emits nothing, matching the no-events-on-error
 > convention.
 
 ---

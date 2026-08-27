@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `docs/architecture-overview.md` was missing `mux-policy` and `mux-spending-policy` from the contract list and diagram; added both and marked `Somzilla.md` as a non-canonical scratch note (#701)
 
 ### Added
+- `mux-account` `execute_with_session` now executes: it takes `(session_key, target, function, args)`, matches `function` against the session key's granted `scopes` fail-closed (`ScopeNotGranted`), dispatches to `target` while the reentrancy guard is held, and forwards the return value — closing the AA Phase 2 milestone (#583)
+- `mux-account` relayer sponsorship — `set_sponsor` / `is_sponsor` owner-managed allowlist and `execute_with_session_sponsored`, which requires both sponsor and session-key authorization and rejects un-allowlisted relayers with `SponsorNotAuthorized` (#583)
+- `docs/relayer-integration.md` and `examples/session-key-usage.ts` — relayer network documentation and a frontend session-key integration example (#583)
 - `tests/threat_model_coverage.rs` — regression test verifying every production contract crate (all 10 WASM-shipping `contracts/mux-*` crates) is covered in `docs/threat-model.md`, wired into CI via `scripts/check-threat-model-coverage.sh`
 - `scripts/check-doc-examples.sh` — CI guard verifying `CONTRIBUTING.md` example code only calls entrypoints that exist (#700)
 - `scripts/check-architecture-docs.sh` — CI guard verifying every contract crate is listed in `docs/architecture-overview.md` (#701)

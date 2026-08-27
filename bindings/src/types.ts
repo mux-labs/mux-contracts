@@ -58,7 +58,9 @@ export type MuxAccountError =
   | "TooManyDelegates"
   | "ReentrancyDetected"
   | "ArithmeticOverflow"
-  | "TooManySessionKeys";
+  | "TooManySessionKeys"
+  | "ScopeNotGranted"
+  | "SponsorNotAuthorized";
 
 export type MuxRecoveryError =
   | "NotInitialized"
@@ -448,6 +450,8 @@ export function muxAccountErrorMessage(
     10: "reentrancy detected",
     11: "arithmetic overflow",
     12: "too many session keys",
+    13: "session key scope does not grant this method",
+    14: "sponsor is not on the relayer allowlist",
   };
 
   const nameMap: Record<MuxAccountError, number> = {
@@ -463,6 +467,8 @@ export function muxAccountErrorMessage(
     ReentrancyDetected: 10,
     ArithmeticOverflow: 11,
     TooManySessionKeys: 12,
+    ScopeNotGranted: 13,
+    SponsorNotAuthorized: 14,
   };
 
   const code = typeof error === "number" ? error : (nameMap[error] ?? -1);

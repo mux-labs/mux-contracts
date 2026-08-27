@@ -82,7 +82,7 @@ A typical session-key-signed transaction flow:
 └──────┬──────┘
        │
        │ 4. Call execute_with_session(
-       │    session_key, payload)
+       │    session_key, target, function, args)
        ▼
 ┌──────────────────────────┐
 │   Account Contract       │  5. Validate:
@@ -90,9 +90,10 @@ A typical session-key-signed transaction flow:
 │                          │    - Not expired
 │                          │    - Not revoked
 │                          │    - Caller authorized
+│                          │    - function is in scopes
 └──────┬───────────────────┘
        │
-       │ 6. Execute payload
+       │ 6. Invoke target.function(args)
        │    (e.g., call PaymentProcessor.pay)
        ▼
 ┌──────────────────────────┐
@@ -112,6 +113,8 @@ A typical session-key-signed transaction flow:
    - Key must exist and be in the SessionKeyIndex
    - Current timestamp must be < expires_at
    - revoked flag must be false
+   - `scopes` must be non-empty and must name the invoked method
+   - A relayer may submit and pay instead via `execute_with_session_sponsored()`
 
 3. **Revocation** — Account owner calls `revoke_session_key(session_key)`
    - Sets `revoked = true`
@@ -135,12 +138,18 @@ A typical session-key-signed transaction flow:
 - [x] Unit tests for session key functionality
 - [x] Storage design documentation
 
-### Deferred (Phase 2+)
+### In Scope (Phase 2)
 
-- [ ] `execute_with_session()` function implementation (transaction execution)
+- [x] `execute_with_session()` transaction execution (dispatches to a target contract)
+- [x] Per-method scope enforcement, fail-closed on empty and unlisted scopes
+- [x] Relayer sponsorship and gas abstraction (`set_sponsor`, `execute_with_session_sponsored`)
+- [x] Frontend integration example ([`examples/session-key-usage.ts`](../examples/session-key-usage.ts))
+- [x] Relayer network documentation ([relayer-integration.md](relayer-integration.md))
+
+### Deferred (Phase 3+)
+
 - [ ] Guardian-based recovery mechanism
 - [ ] Batch transaction execution via session keys
-- [ ] Relayer sponsorship and gas abstraction
 - [ ] Off-chain signature aggregation
 - [ ] Multi-signature authorization policies
 - [ ] Interaction with PaymentProcessor integration
@@ -168,7 +177,7 @@ Merchant accounts can use AA for:
 - Creating session keys for point-of-sale systems
 - Enforcing merchant-specific spend limits
 
-Integration is planned for Phase 2 pending completion of `execute_with_session()`.
+Integration is planned for Phase 3 now that `execute_with_session()` dispatches.
 
 ## Storage Layout
 
@@ -191,6 +200,7 @@ DataKey::Nonce                              // Transaction counter
 DataKey::SessionKey(owner, session_key)    // SessionKeyRecord
 DataKey::SessionKeyIndex(owner)             // Vec<session key addresses>
 DataKey::Metadata                           // Optional RegistryMeta for this account instance
+DataKey::Sponsor(relayer: Address)          // Relayer gas-sponsorship allowlist entry
 ```
 
 ### Record Structures
@@ -230,6 +240,13 @@ struct SessionKeyRecord {
 
 struct Scope {
   method: Symbol,  // e.g., "pay", "transfer"
+}
+
+struct SessionExecutedEvent {
+  session_key: Address,
+  target: Address,
+  function: Symbol,
+  sponsor: Option<Address>,  // Some(relayer) when the call was sponsored
 }
 
 struct RegistryMeta {
@@ -334,6 +351,42 @@ Revoke an existing session key.
 
 **Returns:** Ok if successful, Err if not found or unauthorized
 
+#### `execute_with_session(session_key, target, function, args) -> Result<Val, Error>`
+
+Dispatch a call to `target` under the account's authority, authorized by a
+session key instead of the owner.
+
+**Parameters:**
+- `session_key` — Address of the session key (must be authenticated)
+- `target` — Contract to invoke
+- `function` — Method on `target`; must be named in the key's `scopes`
+- `args` — Arguments forwarded verbatim to `target`
+
+**Returns:** Ok with the target's return value
+
+**Errors:**
+- `Unauthorized` — Key is unknown, revoked, expired, or was granted no scopes
+- `ScopeNotGranted` — `function` is not named in the key's `scopes`
+- `ReentrancyDetected` — A call is already in flight on this account
+
+#### `execute_with_session_sponsored(session_key, sponsor, target, function, args) -> Result<Val, Error>`
+
+Same as `execute_with_session`, but submitted and paid for by an allowlisted
+relayer. Both `sponsor` and `session_key` must authenticate. See
+[relayer-integration.md](relayer-integration.md).
+
+**Errors:** as above, plus `SponsorNotAuthorized` when the relayer is not on the
+account's sponsor allowlist.
+
+#### `set_sponsor(sponsor, allowed) -> Result<(), Error>`
+
+Add (`allowed = true`) or remove (`allowed = false`) a relayer from the
+gas-sponsorship allowlist. Owner only.
+
+#### `is_sponsor(sponsor) -> bool`
+
+Return whether `sponsor` may currently relay session calls for this account.
+
 #### `is_session_key_valid(owner, session_key) -> Result<bool, Error>`
 
 Check if a session key is valid and usable.
@@ -372,12 +425,12 @@ The example uses the TypeScript bindings from `@mux-protocol/contracts` and supp
 
 ## Future Enhancements
 
-1. **Transaction Execution** — Implement `execute_with_session()` to actually run authorized transactions
-2. **Batch Operations** — Multiple transactions in one session key use
-3. **Conditional Authorization** — Time-based or threshold-based spending approval
-4. **Key Rotation** — Automatic or explicit key retirement and replacement
-5. **Audit Trail** — Immutable record of all session key operations
-6. **Recovery Flows** — Guardian-based account recovery mechanisms
+1. **Batch Operations** — Multiple transactions in one session key use
+2. **Conditional Authorization** — Time-based or threshold-based spending approval
+3. **Key Rotation** — Automatic or explicit key retirement and replacement
+4. **Audit Trail** — Immutable record of all session key operations
+5. **Recovery Flows** — Guardian-based account recovery mechanisms
+6. **Target-scoped Sessions** — Scopes currently match method names only, not target addresses
 
 ## References
 

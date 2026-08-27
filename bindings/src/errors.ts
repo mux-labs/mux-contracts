@@ -50,6 +50,8 @@ type ContractError =
  *   ReentrancyDetected  (10) → 409
  *   ArithmeticOverflow  (11) → 500
  *   TooManySessionKeys  (12) → 409
+ *   ScopeNotGranted     (13) → 403
+ *   SponsorNotAuthorized (14) → 403
  *
  * MuxAccountFactory error codes (contracts/mux-account-factory):
  *   Unauthorized      (1) → 401  caller is not the registered owner
@@ -190,6 +192,8 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   TooManyPendingAdmins: 409,   // MuxPermissionsError (11)
   TooManyWallets: 409,         // WalletRegistryError (5), MuxPolicyError (8)
   TooManySessionKeys: 409,     // MuxAccountError (12)
+  ScopeNotGranted: 403,        // MuxAccountError (13): method outside the session key's scopes
+  SponsorNotAuthorized: 403,   // MuxAccountError (14): relayer not on the sponsor allowlist
   TooManyGuardians: 409,       // RecoveryError (7): guardian cap (16) reached
   GuardianAlreadyExists: 409,  // RecoveryError (8): address already a registered guardian
 

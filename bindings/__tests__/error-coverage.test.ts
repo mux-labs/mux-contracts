@@ -103,11 +103,13 @@ const MUX_ACCOUNT_VARIANTS: readonly MuxAccountError[] = [
   "ReentrancyDetected",
   "ArithmeticOverflow",
   "TooManySessionKeys",
+  "ScopeNotGranted",
+  "SponsorNotAuthorized",
 ];
 
 describe("MuxAccountError coverage", () => {
-  it("has 12 variants matching the Rust enum", () => {
-    expect(MUX_ACCOUNT_VARIANTS.length).toBe(12);
+  it("has 14 variants matching the Rust enum", () => {
+    expect(MUX_ACCOUNT_VARIANTS.length).toBe(14);
   });
 
   it("every variant is in ERROR_HTTP_MAP with a valid status", () => {
@@ -128,6 +130,8 @@ describe("MuxAccountError coverage", () => {
       ReentrancyDetected: 10,
       ArithmeticOverflow: 11,
       TooManySessionKeys: 12,
+      ScopeNotGranted: 13,
+      SponsorNotAuthorized: 14,
     };
     assertHelperCoversVariants("muxAccountErrorMessage", muxAccountErrorMessage, nameToCode);
   });
@@ -145,6 +149,8 @@ describe("MuxAccountError coverage", () => {
     expect(ERROR_HTTP_MAP.ReentrancyDetected).toBe(409);
     expect(ERROR_HTTP_MAP.ArithmeticOverflow).toBe(500);
     expect(ERROR_HTTP_MAP.TooManySessionKeys).toBe(409);
+    expect(ERROR_HTTP_MAP.ScopeNotGranted).toBe(403);
+    expect(ERROR_HTTP_MAP.SponsorNotAuthorized).toBe(403);
   });
 });
 
@@ -534,6 +540,8 @@ describe("ERROR_HTTP_MAP global completeness", () => {
     "ReentrancyDetected",
     "ArithmeticOverflow",
     "TooManySessionKeys",
+    "ScopeNotGranted",
+    "SponsorNotAuthorized",
     // MuxAccountFactory
     "InvalidAccount",
     "TooManyAccounts",

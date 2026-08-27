@@ -27,44 +27,74 @@ sequenceDiagram
     Note over Account: emits `executed` event, extends instance TTL
 ```
 
-## Session-key execution (`execute_with_session`) — validation only, no dispatch
+## Session-key execution (`execute_with_session`) — implemented
 
 This is the account-abstraction-style path: an owner pre-authorizes a
 session key out of band, and a third party (a relayer, a dApp backend) later
-acts using that session key without the owner signing each call. **As
-currently implemented, this path validates the session key but does not
-execute anything against a target contract.**
+acts using that session key without the owner signing each call. The call is
+dispatched to the target contract under the account's authorization context.
 
 ```mermaid
 sequenceDiagram
     participant Owner as Account Owner
     participant Account as mux-account Contract
     participant Relayer as Relayer / dApp (holds session key)
+    participant Target as Target Contract
 
     Owner->>Account: register_session_key(session_key, expires_at, scopes)
     Note over Account: owner-authorized; stores SessionKeyRecord { expires_at, scopes, revoked: false }
 
-    Relayer->>Account: execute_with_session(session_key, payload)
+    Relayer->>Account: execute_with_session(session_key, target, function, args)
     Note over Account: session_key.require_auth()
     Note over Account: looks up SessionKeyRecord; rejects if missing, revoked, or expired
     Note over Account: FAIL-CLOSED (T-40): rejects if scopes is empty — a key with zero granted capabilities cannot execute anything
-    Note over Account: payload is never decoded or dispatched — per-method scope checking is still future work
-    Account-->>Relayer: Ok(empty Bytes)
-    Note over Account: emits `ses_exe` event (session_key, payload_len only), extends instance TTL
+    Note over Account: FAIL-CLOSED: rejects with ScopeNotGranted if `function` is not named in scopes
+    Account->>Target: invoke_contract(function, args) — reentrancy guard held
+    Target-->>Account: return value
+    Account-->>Relayer: Ok(result)
+    Note over Account: emits `ses_exe` event (session_key, target, function, sponsor: None), extends instance TTL
 ```
 
-## Current vs. intended behavior
+## Sponsored session-key execution (`execute_with_session_sponsored`)
 
-| Step | This document previously implied | What `execute_with_session` actually does |
-|---|---|---|
-| Signature/nonce validation | `EntryPoint.validateUserOp` against a `UserOperation` | `session_key.require_auth()` plus a `SessionKeyRecord` lookup (revoked/expiry check only) — no `UserOperation` or nonce concept exists |
-| Gas sponsorship | Optional `Paymaster.validatePaymasterUserOp` / `postOp` | Not implemented; no paymaster concept exists in this codebase |
-| Payload execution | `EntryPoint.execute(dest, value, callData)` against a target contract | **Stub** — `payload` is read only for its length (for the audit event); no `env.invoke_contract` call is made, no target is invoked |
-| Scoped authorization | Implied per-call capability check | `SessionKeyRecord.scopes` is enforced **fail-closed** (T-40): a key registered with an empty scope list is rejected with `Unauthorized` rather than silently accepted. Per-method matching against a decoded payload is still not implemented — a key with a non-empty scope list is accepted without verifying the payload targets a permitted method |
-| Result | Transaction receipt reflecting real execution | `Ok(Bytes::new(&env))` — an empty success value returned unconditionally on the happy path, regardless of what `payload` contained |
+Gas abstraction: an allowlisted relayer submits the transaction and pays the
+network fee, while the session key still authorizes the invocation.
 
-The empty-scope hole is closed (T-40, `test_execute_with_session_rejects_empty_scopes`); the
-remaining gap is that a **non-empty** scope list is not matched against the
-payload's target method. Closing that requires design work on how `payload`
-should be decoded and dispatched, and how `scopes` should gate which calls a
-session key may make — that work is tracked as its own contract change.
+```mermaid
+sequenceDiagram
+    participant Owner as Account Owner
+    participant Account as mux-account Contract
+    participant Relayer as Relayer (pays the fee)
+    participant Target as Target Contract
+
+    Owner->>Account: set_sponsor(relayer, true)
+    Note over Account: owner-authorized allowlist entry; emits `spn_set`
+
+    Relayer->>Account: execute_with_session_sponsored(session_key, sponsor, target, function, args)
+    Note over Account: sponsor.require_auth(); rejects with SponsorNotAuthorized if not allowlisted
+    Note over Account: session_key.require_auth(); same record, scope, and expiry checks as the direct path
+    Account->>Target: invoke_contract(function, args) — reentrancy guard held
+    Target-->>Account: return value
+    Account-->>Relayer: Ok(result)
+    Note over Account: emits `ses_exe` event with sponsor: Some(relayer)
+```
+
+## Mapping to ERC-4337 vocabulary
+
+| ERC-4337 concept | Mux Soroban equivalent |
+|---|---|
+| Signature validation (`EntryPoint.validateUserOp`) | `session_key.require_auth()` plus the stored `SessionKeyRecord` lookup (revocation and expiry) |
+| Nonce / replay protection | `DataKey::Nonce` — see [account-abstraction.md](account-abstraction.md) |
+| Gas sponsorship (`Paymaster`) | Owner-managed sponsor allowlist plus `execute_with_session_sponsored`; the relayer is the transaction source and pays the fee. See [relayer-integration.md](relayer-integration.md) |
+| Payload execution (`EntryPoint.execute`) | `env.invoke_contract(target, function, args)` held under the reentrancy guard |
+| Scoped authorization | `SessionKeyRecord.scopes` matched against the invoked `function`, fail-closed on both an empty list (`Unauthorized`, T-40) and an unlisted method (`ScopeNotGranted`) |
+| Result | The target's actual return value, forwarded to the caller |
+
+## Known limitations
+
+- Session execution keeps no spend accounting of its own. A target that moves
+  funds must call back into `debit_spend`, which the held reentrancy guard
+  rejects for the duration of the call — so per-asset spend limits apply to the
+  owner-authorized `execute` path only.
+- Scopes match method names, not targets or arguments. A key scoped to `pay` may
+  call `pay` on any contract address the caller supplies.
