@@ -41,6 +41,34 @@ client.debit_spend(&asset, &spend);
 // Internally: current_contract_address().require_auth()
 ```
 
+### Session Key Execution
+
+```rust
+// The session key authorizes instead of the owner. The owner grants the key
+// a scope list up front; the key may then invoke only those methods.
+client.execute_with_session(&session_key, &target, &function, &args);
+// Internally: session_key.require_auth()
+//           + SessionKeyRecord lookup (rejects unknown / revoked / expired)
+//           + fail-closed scope check:
+//               empty scopes        -> Unauthorized
+//               function not listed -> ScopeNotGranted
+```
+
+### Sponsored Session Key Execution
+
+```rust
+// A relayer submits and pays; the session key still authorizes the call.
+client.execute_with_session_sponsored(&session_key, &sponsor, &target, &function, &args);
+// Internally: sponsor.require_auth() + owner-managed allowlist check
+//               (SponsorNotAuthorized if the relayer is not allowlisted)
+//           + the identical session_key checks as above
+//
+// This means:
+//   ✓ An allowlisted relayer can pay for a call the session key is scoped for
+//   ✗ An allowlisted relayer CANNOT reach a method outside those scopes
+//   ✗ A relayer removed from the allowlist CANNOT relay the next call
+```
+
 ### Authorization hierarchy
 
 ```
@@ -54,8 +82,14 @@ Owner
 Contract-internal (self)
   └── debit_spend(asset, spend)
 
-Session key (TODO: not yet enforced)
-  └── execute_with_session(session_key, payload)
+Owner (allowlist management)
+  └── set_sponsor(sponsor, allowed)
+
+Session key
+  └── execute_with_session(session_key, target, function, args)
+
+Allowlisted sponsor + session key (both must authorize)
+  └── execute_with_session_sponsored(session_key, sponsor, target, function, args)
 ```
 
 ---
@@ -176,3 +210,5 @@ client.revoke_delegate(&owner, &delegate);
 | `wallet.require_auth()` | Direct `require_auth()` on the wallet address | mux-policy (`record_spend`) | The wallet itself |
 | `guardian.require_auth()` + `require_guardian()` | Auth + membership check in guardian set | mux-recovery | Registered guardian |
 | `current_contract_address().require_auth()` | Self-auth for contract-internal calls | mux-account (`debit_spend`) | The contract itself |
+| `session_key.require_auth()` + `authorize_session()` | Auth plus `SessionKeyRecord` revocation, expiry, and per-method scope check | mux-account (`execute_with_session`) | A registered session key |
+| `sponsor.require_auth()` + allowlist check | Auth plus `DataKey::Sponsor` membership, layered on top of the session-key checks | mux-account (`execute_with_session_sponsored`) | An allowlisted relayer |

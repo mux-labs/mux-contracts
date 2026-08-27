@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- `docs/authorize-flow-example.md` labelled session-key auth as `TODO: not yet enforced` and `docs/entrypoint-matrix.md` carried a stale duplicate `execute_with_session` row contradicting the row above it; both now document the enforced `session_key.require_auth()` + scope check, and the sponsored relayer path (#584)
 - `mux-spending-policy::set_policy` accepted `period_ledgers == 0`, which would create a policy with a non-advancing period window and made the `InvalidPeriod` error variant unreachable; it now rejects zero periods with `InvalidPeriod` after the admin auth gate (fail-closed: auth before validation), matching `mux-account::set_spend_limit` and `mux-policy::set_daily_limit`
 - `docs/threat-model.md` only covered `mux-account`, `mux-batcher`, and `mux-permissions`; expanded to all 10 production contracts with per-contract threats, controls, trust boundaries, and residual risks
 - `mux-account` `execute_with_session` stored session-key `scopes` but never enforced them; empty-scope session keys were accepted fail-open and are now rejected with `EmptyScopes` (fail-closed)
@@ -19,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `docs/architecture-overview.md` was missing `mux-policy` and `mux-spending-policy` from the contract list and diagram; added both and marked `Somzilla.md` as a non-canonical scratch note (#701)
 
 ### Added
+- `tests/session_auth_doc_coverage.rs` — regression test asserting `docs/entrypoint-matrix.md` and `docs/authorize-flow-example.md` carry no unresolved TODO, describe the real session-key auth rule, list no duplicate `mux-account` rows, and document every public `mux-account` entrypoint (#584)
 - `mux-account` `execute_with_session` now executes: it takes `(session_key, target, function, args)`, matches `function` against the session key's granted `scopes` fail-closed (`ScopeNotGranted`), dispatches to `target` while the reentrancy guard is held, and forwards the return value — closing the AA Phase 2 milestone (#583)
 - `mux-account` relayer sponsorship — `set_sponsor` / `is_sponsor` owner-managed allowlist and `execute_with_session_sponsored`, which requires both sponsor and session-key authorization and rejects un-allowlisted relayers with `SponsorNotAuthorized` (#583)
 - `docs/relayer-integration.md` and `examples/session-key-usage.ts` — relayer network documentation and a frontend session-key integration example (#583)
