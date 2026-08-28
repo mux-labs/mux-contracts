@@ -33,3 +33,7 @@ path = "upgrade_preflight.rs"
 [[test]]
 name = "threat_model_coverage"
 path = "threat_model_coverage.rs"
+
+[[test]]
+name = "entrypoint_matrix_coverage"
+path = "entrypoint_matrix_coverage.rs"

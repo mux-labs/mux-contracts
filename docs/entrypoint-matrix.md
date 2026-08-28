@@ -36,12 +36,12 @@ by a specific actor; public entrypoints are callable by anyone.
 | `set_spend_limit(asset, amount, period)` | A | Owner only; paused check |
 | `debit_spend(asset, spend)` | U | Caller (contract) authorizes; paused check; reentrancy guard |
 | `execute(target, function, args, asset, spend)` | A | Owner only; paused check; validates spend limit, then invokes `target` while the reentrancy guard is held, then persists the debit (checks-effects-interactions); emits `executed` event |
+| `register_session_key(session_key, expires_at, scopes)` | A | Owner only; paused check; capped at `MAX_SESSION_KEYS` |
+| `revoke_session_key(session_key)` | A | Owner only; paused check |
 | `owner()` | P | Read-only |
 | `delegates()` | P | Read-only; filters expired |
 | `get_delegate(delegate)` | P | Read-only |
 | `guardians()` | P | Read-only |
-| `register_session_key(session_key, expires_at, scopes)` | A | Owner only; paused check; capped at `MAX_SESSION_KEYS` |
-| `revoke_session_key(session_key)` | A | Owner only; paused check |
 | `execute_with_session(session_key, payload)` | U | Session key auth; validates registration/revocation/expiry **and enforces scopes fail-closed** — a key registered with an empty `scopes` list is rejected with `Unauthorized` (T-40 in [threat-model.md](threat-model.md)). Does not execute `payload` (see [aa_sequence_diagram.md](aa_sequence_diagram.md)) |
 | `set_metadata(meta)` | A | Owner only; emits `meta_set` event |
 | `get_metadata()` | P | Read-only |
@@ -79,17 +79,15 @@ by a specific actor; public entrypoints are callable by anyone.
 
 | Entrypoint | Auth | Notes |
 |---|---|---|
-| `grant_delegate(owner, delegate, perms)` | U | Owner authorizes; capped at `MAX_DELEGATE_PERMS` / `MAX_DELEGATES_PER_OWNER` |
 | `initialize(admin)` | A | Optional, one-time; sets the upgrade admin only — delegation grants work without it |
 | `upgrade(new_wasm_hash)` | A | Admin only; `NotInitialized` if `initialize` was never called |
-| `grant_delegate(owner, delegate, perms)` | U | Owner authorizes |
+| `grant_delegate(owner, delegate, perms)` | U | Owner authorizes; capped at `MAX_DELEGATE_PERMS` / `MAX_DELEGATES_PER_OWNER` |
 | `revoke_delegate(owner, delegate)` | U | Owner authorizes |
 | `get_delegate_permissions(owner, delegate)` | P | Read-only |
 | `is_delegate(owner, delegate, perm)` | P | Read-only |
 | `get_delegates(owner)` | P | Read-only |
 | `check_delegate(owner, delegate, perm)` | P | Read-only; `Ok(())`/`Err(NotADelegate)` variant of `is_delegate` |
 | `link_contract_id(admin, contract_id)` | A | Admin authorizes; write-once; emits `dlg_link` event |
-| `link_contract_id(admin, contract_id)` | U | Caller-supplied `admin` param authorizes itself; **not** the same identity as the stored upgrade admin — see [delegation-upgrade.md](delegation-upgrade.md); emits `dlg_link` event |
 | `get_contract_id()` | P | Read-only |
 
 ## mux-permissions
@@ -132,7 +130,7 @@ by a specific actor; public entrypoints are callable by anyone.
 | `approve_recovery(guardian)` | U | Guardian authorizes; adds approval to the pending request; rejects duplicates |
 | `cancel_recovery()` | U | Owner authorizes |
 | `execute_recovery(guardian)` | U | Guardian authorizes; timelock, expiry, and quorum checks (approvals >= threshold) |
-| `approve_recovery_admin()` | U | Owner only; executes a pending recovery immediately, bypassing the timelock (`require_owner` helper) |
+| `approve_recovery_admin()` | A | Owner + guardian dual auth; executes pending recovery immediately, bypassing timelock; both owner and co_guardian must authorize |
 | `add_guardian(guardian)` | U | Owner authorizes; capped at `MAX_GUARDIANS` |
 | `remove_guardian(guardian)` | U | Owner authorizes; rejects if it would leave zero guardians |
 | `set_quorum_threshold(threshold)` | U | Owner authorizes; threshold must be >= 1 and <= guardian count; emits `qrm_set` |
