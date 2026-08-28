@@ -558,6 +558,7 @@ impl MuxAccount {
                 revoked: false,
             },
         );
+        emit(&env, symbol_short!("sk_reg"), session_key);
         Self::extend_ttl(&env);
         Ok(())
     }
@@ -567,7 +568,7 @@ impl MuxAccount {
         Self::require_not_paused(&env)?;
         Self::require_owner(&env)?;
         let owner = Self::stored_owner(&env)?;
-        let key = DataKey::SessionKey(owner, session_key);
+        let key = DataKey::SessionKey(owner.clone(), session_key.clone());
         let mut record: SessionKeyRecord = env
             .storage()
             .instance()
@@ -575,8 +576,35 @@ impl MuxAccount {
             .ok_or(MuxAccountError::Unauthorized)?;
         record.revoked = true;
         env.storage().instance().set(&key, &record);
+
+        let index_key = DataKey::SessionKeyIndex(owner);
+        let stored_index: Option<Vec<Address>> = env.storage().instance().get(&index_key);
+        if let Some(mut index) = stored_index {
+            if let Some(pos) = index.iter().position(|k| k == session_key) {
+                index.remove(pos as u32);
+                env.storage().instance().set(&index_key, &index);
+            }
+        }
+
+        emit(&env, symbol_short!("sk_rev"), session_key);
         Self::extend_ttl(&env);
         Ok(())
+    }
+
+    /// Check whether a session key is currently valid and usable.
+    ///
+    /// Returns `Ok(true)` if the key is registered, not revoked, and not
+    /// expired. Returns `Ok(false)` for a revoked, expired, or unknown key.
+    pub fn is_session_key_valid(env: Env, session_key: Address) -> Result<bool, MuxAccountError> {
+        let owner = Self::stored_owner(&env)?;
+        let record: Option<SessionKeyRecord> = env
+            .storage()
+            .instance()
+            .get(&DataKey::SessionKey(owner, session_key));
+        Ok(match record {
+            Some(r) => !r.revoked && env.ledger().timestamp() < r.expires_at,
+            None => false,
+        })
     }
 
     /// Execute a transaction payload on behalf of the account using a delegated session key.
@@ -1370,7 +1398,11 @@ mod tests {
         );
         // No ses_exe event may be emitted on the rejected path.
         let events = env.events().all();
-        assert_eq!(events.len(), 1, "only the init event may exist: {events:?}");
+        assert_eq!(
+            events.len(),
+            2,
+            "only the init and sk_reg events may exist: {events:?}"
+        );
     }
 
     #[test]
