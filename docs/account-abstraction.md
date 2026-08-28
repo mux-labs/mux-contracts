@@ -115,10 +115,12 @@ A typical session-key-signed transaction flow:
 
 3. **Revocation** — Account owner calls `revoke_session_key(session_key)`
    - Sets `revoked = true`
-   - Key remains in storage but can no longer be used
-   - Index is not updated (for audit trail)
+   - Removes the key from the owner's `SessionKeyIndex` so cap accounting
+     and indexers stay in sync
+   - The `SessionKey` record itself remains in storage but can no longer be used
 
-4. **Expiration** — Automatically handled by `is_session_key_valid()` check
+4. **Expiration** — Checked in `execute_with_session` and via the
+   `is_session_key_valid()` query
    - Old keys remain in storage (can be pruned later)
    - No revocation action needed
 
