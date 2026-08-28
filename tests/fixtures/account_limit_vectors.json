@@ -26,7 +26,7 @@
         "input": {
           "pre_existing_delegates": 63,
           "delegate": "GDEL64",
-          "expiry_ledger": 1000,
+          "expires_at": 1000,
           "can_spend": true
         },
         "expect": { "ok": true, "delegate_count": 64 }
@@ -37,7 +37,7 @@
         "input": {
           "pre_existing_delegates": 64,
           "delegate": "GDEL65",
-          "expiry_ledger": 1000,
+          "expires_at": 1000,
           "can_spend": false
         },
         "precondition": "delegates_at_cap",
@@ -49,7 +49,7 @@
         "input": {
           "pre_existing_delegates": 64,
           "delegate": "GDEL1",
-          "expiry_ledger": 2000,
+          "expires_at": 2000,
           "can_spend": false,
           "is_update": true
         },

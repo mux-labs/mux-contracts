@@ -25,7 +25,11 @@ export interface SpendLimit {
 
 export interface DelegateInfo {
   address: Address;
-  expiryLedger: number;
+  /**
+   * Unix timestamp (`u64`) at which the delegation stops being valid. Named
+   * `expires_at` on the contract; it is a timestamp, not a ledger sequence.
+   */
+  expiresAt: bigint;
   canSpend: boolean;
 }
 

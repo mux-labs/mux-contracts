@@ -81,14 +81,14 @@ export async function fetchAccountOwner(
  * @param contractId      - Deployed mux-account contract ID
  * @param ownerKeypair    - Owner's keypair (signs the transaction)
  * @param delegateAddress - Address to grant delegation to
- * @param expiryLedger    - Ledger sequence number at which the delegate expires
+ * @param expiresAt       - Unix timestamp at which the delegate expires
  * @param canSpend        - Whether the delegate may call debit_spend
  */
 export async function grantDelegate(
   contractId: string,
   ownerKeypair: Keypair,
   delegateAddress: string,
-  expiryLedger: number,
+  expiresAt: bigint,
   canSpend: boolean
 ): Promise<void> {
   const { MuxAccountClient } = await import("../generated/mux-account");
@@ -105,7 +105,7 @@ export async function grantDelegate(
     await client.setDelegate(
       ownerKeypair,
       Address.fromString(delegateAddress),
-      expiryLedger,
+      expiresAt,
       canSpend
     );
   } catch (err) {

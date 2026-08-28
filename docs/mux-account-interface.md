@@ -52,6 +52,12 @@ missing. Contract validation failures use `MuxAccountError`.
 `DelegateInfo` contains `address`, `expires_at` (Unix timestamp, `u64`), and
 `can_spend`.
 
+> **Naming:** the expiry field is `expires_at` everywhere — contract parameter,
+> struct field, `dlg_set` event payload, TypeScript `DelegateInfo.expiresAt`,
+> and the shared JSON test vectors. It is a `u64` Unix timestamp, so the older
+> `expiry_ledger` spelling was wrong in both name and unit and must not be
+> reintroduced. `tests/expiry_naming.rs` enforces this.
+
 ### Spend limits
 
 - `set_spend_limit(asset, amount, period_ledgers) -> Result<(), MuxAccountError>`
