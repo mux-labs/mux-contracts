@@ -97,7 +97,7 @@ export async function grantDelegate(
   contractId: string,
   ownerKeypair: Keypair,
   delegate: Address,
-  expiryLedger: number,
+  expiresAt: bigint,
   canSpend: boolean
 ): Promise<void> {
   const config = getNetworkConfig();
@@ -106,7 +106,7 @@ export async function grantDelegate(
     networkPassphrase: config.networkPassphrase,
     rpcUrl: config.rpcUrl,
   });
-  await client.setDelegate(ownerKeypair, delegate, expiryLedger, canSpend);
+  await client.setDelegate(ownerKeypair, delegate, expiresAt, canSpend);
 }
 
 /**

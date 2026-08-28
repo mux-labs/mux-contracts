@@ -35,5 +35,13 @@ name = "threat_model_coverage"
 path = "threat_model_coverage.rs"
 
 [[test]]
-name = "entrypoint_matrix_coverage"
-path = "entrypoint_matrix_coverage.rs"
+name = "aa_phase2_milestone"
+path = "aa_phase2_milestone.rs"
+
+[[test]]
+name = "session_auth_doc_coverage"
+path = "session_auth_doc_coverage.rs"
+
+[[test]]
+name = "expiry_naming"
+path = "expiry_naming.rs"

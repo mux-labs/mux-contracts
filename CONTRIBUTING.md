@@ -234,11 +234,22 @@ fn test_execute_with_session_succeeds_for_registered_key() {
     let (env, client, owner) = setup();
     let session_key = Address::generate(&env);
     let expires_at = env.ledger().timestamp() + 3600;
-    let scopes = Vec::new(&env);
+    // A key must be granted at least one scope; an empty list fails closed.
+    let scopes = vec![
+        &env,
+        Scope {
+            method: symbol_short!("ping"),
+        },
+    ];
+    let target = env.register_contract(None, ExecuteTarget);
 
     client.register_session_key(&session_key, &expires_at, &scopes);
-    let payload = Bytes::new(&env);
-    let _ = client.execute_with_session(&session_key, &payload);
+    let _ = client.execute_with_session(
+        &session_key,
+        &target,
+        &symbol_short!("ping"),
+        &Vec::new(&env),
+    );
 }
 ```
 

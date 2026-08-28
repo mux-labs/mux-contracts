@@ -190,6 +190,14 @@ pub struct SessionKeyRecord {
     pub revoked: bool,
 }
 
+/// Audit payload emitted after a successful session execution.
+pub struct SessionExecutedEvent {
+    pub session_key: Address,
+    pub target: Address,
+    pub function: Symbol,
+    pub sponsor: Option<Address>,
+}
+
 /// Registry-level metadata for this account instance.
 pub struct RegistryMeta {
     pub name: String,
@@ -217,11 +225,12 @@ pub struct RegistryMeta {
 | `remove_delegate` | `delegate: Address` | `Result<(), MuxAccountError>` | Remove a delegate; owner-only |
 | `set_spend_limit` | `asset: Address, amount: i128, period_ledgers: u32` | `Result<(), MuxAccountError>` | Set per-asset spend limit; owner-only |
 | `debit_spend` | `asset: Address, spend: i128` | `Result<(), MuxAccountError>` | Check and debit a spend against the limit; contract-only |
-| `execute` | `target: Address, function: Symbol, args: Vec<Val>, asset: Address, spend: i128` | `Result<Val, MuxAccountError>` | Owner-authorized contract call with atomic on-chain spend-limit enforcement |
+| `execute` | `target: Address, function: Symbol, args: Vec<Val>, asset: Address, spend: i128, nonce: u64` | `Result<Val, MuxAccountError>` | Owner-authorized contract call with atomic on-chain spend-limit enforcement; consumes the account nonce |
 | `owner` | — | `Result<Address, MuxAccountError>` | Return current owner |
 | `delegates` | — | `Result<Map<Address, DelegateInfo>, MuxAccountError>` | Return all active (non-expired) delegates |
 | `get_delegate` | `delegate: Address` | `Result<DelegateInfo, MuxAccountError>` | Return delegate info if currently active |
 | `guardians` | — | `Result<Vec<Address>, MuxAccountError>` | Return guardian set |
+| `nonce` | — | `Result<u64, MuxAccountError>` | Return the account's current transaction nonce — the value the next execution call must supply |
 | `register_session_key` | `session_key: Address, expires_at: u64, scopes: Vec<Scope>` | `Result<(), MuxAccountError>` | Register or replace a session key (max `MAX_SESSION_KEYS` per owner); owner-only |
 | `revoke_session_key` | `session_key: Address` | `Result<(), MuxAccountError>` | Revoke a registered session key and remove it from `SessionKeyIndex`; owner-only |
 | `is_session_key_valid` | `session_key: Address` | `Result<bool, MuxAccountError>` | Return `true` if the key is registered, not revoked, and not expired; `false` for a revoked, expired, or unknown key |
@@ -260,6 +269,9 @@ pub struct RegistryMeta {
 | `ReentrancyDetected` | 10 | Reentrant `debit_spend` call detected |
 | `ArithmeticOverflow` | 11 | Arithmetic overflow in spend tracking |
 | `TooManySessionKeys` | 12 | Owner has reached `MAX_SESSION_KEYS` (32) |
+| `ScopeNotGranted` | 13 | Invoked method is not named in the session key's `scopes` |
+| `SponsorNotAuthorized` | 14 | Relayer is not on the account's sponsor allowlist |
+| `InvalidNonce` | 15 | Supplied nonce does not match the account's current nonce |
 
 ---
 

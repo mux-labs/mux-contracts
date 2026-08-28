@@ -35,9 +35,7 @@ by a specific actor; public entrypoints are callable by anyone.
 | `remove_delegate(delegate)` | A | Owner only; paused check |
 | `set_spend_limit(asset, amount, period)` | A | Owner only; paused check |
 | `debit_spend(asset, spend)` | U | Caller (contract) authorizes; paused check; reentrancy guard |
-| `execute(target, function, args, asset, spend)` | A | Owner only; paused check; validates spend limit, then invokes `target` while the reentrancy guard is held, then persists the debit (checks-effects-interactions); emits `executed` event |
-| `register_session_key(session_key, expires_at, scopes)` | A | Owner only; paused check; capped at `MAX_SESSION_KEYS` |
-| `revoke_session_key(session_key)` | A | Owner only; paused check |
+| `execute(target, function, args, asset, spend, nonce)` | A | Owner only; paused check; validates spend limit, consumes `nonce` (must equal `nonce()`, else `InvalidNonce`), then invokes `target` while the reentrancy guard is held, then persists the debit (checks-effects-interactions); emits `executed` event |
 | `owner()` | P | Read-only |
 | `delegates()` | P | Read-only; filters expired |
 | `get_delegate(delegate)` | P | Read-only |

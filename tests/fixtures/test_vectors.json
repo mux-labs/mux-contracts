@@ -23,7 +23,7 @@
         "description": "Owner adds a delegate within cap",
         "input": {
           "delegate": "GDEL1",
-          "expiry_ledger": 1000,
+          "expires_at": 1000,
           "can_spend": true
         },
         "expect": { "ok": true }
@@ -33,7 +33,7 @@
         "description": "Adding a 65th delegate is rejected (MAX_DELEGATES=64)",
         "input": {
           "delegate": "GDEL65",
-          "expiry_ledger": 1000,
+          "expires_at": 1000,
           "can_spend": false
         },
         "precondition": "delegates_at_cap",
