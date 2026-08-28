@@ -39,10 +39,10 @@ Legend:
       `invoke_contract` returns (checks-effects-interactions; see §5.2);
       emits `executed` event on success.
 - [ ] `register_session_key` / `revoke_session_key` — `require_owner` helper called.
-- [ ] `execute_with_session` — `session_key.require_auth()` called, plus revocation/expiry check against the stored `SessionKeyRecord`. **Fail-closed scope enforcement (T-40):** a key registered with an empty `scopes` list is rejected with `Unauthorized` (unit test: `test_execute_with_session_rejects_empty_scopes`), and the invoked `function` must be named in a non-empty `scopes` list or the call is rejected with `ScopeNotGranted` (unit test: `test_execute_with_session_rejects_method_outside_scopes`). The caller-supplied `nonce` must equal `nonce()` or the call is rejected with `InvalidNonce`, blocking replay of an already-submitted session authorization (unit test: `test_execute_with_session_rejects_replayed_nonce`); a rejected call never consumes a nonce (unit test: `test_rejected_call_does_not_consume_a_nonce`). The target is invoked while the reentrancy guard is held; emits `ses_exe` on success.
-- [ ] `execute_with_session_sponsored` — `sponsor.require_auth()` **and** `session_key.require_auth()` called; the sponsor must be on the owner-managed allowlist or the call is rejected with `SponsorNotAuthorized` before any session state is read (unit test: `test_sponsored_execution_rejects_unknown_sponsor`). Sponsorship never widens the session key's scopes (unit test: `test_sponsored_execution_still_enforces_scopes`).
-- [ ] `set_sponsor` — `require_owner` helper called; emits `spn_set` event.
-- [ ] `nonce` — read-only; returns the counter every execution entrypoint checks and advances.
+- [ ] `execute_with_session` — `session_key.require_auth()` called, plus revocation/expiry check against the stored `SessionKeyRecord`. **Fail-closed scope enforcement (T-40):** a key registered with an empty `scopes` list is rejected with `Unauthorized` (unit test: `test_execute_with_session_rejects_empty_scopes`). Remaining limitation: `payload` is not decoded or dispatched, so a **non-empty** scope list is not matched against the payload's target method — see `docs/aa_sequence_diagram.md`.
+
+> **Implementation note (T-40):** Empty-scopes rejection is implemented and enforced fail-closed — a session key with an empty `scopes` list is rejected with `Unauthorized` before any state mutation (T-40 partial close). The remaining tracked limitation is that a **non-empty** scope list is not yet matched against the payload's target method; per-method payload matching requires the payload decoder to be implemented first. Until then, a key with a non-empty scope list passes scope validation regardless of what method the payload targets.
+
 - [ ] `set_metadata` — `require_owner` helper called; emits `meta_set` event.
 - [ ] No public function mutates storage without an auth check.
 

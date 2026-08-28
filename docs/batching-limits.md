@@ -38,6 +38,10 @@ Callers can query the current limit at runtime without needing to hard-code it:
 let limit: u32 = batcher_client.max_batch_size();
 ```
 
+Changing `MAX_BATCH_SIZE` requires a contract upgrade; see
+[batcher-upgrade.md](batcher-upgrade.md#changing-max_batch_size) for the
+upgrade path and breaking-change notes.
+
 ---
 
 ## Entry points

@@ -27,8 +27,16 @@ storage with explicit per-entry TTL management.
 | **Delegate** | Address granted one or more permissions by an owner | Act within the granted permission set on behalf of the owner |
 | **Caller** | Any address | Read-only queries (`get_delegate_permissions`, `is_delegate`, `get_delegates`, `check_delegate`) |
 
-> **No super-owner.** There is no global admin. Each `(owner, delegate)` pair is
+> **No super-owner over delegation grants.** There is no global admin for the
+> owner/delegate permission model above. Each `(owner, delegate)` pair is
 > independent. An owner can only grant or revoke their own delegates.
+>
+> This does not extend to `link_contract_id(admin, contract_id)` or
+> `initialize(admin)`/`upgrade`, which accept a separate, unrelated `admin`
+> concept scoped to contract self-registration and WASM upgrades — never to
+> delegation grants. See [`docs/delegation-upgrade.md`](delegation-upgrade.md#admin--initialization)
+> and [`docs/access-control-checklist.md`](access-control-checklist.md#17-mux-delegation)
+> for the full breakdown.
 
 ---
 

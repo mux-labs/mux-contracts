@@ -583,6 +583,7 @@ impl MuxAccount {
                 revoked: false,
             },
         );
+        emit(&env, symbol_short!("sk_reg"), session_key);
         Self::extend_ttl(&env);
         Ok(())
     }
@@ -592,7 +593,7 @@ impl MuxAccount {
         Self::require_not_paused(&env)?;
         Self::require_owner(&env)?;
         let owner = Self::stored_owner(&env)?;
-        let key = DataKey::SessionKey(owner, session_key);
+        let key = DataKey::SessionKey(owner.clone(), session_key.clone());
         let mut record: SessionKeyRecord = env
             .storage()
             .instance()
@@ -600,50 +601,38 @@ impl MuxAccount {
             .ok_or(MuxAccountError::Unauthorized)?;
         record.revoked = true;
         env.storage().instance().set(&key, &record);
-        Self::extend_ttl(&env);
-        Ok(())
-    }
 
-    // === Relayer sponsorship
-
-    /// Add or remove a relayer from the gas-sponsorship allowlist. Owner only.
-    ///
-    /// Sponsorship is fail-closed: a relayer that was never allowlisted (or was
-    /// removed) cannot submit a sponsored session call, even if it holds a
-    /// valid session-key signature. Emits a `spn_set` audit event.
-    pub fn set_sponsor(
-        env: Env,
-        sponsor: Address,
-        allowed: bool,
-    ) -> Result<(), MuxAccountError> {
-        Self::require_not_paused(&env)?;
-        Self::require_owner(&env)?;
-        if allowed {
-            env.storage()
-                .instance()
-                .set(&DataKey::Sponsor(sponsor.clone()), &true);
-        } else {
-            env.storage()
-                .instance()
-                .remove(&DataKey::Sponsor(sponsor.clone()));
+        let index_key = DataKey::SessionKeyIndex(owner);
+        let stored_index: Option<Vec<Address>> = env.storage().instance().get(&index_key);
+        if let Some(mut index) = stored_index {
+            if let Some(pos) = index.iter().position(|k| k == session_key) {
+                index.remove(pos as u32);
+                env.storage().instance().set(&index_key, &index);
+            }
         }
-        emit(&env, symbol_short!("spn_set"), (sponsor, allowed));
+
+        emit(&env, symbol_short!("sk_rev"), session_key);
         Self::extend_ttl(&env);
         Ok(())
     }
 
-    /// Return whether `sponsor` is currently allowed to relay session calls.
-    pub fn is_sponsor(env: Env, sponsor: Address) -> bool {
-        env.storage()
+    /// Check whether a session key is currently valid and usable.
+    ///
+    /// Returns `Ok(true)` if the key is registered, not revoked, and not
+    /// expired. Returns `Ok(false)` for a revoked, expired, or unknown key.
+    pub fn is_session_key_valid(env: Env, session_key: Address) -> Result<bool, MuxAccountError> {
+        let owner = Self::stored_owner(&env)?;
+        let record: Option<SessionKeyRecord> = env
+            .storage()
             .instance()
-            .get(&DataKey::Sponsor(sponsor))
-            .unwrap_or(false)
+            .get(&DataKey::SessionKey(owner, session_key));
+        Ok(match record {
+            Some(r) => !r.revoked && env.ledger().timestamp() < r.expires_at,
+            None => false,
+        })
     }
 
-    // === Session execution
-
-    /// Execute a call on `target` on behalf of the account using a delegated
-    /// session key.
+    /// Execute a transaction payload on behalf of the account using a delegated session key.
     ///
     /// The session key signs instead of the owner: the owner pre-authorizes the
     /// key out of band with a scope list, and the key may afterwards invoke only
@@ -1902,7 +1891,11 @@ mod tests {
         );
         // No ses_exe event may be emitted on the rejected path.
         let events = env.events().all();
-        assert_eq!(events.len(), 1, "only the init event may exist: {events:?}");
+        assert_eq!(
+            events.len(),
+            2,
+            "only the init and sk_reg events may exist: {events:?}"
+        );
     }
 
     #[test]
@@ -2154,4 +2147,3 @@ mod tests {
         // symbol_short! validates length at compile time; reaching here is sufficient.
     }
 }
-pub mod smart_wallet;

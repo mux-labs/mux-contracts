@@ -34,6 +34,8 @@ See [event-topic-conventions.md](event-topic-conventions.md) for naming rules, t
 
 Contract tag: `mux_acct`
 
+> **Note:** `execute_with_session` scope enforcement (T-40) is now active. When a session key registered with an empty `scopes` list is used, the call is rejected with `Unauthorized` before any state mutation occurs. This rejection does **not** emit a `ses_exe` event (no events on error), but it is counted as an authorization failure and visible in host-level error logs. See [threat-model.md](threat-model.md) T-40 and [entrypoint-matrix.md](entrypoint-matrix.md) for the full fail-closed scope enforcement description.
+
 | Action | Trigger | Data payload |
 |---|---|---|
 | `init` | `initialize` succeeds | `owner: Address` |
@@ -44,8 +46,9 @@ Contract tag: `mux_acct`
 | `lmt_set` | `set_spend_limit` succeeds | `(asset: Address, amount: i128, period_ledgers: u32)` |
 | `debited` | `debit_spend` succeeds | `(asset: Address, spend: i128)` |
 | `executed` | `execute` succeeds | `(target: Address, asset: Address, spend: i128)` |
-| `ses_exe` | `execute_with_session` or `execute_with_session_sponsored` succeeds | `SessionExecutedEvent { session_key: Address, target: Address, function: Symbol, sponsor: Option<Address> }`; `sponsor` is `None` for a direct call and `Some(relayer)` for a sponsored one |
-| `spn_set` | `set_sponsor` succeeds | `(sponsor: Address, allowed: bool)` |
+| `ses_exe` | `execute_with_session` succeeds | `SessionExecutedEvent { session_key: Address, payload_len: u32 }` |
+| `sk_reg` | `register_session_key` succeeds | `session_key: Address` |
+| `sk_rev` | `revoke_session_key` succeeds | `session_key: Address` |
 | `meta_set` | `set_metadata` succeeds | `name: String` (from the `RegistryMeta` argument) |
 
 > `execute` follows checks-effects-interactions: the spend limit is checked
@@ -55,8 +58,8 @@ Contract tag: `mux_acct`
 > the invocation, not just around the storage write, so a callback into
 > `execute`/`debit_spend` from `target` during the call is rejected.
 >
-> `register_session_key` and `revoke_session_key` do not currently emit
-> dedicated audit events.
+> `register_session_key` and `revoke_session_key` emit `sk_reg` and `sk_rev`
+> respectively on success only.
 >
 > `execute_with_session` emits `ses_exe` only on the success path — after the
 > target has been invoked and returned. A rejected call — unknown/revoked/expired

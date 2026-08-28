@@ -255,9 +255,8 @@ fn test_execute_with_session_succeeds_for_registered_key() {
 
 `register_session_key` takes `(session_key, expires_at, scopes)` — the owner is
 read from stored account state and must `require_auth()`, so it is not passed
-explicitly. There is no `is_session_key_valid` query entrypoint; validity is
-checked internally by `execute_with_session`, which then dispatches
-`function` to `target` if the key's `scopes` name it (see
+explicitly. Validity can be checked directly via the `is_session_key_valid(session_key)`
+read-only query, and is also checked internally by `execute_with_session` (see
 [`docs/entrypoint-matrix.md`](docs/entrypoint-matrix.md) for the full list of
 `mux-account` entrypoints).
 

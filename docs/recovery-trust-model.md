@@ -192,13 +192,135 @@ This entrypoint is read-only (no event emitted) and is designed primarily for of
 - **M-of-N quorum implemented.** `execute_recovery` now requires `approvals.len() >= quorum_threshold`. Guardians call `approve_recovery(guardian)` to add their approval after `initiate_recovery` records the first. The threshold is set at `initialize` time and adjustable by the owner via `set_quorum_threshold`.
 - **Immutable guardian set after initialization.** Guardians cannot be rotated without redeploying the contract. A guardian rotation mechanism with its own timelock is planned.
 - **No guardian liveness check.** If all guardians lose their keys, recovery is impossible.
-- **No on-chain registry validation.** The `registry_id` field stores an address but does not call the registry at initialization time. Off-chain tooling must verify the link is correct and that the registry entry matches the deployed contract.
+  See [§8 Guardian Liveness and Last-Resort Recovery](#8-guardian-liveness-and-last-resort-recovery)
+  for operational guidance and recommended mitigations.
 
 ---
 
-## 7. Related Documents
+## 7. Guardian Liveness and Last-Resort Recovery
+
+### 7.1 The Liveness Problem
+
+`mux-recovery` has no on-chain fallback path when the entire guardian set loses access. If every
+registered guardian key is permanently lost or destroyed, recovery becomes **permanently
+impossible** for that account. There is no administrative override, no time-expired bypass, and no
+protocol-level last resort built into the current contract.
+
+This is a deliberate trade-off: adding an admin-controlled escape hatch would introduce a
+centralised trust vector that contradicts the social-recovery security model. However, the
+consequence must be clearly understood by operators and account holders before deploying.
+
+### 7.2 Failure Scenarios
+
+| Scenario | Effect | Can it be recovered? |
+|---|---|---|
+| One guardian loses their key | Remaining guardians can still initiate/execute | Yes — if ≥ 1 guardian remains |
+| All guardians lose their keys simultaneously | Recovery is permanently blocked | No — on-chain state is unrecoverable |
+| Guardian device is compromised (key not lost) | Attacker can initiate recovery; owner has 24-h window to cancel | Yes — owner must act within `RECOVERY_TIMELOCK` |
+| Owner loses key AND all guardians lose keys | Account is permanently locked | No |
+
+### 7.3 Operational Mitigations
+
+The following practices dramatically reduce the probability of total guardian liveness failure:
+
+**1. Use geographically distributed guardian keys**
+
+Store each guardian key in a different physical location and under the control of a different
+person. A fire, flood, or hardware failure at a single location cannot wipe out the entire guardian
+set.
+
+**2. Maintain at least 3 guardians**
+
+The contract enforces a minimum of 1 guardian (`MinGuardiansRequired`), but 1 is insufficient for
+liveness — any single key loss destroys the recovery path. The recommended minimum is **3
+guardians**: this tolerates one key loss while keeping a 2-guardian majority.
+
+> **Rule of thumb:** For a maximum-security account, use 5 guardians and require a policy that any
+> 3 can execute recovery (on-chain quorum threshold is planned for a future version).
+
+**3. Periodic guardian key attestation**
+
+Run a regular off-chain attestation process (e.g. quarterly) where each guardian signs a
+challenge to prove their key is still accessible. Automate alerts when a guardian fails to attest.
+This catches key loss before it becomes unrecoverable.
+
+```bash
+# Example: guardian signs a ledger-specific challenge
+stellar transaction sign --network mainnet --source <GUARDIAN_SECRET> <CHALLENGE_TX>
+```
+
+**4. Store guardian seeds in hardware security modules (HSMs) or hardware wallets**
+
+Software-only key storage is susceptible to device failure and data corruption. Use hardware
+wallets (Ledger, Trezor) or cloud HSMs (AWS CloudHSM, Azure Key Vault) for at least two of the
+three guardians.
+
+**5. Maintain encrypted cold-storage backups**
+
+For each guardian key, maintain at least one encrypted backup in a geographically separate
+location (e.g. a safety deposit box). Use a strong encryption standard (AES-256) and store the
+decryption key separately from the backup.
+
+**6. Document and test the recovery runbook**
+
+Write a formal recovery runbook that every guardian can follow without external guidance. Test the
+runbook at least once per year by initiating a recovery on a test account, running through the
+full timelock, and then cancelling it. Confirm:
+
+- Each guardian can locate their key and use it.
+- The off-chain monitoring system correctly detects `rec_init` events.
+- The owner can call `cancel_recovery` before `executable_at`.
+
+### 7.4 Monitoring for `rec_init` Events
+
+Off-chain watchers **must** subscribe to `rec_init` events on-chain. Each guardian liveness
+incident (key rotation, suspected compromise, failed attestation) should trigger an immediate
+review:
+
+```
+Event: mux_recv / rec_init
+Data:  (guardian, new_owner, initiated_at, executable_at, expires_at)
+```
+
+Set up alerts for:
+- Any `rec_init` event not initiated by the account holder.
+- Any `rec_init` event where `new_owner` does not match the expected address.
+- Any guardian failing the periodic attestation.
+
+### 7.5 What Happens When All Guardians Are Lost
+
+There is **no on-chain recovery path** when every guardian key is permanently inaccessible. The
+contract will return:
+
+- `NotInitialized` or `Unauthorized` from `initiate_recovery` (no valid guardian can sign).
+- The account is effectively frozen: the owner can still operate it using their own key, but
+  recovery is permanently disabled.
+
+**The only mitigations are preventative** (see §8.3). Once all guardian keys are lost, the
+account is unrecoverable at the protocol level. The owner must accept this risk or redeploy a new
+account with a fresh guardian set.
+
+### 7.6 Future Protocol Improvements
+
+The following features are planned for future contract versions to improve liveness guarantees:
+
+| Feature | Description | Priority |
+|---|---|---|
+| **M-of-N guardian quorum** | Require M signatures from N guardians to execute recovery, tolerating up to N-M key losses | High |
+| **Guardian key rotation** | Allow the owner to rotate individual guardian keys with a timelock, without redeploying | High |
+| **Social recovery with time-lock escalation** | If recovery is not initiated within a configured inactivity window, escalate to a social fallback (e.g. a protocol multisig) | Medium |
+| **Guardian liveness oracle** | On-chain heartbeat mechanism where guardians periodically attest liveness; missed attestations generate alerts | Low |
+
+Until M-of-N quorum is implemented, operators should compensate operationally by following the
+mitigations in §7.3.
+
+---
+
+## 8. Related Documents
 
 - [`docs/threat-model.md`](threat-model.md) — overall Mux Protocol threat model
 - [`docs/audit-events.md`](audit-events.md) — full event schema reference
 - [`contracts/mux-recovery/src/lib.rs`](../contracts/mux-recovery/src/lib.rs) — contract source
 - `#403` — Recovery registry link implementation; tracks the `set_registry()` entrypoint and `registry_id` storage
+- `#616` — On-chain registry validation for `set_registry`; closes the gap documented in §4.6
+- `#618` — Guardian liveness documentation; closes the gap documented in §8
