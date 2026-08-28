@@ -47,6 +47,8 @@ Contract tag: `mux_acct`
 | `debited` | `debit_spend` succeeds | `(asset: Address, spend: i128)` |
 | `executed` | `execute` succeeds | `(target: Address, asset: Address, spend: i128)` |
 | `ses_exe` | `execute_with_session` succeeds | `SessionExecutedEvent { session_key: Address, payload_len: u32 }` |
+| `sk_reg` | `register_session_key` succeeds | `session_key: Address` |
+| `sk_rev` | `revoke_session_key` succeeds | `session_key: Address` |
 | `meta_set` | `set_metadata` succeeds | `name: String` (from the `RegistryMeta` argument) |
 
 > `execute` follows checks-effects-interactions: the spend limit is checked
@@ -56,8 +58,8 @@ Contract tag: `mux_acct`
 > the invocation, not just around the storage write, so a callback into
 > `execute`/`debit_spend` from `target` during the call is rejected.
 >
-> `register_session_key` and `revoke_session_key` do not currently emit
-> dedicated audit events.
+> `register_session_key` and `revoke_session_key` emit `sk_reg` and `sk_rev`
+> respectively on success only.
 >
 > `execute_with_session` emits `ses_exe` only on the success path. A rejected
 > call — unknown/revoked/expired key, or an **empty-scope key rejected
