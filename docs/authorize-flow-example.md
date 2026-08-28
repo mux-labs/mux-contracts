@@ -46,19 +46,21 @@ client.debit_spend(&asset, &spend);
 ```rust
 // The session key authorizes instead of the owner. The owner grants the key
 // a scope list up front; the key may then invoke only those methods.
-client.execute_with_session(&session_key, &target, &function, &args);
+client.execute_with_session(&session_key, &target, &function, &args, &nonce);
 // Internally: session_key.require_auth()
 //           + SessionKeyRecord lookup (rejects unknown / revoked / expired)
 //           + fail-closed scope check:
 //               empty scopes        -> Unauthorized
 //               function not listed -> ScopeNotGranted
+//           + consume_nonce(): `nonce` must equal client.nonce()
+//               mismatch            -> InvalidNonce
 ```
 
 ### Sponsored Session Key Execution
 
 ```rust
 // A relayer submits and pays; the session key still authorizes the call.
-client.execute_with_session_sponsored(&session_key, &sponsor, &target, &function, &args);
+client.execute_with_session_sponsored(&session_key, &sponsor, &target, &function, &args, &nonce);
 // Internally: sponsor.require_auth() + owner-managed allowlist check
 //               (SponsorNotAuthorized if the relayer is not allowlisted)
 //           + the identical session_key checks as above
@@ -76,6 +78,7 @@ Owner
   ├── set_delegate(delegate, expiry, can_spend)
   ├── remove_delegate(delegate)
   ├── set_spend_limit(asset, amount, period)
+  ├── execute(target, function, args, asset, spend, nonce)
   ├── set_metadata(meta)
   └── unpause()
 
@@ -86,10 +89,10 @@ Owner (allowlist management)
   └── set_sponsor(sponsor, allowed)
 
 Session key
-  └── execute_with_session(session_key, target, function, args)
+  └── execute_with_session(session_key, target, function, args, nonce)
 
 Allowlisted sponsor + session key (both must authorize)
-  └── execute_with_session_sponsored(session_key, sponsor, target, function, args)
+  └── execute_with_session_sponsored(session_key, sponsor, target, function, args, nonce)
 ```
 
 ---

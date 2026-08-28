@@ -33,6 +33,8 @@ missing. Contract validation failures use `MuxAccountError`.
   the instance once.
 - `owner() -> Result<Address, MuxAccountError>` returns the stored owner.
 - `guardians() -> Result<Vec<Address>, MuxAccountError>` returns guardians.
+- `nonce() -> Result<u64, MuxAccountError>` returns the account's transaction
+  counter — the exact value the next execution call must supply.
 - `is_paused() -> bool` returns the pause flag.
 - `unpause() -> Result<(), MuxAccountError>` clears the pause flag.
 
@@ -69,15 +71,18 @@ missing. Contract validation failures use `MuxAccountError`.
   owner.
 - `revoke_session_key(session_key) -> Result<(), MuxAccountError>` marks a
   registered session key as revoked.
-- `execute_with_session(session_key, target, function, args) -> Result<Val, MuxAccountError>`
+- `execute_with_session(session_key, target, function, args, nonce) -> Result<Val, MuxAccountError>`
   validates that `session_key` is authorized, registered, non-revoked, and
   non-expired, then invokes `function` on `target` and forwards its return
   value. **Fail-closed scope enforcement:** a key registered with an empty
   `scopes` list is rejected with `Unauthorized` (T-40), and a `function` that is
   not named in a non-empty `scopes` list is rejected with `ScopeNotGranted`.
-  The reentrancy guard is held across the invocation, so a callback into
-  `execute`, `debit_spend`, or this entrypoint is rejected. Emits `ses_exe`.
-- `execute_with_session_sponsored(session_key, sponsor, target, function, args) -> Result<Val, MuxAccountError>`
+  `nonce` must equal `nonce()` or the call is rejected with `InvalidNonce`; it
+  is consumed only after every other check passes, so a rejected call does not
+  burn a nonce. The reentrancy guard is held across the invocation, so a
+  callback into `execute`, `debit_spend`, or this entrypoint is rejected.
+  Emits `ses_exe`.
+- `execute_with_session_sponsored(session_key, sponsor, target, function, args, nonce) -> Result<Val, MuxAccountError>`
   is the gas-abstracted variant: the relayer submits and pays, and both the
   sponsor and the session key must authorize. The sponsor must be on the
   owner-managed allowlist or the call is rejected with `SponsorNotAuthorized`
@@ -108,6 +113,7 @@ missing. Contract validation failures use `MuxAccountError`.
 | 12 | `TooManySessionKeys` | Session-key cap is reached |
 | 13 | `ScopeNotGranted` | Invoked method is not in the session key's scopes |
 | 14 | `SponsorNotAuthorized` | Relayer is not on the sponsor allowlist |
+| 15 | `InvalidNonce` | Supplied nonce is not the account's current nonce |
 
 ## Events
 

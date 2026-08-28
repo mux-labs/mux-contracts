@@ -225,15 +225,16 @@ pub struct RegistryMeta {
 | `remove_delegate` | `delegate: Address` | `Result<(), MuxAccountError>` | Remove a delegate; owner-only |
 | `set_spend_limit` | `asset: Address, amount: i128, period_ledgers: u32` | `Result<(), MuxAccountError>` | Set per-asset spend limit; owner-only |
 | `debit_spend` | `asset: Address, spend: i128` | `Result<(), MuxAccountError>` | Check and debit a spend against the limit; contract-only |
-| `execute` | `target: Address, function: Symbol, args: Vec<Val>, asset: Address, spend: i128` | `Result<Val, MuxAccountError>` | Owner-authorized contract call with atomic on-chain spend-limit enforcement |
+| `execute` | `target: Address, function: Symbol, args: Vec<Val>, asset: Address, spend: i128, nonce: u64` | `Result<Val, MuxAccountError>` | Owner-authorized contract call with atomic on-chain spend-limit enforcement; consumes the account nonce |
 | `owner` | — | `Result<Address, MuxAccountError>` | Return current owner |
 | `delegates` | — | `Result<Map<Address, DelegateInfo>, MuxAccountError>` | Return all active (non-expired) delegates |
 | `get_delegate` | `delegate: Address` | `Result<DelegateInfo, MuxAccountError>` | Return delegate info if currently active |
 | `guardians` | — | `Result<Vec<Address>, MuxAccountError>` | Return guardian set |
+| `nonce` | — | `Result<u64, MuxAccountError>` | Return the account's current transaction nonce — the value the next execution call must supply |
 | `register_session_key` | `session_key: Address, expires_at: u64, scopes: Vec<Scope>` | `Result<(), MuxAccountError>` | Register or replace a session key (max `MAX_SESSION_KEYS` per owner); owner-only |
 | `revoke_session_key` | `session_key: Address` | `Result<(), MuxAccountError>` | Revoke a registered session key; owner-only |
-| `execute_with_session` | `session_key: Address, target: Address, function: Symbol, args: Vec<Val>` | `Result<Val, MuxAccountError>` | Session-key-authorized contract call. Validates registration, revocation, and expiry; **fail-closed scope check** — an empty `scopes` list is rejected with `Unauthorized` (T-40) and a `function` absent from a non-empty list with `ScopeNotGranted`. Dispatches to `target` while the reentrancy guard is held and forwards its return value |
-| `execute_with_session_sponsored` | `session_key: Address, sponsor: Address, target: Address, function: Symbol, args: Vec<Val>` | `Result<Val, MuxAccountError>` | As above, submitted and paid for by an allowlisted relayer; both `sponsor` and `session_key` authorize. `SponsorNotAuthorized` if the relayer is not allowlisted. See [`docs/relayer-integration.md`](relayer-integration.md) |
+| `execute_with_session` | `session_key: Address, target: Address, function: Symbol, args: Vec<Val>, nonce: u64` | `Result<Val, MuxAccountError>` | Session-key-authorized contract call. Validates registration, revocation, and expiry; **fail-closed scope check** — an empty `scopes` list is rejected with `Unauthorized` (T-40) and a `function` absent from a non-empty list with `ScopeNotGranted`. Consumes `nonce`, which must equal `nonce()` or the call is rejected with `InvalidNonce`; dispatches to `target` while the reentrancy guard is held and forwards its return value |
+| `execute_with_session_sponsored` | `session_key: Address, sponsor: Address, target: Address, function: Symbol, args: Vec<Val>, nonce: u64` | `Result<Val, MuxAccountError>` | As above, submitted and paid for by an allowlisted relayer; both `sponsor` and `session_key` authorize. `SponsorNotAuthorized` if the relayer is not allowlisted. See [`docs/relayer-integration.md`](relayer-integration.md) |
 | `set_sponsor` | `sponsor: Address, allowed: bool` | `Result<(), MuxAccountError>` | Add or remove a relayer from the gas-sponsorship allowlist; owner-only |
 | `is_sponsor` | `sponsor: Address` | `bool` | Return whether a relayer may currently sponsor session calls |
 | `set_metadata` | `meta: RegistryMeta` | `Result<(), MuxAccountError>` | Store registry-level metadata for this account instance; owner-only |
@@ -271,6 +272,7 @@ pub struct RegistryMeta {
 | `TooManySessionKeys` | 12 | Owner has reached `MAX_SESSION_KEYS` (32) |
 | `ScopeNotGranted` | 13 | Invoked method is not named in the session key's `scopes` |
 | `SponsorNotAuthorized` | 14 | Relayer is not on the account's sponsor allowlist |
+| `InvalidNonce` | 15 | Supplied nonce does not match the account's current nonce |
 
 ---
 

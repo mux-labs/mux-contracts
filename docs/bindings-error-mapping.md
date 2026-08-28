@@ -81,7 +81,8 @@ export type MuxAccountError =
   | "ArithmeticOverflow"
   | "TooManySessionKeys"
   | "ScopeNotGranted"
-  | "SponsorNotAuthorized";
+  | "SponsorNotAuthorized"
+  | "InvalidNonce";
 ```
 
 Each variant name **must** match the Rust enum variant exactly (case-sensitive).
@@ -168,7 +169,7 @@ and its authoritative Rust source enum. Each variant name **must** match the
 Rust variant exactly (case-sensitive). The `*ErrorMessage()` helper function
 maps both the string name and the raw `u32` code to a human-readable string.
 
-### `MuxAccountError` (14 variants)
+### `MuxAccountError` (15 variants)
 
 Source: `contracts/mux-account/src/lib.rs → MuxAccountError`  
 Helper: `muxAccountErrorMessage(error)`
@@ -189,6 +190,7 @@ Helper: `muxAccountErrorMessage(error)`
 | `TooManySessionKeys` | 12 | 409 |
 | `ScopeNotGranted` | 13 | 403 |
 | `SponsorNotAuthorized` | 14 | 403 |
+| `InvalidNonce` | 15 | 409 |
 
 ### `MuxAccountFactoryError` (5 variants)
 

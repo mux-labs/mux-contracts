@@ -88,7 +88,7 @@ mod aa_phase2_milestone {
     fn execute_with_session_is_not_a_stub() {
         let source = read("contracts/mux-account/src/lib.rs");
         assert!(
-            source.contains("pub fn execute_with_session(\n        env: Env,\n        session_key: Address,\n        target: Address,\n        function: Symbol,\n        args: Vec<Val>,\n    ) -> Result<Val, MuxAccountError> {"),
+            source.contains("pub fn execute_with_session(\n        env: Env,\n        session_key: Address,\n        target: Address,\n        function: Symbol,\n        args: Vec<Val>,\n        nonce: u64,\n    ) -> Result<Val, MuxAccountError> {"),
             "execute_with_session must take (session_key, target, function, args) and return the target's Val"
         );
         assert!(

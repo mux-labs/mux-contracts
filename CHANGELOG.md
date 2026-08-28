@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- `mux-account` initialized `DataKey::Nonce` to 0 and never read or incremented it, leaving the account with no replay or ordering semantics of its own; `execute`, `execute_with_session`, and `execute_with_session_sponsored` now take an explicit `nonce: u64` that must equal the stored counter (`InvalidNonce` otherwise) and advance it by one, and the new `nonce()` read entrypoint exposes the expected value. The counter advances only after every other check passes, so a rejected call does not burn a nonce (#585)
 - `docs/authorize-flow-example.md` labelled session-key auth as `TODO: not yet enforced` and `docs/entrypoint-matrix.md` carried a stale duplicate `execute_with_session` row contradicting the row above it; both now document the enforced `session_key.require_auth()` + scope check, and the sponsored relayer path (#584)
 - `mux-spending-policy::set_policy` accepted `period_ledgers == 0`, which would create a policy with a non-advancing period window and made the `InvalidPeriod` error variant unreachable; it now rejects zero periods with `InvalidPeriod` after the admin auth gate (fail-closed: auth before validation), matching `mux-account::set_spend_limit` and `mux-policy::set_daily_limit`
 - `docs/threat-model.md` only covered `mux-account`, `mux-batcher`, and `mux-permissions`; expanded to all 10 production contracts with per-contract threats, controls, trust boundaries, and residual risks

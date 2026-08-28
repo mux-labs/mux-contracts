@@ -261,14 +261,14 @@ mod fuzz_account {
         let pay = symbol_short!("pay");
         let args: Vec<Val> = Vec::new(&env);
         let overflow_exec =
-            client.try_execute_with_session(&overflow, &target, &pay, &args);
+            client.try_execute_with_session(&overflow, &target, &pay, &args, &client.nonce());
         assert_eq!(overflow_exec, Err(Ok(MuxAccountError::Unauthorized)));
 
         // Every key registered before the cap was hit must still authorize —
         // rejecting the flood must not have silently skipped or corrupted
         // the entries already within bounds.
         for sk in keys.iter() {
-            let exec = client.try_execute_with_session(&sk, &target, &pay, &args);
+            let exec = client.try_execute_with_session(&sk, &target, &pay, &args, &client.nonce());
             assert!(
                 exec.is_ok(),
                 "pre-cap session key must still authorize: {exec:?}"
@@ -304,6 +304,7 @@ mod fuzz_account {
             &target,
             &symbol_short!("pay"),
             &Vec::<Val>::new(&env),
+            &client.nonce(),
         );
         assert!(exec.is_ok(), "updated key must still authorize: {exec:?}");
     }

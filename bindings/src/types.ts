@@ -60,7 +60,8 @@ export type MuxAccountError =
   | "ArithmeticOverflow"
   | "TooManySessionKeys"
   | "ScopeNotGranted"
-  | "SponsorNotAuthorized";
+  | "SponsorNotAuthorized"
+  | "InvalidNonce";
 
 export type MuxRecoveryError =
   | "NotInitialized"
@@ -452,6 +453,7 @@ export function muxAccountErrorMessage(
     12: "too many session keys",
     13: "session key scope does not grant this method",
     14: "sponsor is not on the relayer allowlist",
+    15: "nonce does not match the account's current nonce",
   };
 
   const nameMap: Record<MuxAccountError, number> = {
@@ -469,6 +471,7 @@ export function muxAccountErrorMessage(
     TooManySessionKeys: 12,
     ScopeNotGranted: 13,
     SponsorNotAuthorized: 14,
+    InvalidNonce: 15,
   };
 
   const code = typeof error === "number" ? error : (nameMap[error] ?? -1);

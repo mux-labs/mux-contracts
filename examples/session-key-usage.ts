@@ -3,7 +3,8 @@
  *
  * Frontend / relayer integration example for the mux-account session-key flow:
  * - Owner registers a scoped, expiring session key
- * - The dApp executes a call with that session key (owner signature not needed)
+ * - The dApp reads the account nonce and executes a call with that session key
+ *   (owner signature not needed)
  * - A relayer executes the same call on the user's behalf and pays the fee
  * - Owner revokes the session key
  *
@@ -109,6 +110,30 @@ async function invoke(
   return result.returnValue ? scValToNative(result.returnValue) : undefined;
 }
 
+/**
+ * Read the account's current transaction nonce. Every execution entrypoint
+ * requires exactly this value and advances it by one, so a relayer with queued
+ * calls must submit them in nonce order.
+ */
+async function readNonce(source: Keypair): Promise<bigint> {
+  const sourceAccount = await server.getAccount(source.publicKey());
+  const tx = new TransactionBuilder(sourceAccount, {
+    fee: "100",
+    networkPassphrase,
+  })
+    .addOperation(account.call("nonce"))
+    .setTimeout(30)
+    .build();
+
+  const simulated = await server.simulateTransaction(tx);
+  if (rpc.Api.isSimulationError(simulated)) {
+    throw new Error(`nonce simulation failed: ${simulated.error}`);
+  }
+  const retval = (simulated as rpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+  if (!retval) throw new Error("nonce returned no value");
+  return BigInt(scValToNative(retval) as string | number | bigint);
+}
+
 /** A `Scope` is a single method name the session key is allowed to invoke. */
 function scope(method: string): xdr.ScVal {
   return xdr.ScVal.scvMap([
@@ -149,7 +174,8 @@ async function executeWithSession(
   sessionKey: Keypair,
   target: Address,
   method: string,
-  args: xdr.ScVal[]
+  args: xdr.ScVal[],
+  nonce: bigint
 ): Promise<unknown> {
   return invoke(
     "execute_with_session",
@@ -158,6 +184,7 @@ async function executeWithSession(
       nativeToScVal(target.toString(), { type: "address" }),
       nativeToScVal(method, { type: "symbol" }),
       xdr.ScVal.scvVec(args),
+      nativeToScVal(nonce, { type: "u64" }),
     ],
     [sessionKey]
   );
@@ -185,7 +212,8 @@ async function executeSponsored(
   sessionKey: Keypair,
   target: Address,
   method: string,
-  args: xdr.ScVal[]
+  args: xdr.ScVal[],
+  nonce: bigint
 ): Promise<unknown> {
   return invoke(
     "execute_with_session_sponsored",
@@ -195,6 +223,7 @@ async function executeSponsored(
       nativeToScVal(target.toString(), { type: "address" }),
       nativeToScVal(method, { type: "symbol" }),
       xdr.ScVal.scvVec(args),
+      nativeToScVal(nonce, { type: "u64" }),
     ],
     [relayer, sessionKey]
   );
@@ -219,13 +248,26 @@ async function main(): Promise<void> {
   const expiresAt = Math.floor(Date.now() / 1000) + 3600;
   await registerSessionKey(owner, Address.fromString(sessionKey.publicKey()), expiresAt, ["pay"]);
 
-  const direct = await executeWithSession(sessionKey, target, "pay", []);
+  const direct = await executeWithSession(
+    sessionKey,
+    target,
+    "pay",
+    [],
+    await readNonce(sessionKey)
+  );
   console.log("Direct session call returned:", direct);
 
   if (process.env.RELAYER_SECRET_KEY) {
     const relayer = Keypair.fromSecret(process.env.RELAYER_SECRET_KEY);
     await allowRelayer(owner, Address.fromString(relayer.publicKey()));
-    const sponsored = await executeSponsored(relayer, sessionKey, target, "pay", []);
+    const sponsored = await executeSponsored(
+      relayer,
+      sessionKey,
+      target,
+      "pay",
+      [],
+      await readNonce(relayer)
+    );
     console.log("Sponsored session call returned:", sponsored);
   }
 
@@ -240,6 +282,7 @@ if (require.main === module) {
 }
 
 export {
+  readNonce,
   registerSessionKey,
   executeWithSession,
   allowRelayer,

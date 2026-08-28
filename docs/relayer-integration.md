@@ -33,7 +33,7 @@ is no grace window.
 ## Sponsored execution
 
 ```
-execute_with_session_sponsored(session_key, sponsor, target, function, args)
+execute_with_session_sponsored(session_key, sponsor, target, function, args, nonce)
 ```
 
 Both parties authorize:
@@ -47,8 +47,11 @@ relayer learns nothing about the account's session-key state.
 
 Sponsorship changes who pays, never what is permitted. After the sponsor check,
 the sponsored path runs the identical validation as the unsponsored path:
-registration, revocation, expiry, non-empty scopes, and per-method scope
-matching. A relayer cannot invoke a method the session key was not scoped for.
+registration, revocation, expiry, non-empty scopes, per-method scope matching,
+and the account nonce. A relayer cannot invoke a method the session key was not
+scoped for, and cannot replay a session authorization it has already submitted —
+`nonce` must equal the account's current `nonce()` or the call is rejected with
+`InvalidNonce`.
 
 ## Fee accounting
 
@@ -64,10 +67,12 @@ is an off-chain arrangement and belongs in `mux-backend`.
 1. Owner allowlists the relayer with `set_sponsor(relayer, true)`.
 2. Relayer builds the transaction with its own account as source.
 3. Relayer adds the `execute_with_session_sponsored` invocation.
-4. Relayer simulates, then collects the session key's signature on the assembled
+4. Relayer reads `nonce()` and builds the call with that exact value; a relayer
+   with several queued calls must submit them in nonce order.
+5. Relayer simulates, then collects the session key's signature on the assembled
    transaction and adds its own.
-5. Relayer submits and pays the fee.
-6. Relayer indexes `ses_exe` events for billing; each carries the session key,
+6. Relayer submits and pays the fee.
+7. Relayer indexes `ses_exe` events for billing; each carries the session key,
    target, function, and sponsor.
 
 A runnable version of this flow is in

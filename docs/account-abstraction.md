@@ -114,6 +114,7 @@ A typical session-key-signed transaction flow:
    - Current timestamp must be < expires_at
    - revoked flag must be false
    - `scopes` must be non-empty and must name the invoked method
+   - `nonce` must equal the account's current `nonce()`, which then advances
    - A relayer may submit and pay instead via `execute_with_session_sponsored()`
 
 3. **Revocation** — Account owner calls `revoke_session_key(session_key)`
@@ -196,7 +197,7 @@ DataKey::Owner                              // Account owner address
 DataKey::Delegates                          // Map<Address, DelegateInfo>
 DataKey::SpendLimit(asset: Address)        // SpendLimit record per asset
 DataKey::GuardianSet                        // Vec<Guardian addresses>
-DataKey::Nonce                              // Transaction counter
+DataKey::Nonce                              // Transaction counter; checked and advanced by every execution entrypoint
 DataKey::SessionKey(owner, session_key)    // SessionKeyRecord
 DataKey::SessionKeyIndex(owner)             // Vec<session key addresses>
 DataKey::Metadata                           // Optional RegistryMeta for this account instance
@@ -351,7 +352,13 @@ Revoke an existing session key.
 
 **Returns:** Ok if successful, Err if not found or unauthorized
 
-#### `execute_with_session(session_key, target, function, args) -> Result<Val, Error>`
+#### `nonce() -> Result<u64, Error>`
+
+Return the account's current transaction nonce. Every execution entrypoint
+requires the caller to pass exactly this value, and advances it by one on
+success.
+
+#### `execute_with_session(session_key, target, function, args, nonce) -> Result<Val, Error>`
 
 Dispatch a call to `target` under the account's authority, authorized by a
 session key instead of the owner.
@@ -361,6 +368,7 @@ session key instead of the owner.
 - `target` — Contract to invoke
 - `function` — Method on `target`; must be named in the key's `scopes`
 - `args` — Arguments forwarded verbatim to `target`
+- `nonce` — Must equal the account's current `nonce()`
 
 **Returns:** Ok with the target's return value
 
@@ -368,8 +376,9 @@ session key instead of the owner.
 - `Unauthorized` — Key is unknown, revoked, expired, or was granted no scopes
 - `ScopeNotGranted` — `function` is not named in the key's `scopes`
 - `ReentrancyDetected` — A call is already in flight on this account
+- `InvalidNonce` — `nonce` is not the account's current nonce
 
-#### `execute_with_session_sponsored(session_key, sponsor, target, function, args) -> Result<Val, Error>`
+#### `execute_with_session_sponsored(session_key, sponsor, target, function, args, nonce) -> Result<Val, Error>`
 
 Same as `execute_with_session`, but submitted and paid for by an allowlisted
 relayer. Both `sponsor` and `session_key` must authenticate. See

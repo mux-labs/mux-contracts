@@ -158,6 +158,7 @@ pub enum MuxAccountError {
     TooManySessionKeys = 12,
     ScopeNotGranted = 13,
     SponsorNotAuthorized = 14,
+    InvalidNonce = 15,
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -391,6 +392,7 @@ impl MuxAccount {
         args: Vec<Val>,
         asset: Address,
         spend: i128,
+        nonce: u64,
     ) -> Result<Val, MuxAccountError> {
         Self::require_not_paused(&env)?;
         Self::require_owner(&env)?;
@@ -403,6 +405,10 @@ impl MuxAccount {
                 return Err(e);
             }
         };
+        if let Err(e) = Self::consume_nonce(&env, nonce) {
+            Self::release_guard(&env);
+            return Err(e);
+        }
 
         // Interaction: guard is held for the duration of the external call.
         let result = env.invoke_contract::<Val>(&target, &function, args);
@@ -538,6 +544,15 @@ impl MuxAccount {
             .ok_or(MuxAccountError::NotInitialized)
     }
 
+    /// Return the account's current transaction nonce — the value the next
+    /// execution call must supply.
+    pub fn nonce(env: Env) -> Result<u64, MuxAccountError> {
+        env.storage()
+            .instance()
+            .get(&DataKey::Nonce)
+            .ok_or(MuxAccountError::NotInitialized)
+    }
+
     /// Register or replace a session key. Owner only.
     pub fn register_session_key(
         env: Env,
@@ -654,10 +669,12 @@ impl MuxAccount {
         target: Address,
         function: Symbol,
         args: Vec<Val>,
+        nonce: u64,
     ) -> Result<Val, MuxAccountError> {
         Self::require_not_paused(&env)?;
         session_key.require_auth();
         Self::authorize_session(&env, &session_key, &function)?;
+        Self::consume_nonce(&env, nonce)?;
         let result = Self::dispatch(&env, &target, &function, args)?;
 
         emit(
@@ -692,6 +709,7 @@ impl MuxAccount {
         target: Address,
         function: Symbol,
         args: Vec<Val>,
+        nonce: u64,
     ) -> Result<Val, MuxAccountError> {
         Self::require_not_paused(&env)?;
         sponsor.require_auth();
@@ -705,6 +723,7 @@ impl MuxAccount {
         }
         session_key.require_auth();
         Self::authorize_session(&env, &session_key, &function)?;
+        Self::consume_nonce(&env, nonce)?;
         let result = Self::dispatch(&env, &target, &function, args)?;
 
         emit(
@@ -775,6 +794,31 @@ impl MuxAccount {
         env.storage()
             .instance()
             .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+
+    /// Check the caller-supplied nonce against the stored counter and advance
+    /// it by one.
+    ///
+    /// FAIL-CLOSED: the caller must state the nonce it signed for. Storing the
+    /// counter without ever reading it left `DataKey::Nonce` at 0 forever and
+    /// gave the account no replay or ordering semantics of its own — a relayer
+    /// holding a session-key authorization could resubmit the same invocation.
+    /// A mismatch is rejected with `InvalidNonce`; the counter only advances on
+    /// a call that passed every preceding check, so a rejected call does not
+    /// burn a nonce.
+    fn consume_nonce(env: &Env, nonce: u64) -> Result<(), MuxAccountError> {
+        let current: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::Nonce)
+            .ok_or(MuxAccountError::NotInitialized)?;
+        if nonce != current {
+            return Err(MuxAccountError::InvalidNonce);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::Nonce, &current.saturating_add(1));
+        Ok(())
     }
 
     /// Validate a session key against the stored `SessionKeyRecord` and the
@@ -1221,6 +1265,7 @@ mod tests {
             &args,
             &asset,
             &40_i128,
+            &0_u64,
         );
         assert_eq!(u32::from_val(&env, &value), 7);
         assert!(matches!(
@@ -1230,6 +1275,7 @@ mod tests {
                 &args,
                 &asset,
                 &70_i128,
+                &1_u64,
             ),
             Err(Ok(MuxAccountError::SpendLimitExceeded))
         ));
@@ -1258,6 +1304,7 @@ mod tests {
             &attack_args,
             &asset,
             &50_i128,
+            &0_u64,
         );
         assert!(
             bool::from_val(&env, &value),
@@ -1292,7 +1339,7 @@ mod tests {
         let args = Vec::new(&env);
 
         let rejected =
-            client.try_execute(&target, &symbol_short!("ping"), &args, &asset, &500_i128);
+            client.try_execute(&target, &symbol_short!("ping"), &args, &asset, &500_i128, &0_u64);
         assert!(matches!(
             rejected,
             Err(Ok(MuxAccountError::SpendLimitExceeded))
@@ -1301,7 +1348,7 @@ mod tests {
         // The guard must have been released on that failure path — a
         // within-limit call right after must succeed, not hit
         // ReentrancyDetected.
-        let value = client.execute(&target, &symbol_short!("ping"), &args, &asset, &40_i128);
+        let value = client.execute(&target, &symbol_short!("ping"), &args, &asset, &40_i128, &0_u64);
         assert_eq!(u32::from_val(&env, &value), 7);
     }
 
@@ -1332,6 +1379,7 @@ mod tests {
                 &Vec::new(&env),
                 &asset,
                 &0_i128,
+                &0_u64,
             ),
             Err(Ok(MuxAccountError::InvalidAmount))
         ));
@@ -1419,6 +1467,7 @@ mod tests {
             &Vec::new(&env),
             &asset,
             &10_i128,
+            &0_u64,
         );
         assert!(matches!(result, Err(Ok(MuxAccountError::Unauthorized))));
     }
@@ -1469,6 +1518,7 @@ mod tests {
             &target,
             &symbol_short!("ping"),
             &Vec::new(&env),
+            &0_u64,
         );
         let events = env.events().all();
         // init + ses_exe
@@ -1499,6 +1549,7 @@ mod tests {
             &target,
             &symbol_short!("ping"),
             &Vec::new(&env),
+            &0_u64,
         );
         assert_eq!(
             u32::from_val(&env, &value),
@@ -1534,6 +1585,7 @@ mod tests {
                 &target,
                 &symbol_short!("ping"),
                 &Vec::new(&env),
+                &0_u64,
             ),
             Err(Ok(MuxAccountError::ScopeNotGranted)),
             "a method absent from the granted scopes must fail closed"
@@ -1566,6 +1618,7 @@ mod tests {
                 &target,
                 &symbol_short!("ping"),
                 &Vec::new(&env),
+                &0_u64,
             ),
             Err(Ok(MuxAccountError::SponsorNotAuthorized))
         );
@@ -1592,6 +1645,7 @@ mod tests {
             &target,
             &symbol_short!("ping"),
             &Vec::new(&env),
+            &0_u64,
         );
         assert_eq!(u32::from_val(&env, &value), 7);
 
@@ -1610,6 +1664,7 @@ mod tests {
                 &target,
                 &symbol_short!("ping"),
                 &Vec::new(&env),
+                &1_u64,
             ),
             Err(Ok(MuxAccountError::SponsorNotAuthorized))
         );
@@ -1638,9 +1693,155 @@ mod tests {
                 &target,
                 &symbol_short!("ping"),
                 &Vec::new(&env),
+                &0_u64,
             ),
             Err(Ok(MuxAccountError::ScopeNotGranted))
         );
+    }
+
+    // ── Transaction nonce ────────────────────────────────────────────────────
+
+    /// `DataKey::Nonce` was written once at initialization and never read or
+    /// advanced. It must now start at 0 and advance by exactly one per
+    /// successful execution, on every execution path.
+    #[test]
+    fn test_nonce_starts_at_zero_and_advances_per_execution() {
+        let (env, client, owner, _cid) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        assert_eq!(client.nonce(), 0, "a fresh account starts at nonce 0");
+
+        let target = env.register_contract(None, ExecuteTarget);
+        let asset = Address::generate(&env);
+        client.set_spend_limit(&asset, &1000_i128, &100_u32);
+        client.execute(
+            &target,
+            &symbol_short!("ping"),
+            &Vec::new(&env),
+            &asset,
+            &10_i128,
+            &0_u64,
+        );
+        assert_eq!(client.nonce(), 1, "execute must advance the nonce");
+
+        let session_key = Address::generate(&env);
+        client.register_session_key(
+            &session_key,
+            &(env.ledger().timestamp() + 60),
+            &ping_scope(&env),
+        );
+        client.execute_with_session(
+            &session_key,
+            &target,
+            &symbol_short!("ping"),
+            &Vec::new(&env),
+            &1_u64,
+        );
+        assert_eq!(client.nonce(), 2, "session execution must advance the nonce");
+
+        let relayer = Address::generate(&env);
+        client.set_sponsor(&relayer, &true);
+        client.execute_with_session_sponsored(
+            &session_key,
+            &relayer,
+            &target,
+            &symbol_short!("ping"),
+            &Vec::new(&env),
+            &2_u64,
+        );
+        assert_eq!(
+            client.nonce(),
+            3,
+            "sponsored execution must advance the nonce"
+        );
+    }
+
+    /// Replay protection: resubmitting a call that already consumed its nonce
+    /// must fail closed rather than execute a second time.
+    #[test]
+    fn test_execute_with_session_rejects_replayed_nonce() {
+        let (env, client, owner, _cid) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let target = env.register_contract(None, ExecuteTarget);
+        let session_key = Address::generate(&env);
+        client.register_session_key(
+            &session_key,
+            &(env.ledger().timestamp() + 60),
+            &ping_scope(&env),
+        );
+
+        client.execute_with_session(
+            &session_key,
+            &target,
+            &symbol_short!("ping"),
+            &Vec::new(&env),
+            &0_u64,
+        );
+        assert_eq!(
+            client.try_execute_with_session(
+                &session_key,
+                &target,
+                &symbol_short!("ping"),
+                &Vec::new(&env),
+                &0_u64,
+            ),
+            Err(Ok(MuxAccountError::InvalidNonce)),
+            "replaying a consumed nonce must fail closed"
+        );
+        // A nonce from the future is equally invalid — the counter is exact,
+        // not a lower bound.
+        assert_eq!(
+            client.try_execute_with_session(
+                &session_key,
+                &target,
+                &symbol_short!("ping"),
+                &Vec::new(&env),
+                &7_u64,
+            ),
+            Err(Ok(MuxAccountError::InvalidNonce))
+        );
+        assert_eq!(client.nonce(), 1, "rejected calls must not advance it");
+    }
+
+    /// A call rejected by an earlier check must not burn a nonce — otherwise a
+    /// third party could desynchronise a relayer's queue by spamming rejects.
+    #[test]
+    fn test_rejected_call_does_not_consume_a_nonce() {
+        let (env, client, owner, _cid) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let target = env.register_contract(None, ExecuteTarget);
+        let session_key = Address::generate(&env);
+        client.register_session_key(
+            &session_key,
+            &(env.ledger().timestamp() + 60),
+            &pay_scope(&env),
+        );
+
+        assert_eq!(
+            client.try_execute_with_session(
+                &session_key,
+                &target,
+                &symbol_short!("ping"),
+                &Vec::new(&env),
+                &0_u64,
+            ),
+            Err(Ok(MuxAccountError::ScopeNotGranted))
+        );
+        assert_eq!(client.nonce(), 0);
+
+        let asset = Address::generate(&env);
+        client.set_spend_limit(&asset, &100_i128, &100_u32);
+        assert!(matches!(
+            client.try_execute(
+                &target,
+                &symbol_short!("ping"),
+                &Vec::new(&env),
+                &asset,
+                &500_i128,
+                &0_u64,
+            ),
+            Err(Ok(MuxAccountError::SpendLimitExceeded))
+        ));
+        assert_eq!(client.nonce(), 0);
     }
 
     #[test]
@@ -1652,7 +1853,7 @@ mod tests {
         let ping = symbol_short!("ping");
         let args: Vec<Val> = Vec::new(&env);
         assert_eq!(
-            client.try_execute_with_session(&session_key, &target, &ping, &args),
+            client.try_execute_with_session(&session_key, &target, &ping, &args, &0_u64),
             Err(Ok(MuxAccountError::Unauthorized))
         );
 
@@ -1663,13 +1864,13 @@ mod tests {
         );
         client.revoke_session_key(&session_key);
         assert_eq!(
-            client.try_execute_with_session(&session_key, &target, &ping, &args),
+            client.try_execute_with_session(&session_key, &target, &ping, &args, &0_u64),
             Err(Ok(MuxAccountError::Unauthorized))
         );
 
         client.register_session_key(&session_key, &env.ledger().timestamp(), &ping_scope(&env));
         assert_eq!(
-            client.try_execute_with_session(&session_key, &target, &ping, &args),
+            client.try_execute_with_session(&session_key, &target, &ping, &args, &0_u64),
             Err(Ok(MuxAccountError::Unauthorized))
         );
     }
@@ -1694,6 +1895,7 @@ mod tests {
                 &target,
                 &symbol_short!("ping"),
                 &Vec::new(&env),
+                &0_u64,
             ),
             Err(Ok(MuxAccountError::Unauthorized)),
             "empty-scope session key must fail closed"
@@ -1898,6 +2100,7 @@ mod tests {
             &target,
             &symbol_short!("ping"),
             &Vec::new(&env),
+            &0_u64,
         );
 
         let ttl_after = instance_ttl(&env, &cid);

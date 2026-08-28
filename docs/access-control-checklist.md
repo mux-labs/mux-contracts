@@ -39,10 +39,10 @@ Legend:
       `invoke_contract` returns (checks-effects-interactions; see §5.2);
       emits `executed` event on success.
 - [ ] `register_session_key` / `revoke_session_key` — `require_owner` helper called.
-- [ ] `execute_with_session` — `session_key.require_auth()` called, plus revocation/expiry check against the stored `SessionKeyRecord`. **Fail-closed scope enforcement (T-40):** a key registered with an empty `scopes` list is rejected with `Unauthorized` (unit test: `test_execute_with_session_rejects_empty_scopes`), and the invoked `function` must be named in a non-empty `scopes` list or the call is rejected with `ScopeNotGranted` (unit test: `test_execute_with_session_rejects_method_outside_scopes`). The target is invoked while the reentrancy guard is held; emits `ses_exe` on success.
+- [ ] `execute_with_session` — `session_key.require_auth()` called, plus revocation/expiry check against the stored `SessionKeyRecord`. **Fail-closed scope enforcement (T-40):** a key registered with an empty `scopes` list is rejected with `Unauthorized` (unit test: `test_execute_with_session_rejects_empty_scopes`), and the invoked `function` must be named in a non-empty `scopes` list or the call is rejected with `ScopeNotGranted` (unit test: `test_execute_with_session_rejects_method_outside_scopes`). The caller-supplied `nonce` must equal `nonce()` or the call is rejected with `InvalidNonce`, blocking replay of an already-submitted session authorization (unit test: `test_execute_with_session_rejects_replayed_nonce`); a rejected call never consumes a nonce (unit test: `test_rejected_call_does_not_consume_a_nonce`). The target is invoked while the reentrancy guard is held; emits `ses_exe` on success.
 - [ ] `execute_with_session_sponsored` — `sponsor.require_auth()` **and** `session_key.require_auth()` called; the sponsor must be on the owner-managed allowlist or the call is rejected with `SponsorNotAuthorized` before any session state is read (unit test: `test_sponsored_execution_rejects_unknown_sponsor`). Sponsorship never widens the session key's scopes (unit test: `test_sponsored_execution_still_enforces_scopes`).
 - [ ] `set_sponsor` — `require_owner` helper called; emits `spn_set` event.
-- [ ] `set_metadata` — `require_owner` helper called.
+- [ ] `nonce` — read-only; returns the counter every execution entrypoint checks and advances.
 - [ ] `set_metadata` — `require_owner` helper called; emits `meta_set` event.
 - [ ] No public function mutates storage without an auth check.
 
