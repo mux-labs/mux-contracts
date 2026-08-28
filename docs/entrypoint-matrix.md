@@ -80,17 +80,15 @@ by a specific actor; public entrypoints are callable by anyone.
 
 | Entrypoint | Auth | Notes |
 |---|---|---|
-| `grant_delegate(owner, delegate, perms)` | U | Owner authorizes; capped at `MAX_DELEGATE_PERMS` / `MAX_DELEGATES_PER_OWNER` |
 | `initialize(admin)` | A | Optional, one-time; sets the upgrade admin only — delegation grants work without it |
 | `upgrade(new_wasm_hash)` | A | Admin only; `NotInitialized` if `initialize` was never called |
-| `grant_delegate(owner, delegate, perms)` | U | Owner authorizes |
+| `grant_delegate(owner, delegate, perms)` | U | Owner authorizes; capped at `MAX_DELEGATE_PERMS` / `MAX_DELEGATES_PER_OWNER` |
 | `revoke_delegate(owner, delegate)` | U | Owner authorizes |
 | `get_delegate_permissions(owner, delegate)` | P | Read-only |
 | `is_delegate(owner, delegate, perm)` | P | Read-only |
 | `get_delegates(owner)` | P | Read-only |
 | `check_delegate(owner, delegate, perm)` | P | Read-only; `Ok(())`/`Err(NotADelegate)` variant of `is_delegate` |
 | `link_contract_id(admin, contract_id)` | A | Admin authorizes; write-once; emits `dlg_link` event |
-| `link_contract_id(admin, contract_id)` | U | Caller-supplied `admin` param authorizes itself; **not** the same identity as the stored upgrade admin — see [delegation-upgrade.md](delegation-upgrade.md); emits `dlg_link` event |
 | `get_contract_id()` | P | Read-only |
 
 ## mux-permissions
@@ -133,7 +131,7 @@ by a specific actor; public entrypoints are callable by anyone.
 | `approve_recovery(guardian)` | U | Guardian authorizes; adds approval to the pending request; rejects duplicates |
 | `cancel_recovery()` | U | Owner authorizes |
 | `execute_recovery(guardian)` | U | Guardian authorizes; timelock, expiry, and quorum checks (approvals >= threshold) |
-| `approve_recovery_admin()` | U | Owner only; executes a pending recovery immediately, bypassing the timelock (`require_owner` helper) |
+| `approve_recovery_admin()` | A | Owner + guardian dual auth; executes pending recovery immediately, bypassing timelock; both owner and co_guardian must authorize |
 | `add_guardian(guardian)` | U | Owner authorizes; capped at `MAX_GUARDIANS` |
 | `remove_guardian(guardian)` | U | Owner authorizes; rejects if it would leave zero guardians |
 | `set_quorum_threshold(threshold)` | U | Owner authorizes; threshold must be >= 1 and <= guardian count; emits `qrm_set` |
