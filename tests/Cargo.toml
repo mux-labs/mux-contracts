@@ -33,3 +33,15 @@ path = "upgrade_preflight.rs"
 [[test]]
 name = "threat_model_coverage"
 path = "threat_model_coverage.rs"
+
+[[test]]
+name = "aa_phase2_milestone"
+path = "aa_phase2_milestone.rs"
+
+[[test]]
+name = "session_auth_doc_coverage"
+path = "session_auth_doc_coverage.rs"
+
+[[test]]
+name = "expiry_naming"
+path = "expiry_naming.rs"

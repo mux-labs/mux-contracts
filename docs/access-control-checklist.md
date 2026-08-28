@@ -390,7 +390,7 @@ rg 'panic!|unreachable!|unimplemented!' contracts/*/src/lib.rs | grep -v '#\[cfg
 
 2. Owner calls set_delegate(delegate, expiry, can_spend=true)
    └─ require_owner() → owner.require_auth() ✓
-   └─ Storage: Delegates[delegate] = DelegateInfo{expiry, can_spend}
+   └─ Storage: Delegates[delegate] = DelegateInfo{expires_at, can_spend}
 
 3. Delegate calls debit_spend(asset, amount)
    └─ current_contract_address().require_auth() (contract-internal only)

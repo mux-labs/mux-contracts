@@ -20,6 +20,9 @@ Errors are defined in `MuxAccountError` (`contracts/mux-account/src/lib.rs`).
 | `ReentrancyDetected` | 10 | 409 | Reentrant `debit_spend` call detected |
 | `ArithmeticOverflow` | 11 | 500 | Arithmetic overflow in spend tracking |
 | `TooManySessionKeys` | 12 | 409 | Session key map has reached capacity |
+| `ScopeNotGranted` | 13 | 403 | Invoked method is not in the session key's `scopes` list |
+| `SponsorNotAuthorized` | 14 | 403 | Relayer is not on the account's sponsor allowlist |
+| `InvalidNonce` | 15 | 409 | Supplied nonce does not match the account's current nonce |
 
 ## Mux Account Factory (`contracts/mux-account-factory`)
 

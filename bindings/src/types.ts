@@ -25,7 +25,11 @@ export interface SpendLimit {
 
 export interface DelegateInfo {
   address: Address;
-  expiryLedger: number;
+  /**
+   * Unix timestamp (`u64`) at which the delegation stops being valid. Named
+   * `expires_at` on the contract; it is a timestamp, not a ledger sequence.
+   */
+  expiresAt: bigint;
   canSpend: boolean;
 }
 
@@ -58,7 +62,10 @@ export type MuxAccountError =
   | "TooManyDelegates"
   | "ReentrancyDetected"
   | "ArithmeticOverflow"
-  | "TooManySessionKeys";
+  | "TooManySessionKeys"
+  | "ScopeNotGranted"
+  | "SponsorNotAuthorized"
+  | "InvalidNonce";
 
 export type MuxRecoveryError =
   | "NotInitialized"
@@ -448,6 +455,9 @@ export function muxAccountErrorMessage(
     10: "reentrancy detected",
     11: "arithmetic overflow",
     12: "too many session keys",
+    13: "session key scope does not grant this method",
+    14: "sponsor is not on the relayer allowlist",
+    15: "nonce does not match the account's current nonce",
   };
 
   const nameMap: Record<MuxAccountError, number> = {
@@ -463,6 +473,9 @@ export function muxAccountErrorMessage(
     ReentrancyDetected: 10,
     ArithmeticOverflow: 11,
     TooManySessionKeys: 12,
+    ScopeNotGranted: 13,
+    SponsorNotAuthorized: 14,
+    InvalidNonce: 15,
   };
 
   const code = typeof error === "number" ? error : (nameMap[error] ?? -1);

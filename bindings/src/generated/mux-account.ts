@@ -58,12 +58,12 @@ export class MuxAccountClient {
   async setDelegate(
     sourceKeypair: Keypair,
     delegate: Address,
-    expiryLedger: number,
+    expiresAt: bigint,
     canSpend: boolean
   ): Promise<void> {
     const tx = await this.buildTx(sourceKeypair, "set_delegate", [
       nativeToScVal(delegate.toString(), { type: "address" }),
-      nativeToScVal(expiryLedger, { type: "u32" }),
+      nativeToScVal(expiresAt, { type: "u64" }),
       nativeToScVal(canSpend, { type: "bool" }),
     ]);
     await this.submit(tx, sourceKeypair);

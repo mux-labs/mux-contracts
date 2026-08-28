@@ -61,9 +61,11 @@ Contract tag: `mux_acct`
 > `register_session_key` and `revoke_session_key` emit `sk_reg` and `sk_rev`
 > respectively on success only.
 >
-> `execute_with_session` emits `ses_exe` only on the success path. A rejected
-> call — unknown/revoked/expired key, or an **empty-scope key rejected
-> fail-closed (T-40)** — emits nothing, matching the no-events-on-error
+> `execute_with_session` emits `ses_exe` only on the success path — after the
+> target has been invoked and returned. A rejected call — unknown/revoked/expired
+> key, an **empty-scope key rejected fail-closed (T-40)**, a method outside the
+> granted scopes (`ScopeNotGranted`), or an un-allowlisted relayer
+> (`SponsorNotAuthorized`) — emits nothing, matching the no-events-on-error
 > convention.
 
 ---
