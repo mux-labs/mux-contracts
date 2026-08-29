@@ -234,7 +234,8 @@ pub struct RegistryMeta {
 | `register_session_key` | `session_key: Address, expires_at: u64, scopes: Vec<Scope>` | `Result<(), MuxAccountError>` | Register or replace a session key (max `MAX_SESSION_KEYS` per owner); owner-only |
 | `revoke_session_key` | `session_key: Address` | `Result<(), MuxAccountError>` | Revoke a registered session key and remove it from `SessionKeyIndex`; owner-only |
 | `is_session_key_valid` | `session_key: Address` | `Result<bool, MuxAccountError>` | Return `true` if the key is registered, not revoked, and not expired; `false` for a revoked, expired, or unknown key |
-| `execute_with_session` | `session_key: Address, payload: Bytes` | `Result<Bytes, MuxAccountError>` | Validate an authorized, non-expired, non-revoked session key; **fail-closed scope check (T-40)** — a key with an empty `scopes` list is rejected with `Unauthorized`. Does not decode or execute `payload`; returns empty `Bytes` on success. See [`docs/aa_sequence_diagram.md`](aa_sequence_diagram.md) for the remaining gap (non-empty scopes are not matched against the payload's target method). This is a deliberate, documented gap (tracked in #579) pending a design for payload decode/dispatch — not an oversight |
+| `execute_with_session` | `session_key: Address, target: Address, function: Symbol, args: Vec<Val>, nonce: u64` | `Result<Val, MuxAccountError>` | Validate an authorized, non-expired, non-revoked session key; **fail-closed scope check (T-40)** — a key with an empty `scopes` list, or one that doesn't cover `function`, is rejected with `Unauthorized`. Consumes `nonce`, then dispatches `target.function(args)` under the reentrancy guard and forwards the target's return value |
+| `execute_with_session_sponsored` | `session_key: Address, sponsor: Address, target: Address, function: Symbol, args: Vec<Val>, nonce: u64` | `Result<Val, MuxAccountError>` | Gas-abstracted variant of `execute_with_session`: `sponsor` must `require_auth()` and be on the owner's sponsor allowlist (else `SponsorNotAuthorized`), in addition to the session key's own authorization; same dispatch/scope/nonce rules otherwise |
 | `set_metadata` | `meta: RegistryMeta` | `Result<(), MuxAccountError>` | Store registry-level metadata for this account instance; owner-only |
 | `get_metadata` | — | `Option<RegistryMeta>` | Return stored registry metadata, or `None` if not set |
 
@@ -248,7 +249,7 @@ pub struct RegistryMeta {
 | `dlg_rm` | `delegate: Address` | Delegate removed |
 | `lmt_set` | `(asset: Address, amount: i128, period_ledgers: u32)` | Spend limit set |
 | `debited` | `(asset: Address, spend: i128)` | Spend debited |
-| `ses_exe` | `SessionExecutedEvent { session_key: Address, payload_len: u32 }` | Session key execution without duplicating payload data |
+| `ses_exe` | `SessionExecutedEvent { session_key: Address, target: Address, function: Symbol, sponsor: Option<Address> }` | `execute_with_session` or `execute_with_session_sponsored` succeeds; `sponsor` is `None` for the non-sponsored variant |
 | `sk_reg` | `session_key: Address` | `register_session_key` succeeds |
 | `sk_rev` | `session_key: Address` | `revoke_session_key` succeeds |
 | `meta_set` | `name: String` | `set_metadata` succeeds |

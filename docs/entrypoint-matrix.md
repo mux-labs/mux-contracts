@@ -43,7 +43,8 @@ by a specific actor; public entrypoints are callable by anyone.
 | `register_session_key(session_key, expires_at, scopes)` | A | Owner only; paused check; capped at `MAX_SESSION_KEYS`; emits `sk_reg` |
 | `revoke_session_key(session_key)` | A | Owner only; paused check; removes the key from `SessionKeyIndex`; emits `sk_rev` |
 | `is_session_key_valid(session_key)` | P | Read-only; `true` iff registered, not revoked, and not expired |
-| `execute_with_session(session_key, payload)` | U | Session key auth; validates registration/revocation/expiry **and enforces scopes fail-closed** — a key registered with an empty `scopes` list is rejected with `Unauthorized` (T-40 in [threat-model.md](threat-model.md)). Does not execute `payload` (see [aa_sequence_diagram.md](aa_sequence_diagram.md)) |
+| `execute_with_session(session_key, target, function, args, nonce)` | U | Session key auth; validates registration/revocation/expiry **and enforces scopes fail-closed** — a key registered with an empty `scopes` list, or one not covering `function`, is rejected with `Unauthorized` (T-40 in [threat-model.md](threat-model.md)). Consumes `nonce`, then dispatches `function(args)` on `target` while the reentrancy guard is held; the target's return value is forwarded to the caller; emits `ses_exe` |
+| `execute_with_session_sponsored(session_key, sponsor, target, function, args, nonce)` | A+U | Both `sponsor` (must be on the owner's sponsor allowlist, else `SponsorNotAuthorized`) and `session_key` authorize; otherwise identical dispatch/scope/nonce rules to `execute_with_session`; emits `ses_exe` with `sponsor: Some(sponsor)` |
 | `set_metadata(meta)` | A | Owner only; emits `meta_set` event |
 | `get_metadata()` | P | Read-only |
 
