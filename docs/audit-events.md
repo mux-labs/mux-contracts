@@ -46,7 +46,7 @@ Contract tag: `mux_acct`
 | `lmt_set` | `set_spend_limit` succeeds | `(asset: Address, amount: i128, period_ledgers: u32)` |
 | `debited` | `debit_spend` succeeds | `(asset: Address, spend: i128)` |
 | `executed` | `execute` succeeds | `(target: Address, asset: Address, spend: i128)` |
-| `ses_exe` | `execute_with_session` succeeds | `SessionExecutedEvent { session_key: Address, payload_len: u32 }` |
+| `ses_exe` | `execute_with_session` or `execute_with_session_sponsored` succeeds | `SessionExecutedEvent { session_key: Address, target: Address, function: Symbol, sponsor: Option<Address> }`; `sponsor` is `None` for the non-sponsored variant |
 | `sk_reg` | `register_session_key` succeeds | `session_key: Address` |
 | `sk_rev` | `revoke_session_key` succeeds | `session_key: Address` |
 | `meta_set` | `set_metadata` succeeds | `name: String` (from the `RegistryMeta` argument) |
