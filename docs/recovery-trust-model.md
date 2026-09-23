@@ -235,8 +235,9 @@ The contract enforces a minimum of 1 guardian (`MinGuardiansRequired`), but 1 is
 liveness — any single key loss destroys the recovery path. The recommended minimum is **3
 guardians**: this tolerates one key loss while keeping a 2-guardian majority.
 
-> **Rule of thumb:** For a maximum-security account, use 5 guardians and require a policy that any
-> 3 can execute recovery (on-chain quorum threshold is planned for a future version).
+> **Rule of thumb:** For a maximum-security account, use 5 guardians and set the on-chain
+> `quorum_threshold` (via `set_quorum_threshold`) so that any 3 must approve before
+> `execute_recovery` succeeds.
 
 **3. Periodic guardian key attestation**
 
@@ -306,13 +307,12 @@ The following features are planned for future contract versions to improve liven
 
 | Feature | Description | Priority |
 |---|---|---|
-| **M-of-N guardian quorum** | Require M signatures from N guardians to execute recovery, tolerating up to N-M key losses | High |
 | **Guardian key rotation** | Allow the owner to rotate individual guardian keys with a timelock, without redeploying | High |
 | **Social recovery with time-lock escalation** | If recovery is not initiated within a configured inactivity window, escalate to a social fallback (e.g. a protocol multisig) | Medium |
 | **Guardian liveness oracle** | On-chain heartbeat mechanism where guardians periodically attest liveness; missed attestations generate alerts | Low |
 
-Until M-of-N quorum is implemented, operators should compensate operationally by following the
-mitigations in §7.3.
+M-of-N guardian quorum is implemented (§6); until guardian key rotation ships, operators should
+compensate operationally by following the mitigations in §7.3.
 
 ---
 
