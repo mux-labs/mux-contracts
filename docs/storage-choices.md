@@ -77,9 +77,9 @@ Every Mux contract makes a deliberate choice about which storage type to use for
 | Data | Storage type | Rationale |
 |---|---|---|
 | `Executing` | instance | Reentrancy guard; self-cleaning |
-| `Meta` | instance | Singleton metadata; written once at deploy |
+| `Meta` | instance | Singleton metadata; written once via `set_registry_metadata` |
 
-**Why instance-only:** The batcher is stateless by design — it invokes target contracts in a loop but does not store per-entity data. The only instance storage is a reentrancy flag (cleared on every call) and optional metadata (written once). There is no per-entity data that would benefit from persistent storage.
+**Why instance-only:** The batcher is stateless by design — it invokes target contracts in a loop but does not store per-entity data. The only instance storage is a reentrancy flag (cleared on every call) and optional metadata set via the one-time `set_registry_metadata` call (`MetadataAlreadySet` on a second call). There is no per-entity data that would benefit from persistent storage.
 
 ---
 
