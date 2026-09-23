@@ -35,7 +35,7 @@ trap cleanup EXIT INT TERM
 
 # 1. Start docker-compose and wait for health
 echo "==> Starting docker-compose localnet..."
-if ! docker-compose up --wait --timeout 120; then
+if ! docker-compose up --wait --wait-timeout 120; then
   echo "Error: docker-compose up failed or timed out" >&2
   exit 1
 fi
