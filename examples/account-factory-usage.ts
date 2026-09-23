@@ -110,7 +110,7 @@ async function demoDeployAccountWithMetadata() {
 async function demoGetAccounts() {
   console.log("get_accounts: retrieving accounts for owner…");
   try {
-    const accounts = await client.getAccounts(ownerAddress);
+    const accounts = await client.getAccounts(signer, ownerAddress);
     console.log(`  OK — found ${accounts.length} account(s)`);
     for (let i = 0; i < accounts.length; i++) {
       console.log(`    [${i}] ${accounts[i].toString()}`);
@@ -127,7 +127,7 @@ async function demoGetAccountMetadata() {
 
   console.log("get_account_metadata: retrieving account metadata…");
   try {
-    const metadata = await client.getAccountMetadata(ownerAddress, accountAddress);
+    const metadata = await client.getAccountMetadata(signer, ownerAddress, accountAddress);
     console.log(`  OK — metadata retrieved:`);
     console.log(`    Version: ${metadata.version}`);
     console.log(`    Description: ${metadata.description}`);
@@ -142,7 +142,7 @@ async function demoGetAccountMetadata() {
 async function demoAccountCount() {
   console.log("account_count: retrieving total account count…");
   try {
-    const count = await client.accountCount();
+    const count = await client.accountCount(signer);
     console.log(`  OK — total accounts registered: ${count}`);
   } catch (err) {
     console.log(`  Failed — ${(err as Error).message}`);
