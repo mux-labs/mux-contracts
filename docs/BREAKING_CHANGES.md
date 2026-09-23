@@ -96,6 +96,18 @@ rules above:
   No automated check currently enforces that these stay in sync with the
   Rust source — this is a manual, PR-review-time responsibility.
 
+### Event / Topic Changes
+
+Breaking changes to contract events include:
+
+- **Contract Tag or Action Rename**: Changing a `topics[0]` contract tag or a `topics[1]` action name (see [`docs/event-topic-conventions.md`](event-topic-conventions.md))
+- **Payload Shape Changes**: Changing the type, order, or count of fields in an event's `data` payload for an existing `(contract_tag, action)` pair
+- **Reserved Action Tag Reassignment**: Reusing one of the repository-wide reserved action tags (e.g. `ses_exe`, `rec_init`) for a different event or contract
+
+**Non-breaking examples:**
+- Adding a new action under an existing contract tag
+- Adding a new contract tag for a new crate
+
 ### Behavior Changes
 
 Breaking changes to function behavior include:
