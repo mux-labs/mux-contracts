@@ -380,6 +380,9 @@ See the [Deploying Contracts](#deploying-contracts) section above for the full d
 - [Account Abstraction Design](docs/account-abstraction.md) — Goals, architecture, session key design, and transaction flows
 - [Backend Orchestrator Integration](docs/aa-backend-orchestrator.md) — Scope and architecture for relayer integration
 - [Threat Model](docs/threat-model.md) — assets, trust boundaries, and mitigations
+- [Pause & Freeze Architecture Decision](docs/pause-freeze-decision.md) — Architectural decision record on self-custodial account circuit breaker vs global freeze
+- [Operations Runbook Index](ops/README.md) — Comprehensive operations directory, deployment checklists, and operational logs
+- [Soroban SDK Bump Playbook](docs/sdk-bump-playbook.md) — Invariants, step-by-step workflow, and verification for upgrading `soroban-sdk`
 - [Access Control Review Checklist](docs/access-control-checklist.md) — pre-deployment and pre-audit checklist
 - [Storage Griefing Notes](docs/storage-griefing.md) — collection caps, TTL management, keeper runbook
 - [External Audit Prep](docs/audit-prep.md) — scope, entry points, known limitations, auditor checklist

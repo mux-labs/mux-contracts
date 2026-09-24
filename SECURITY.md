@@ -24,16 +24,26 @@ Instead, report vulnerabilities through one of these channels:
 - Suggested fix (if any)
 - Your contact information for follow-up
 
-### Response Timeline
+### Response Timeline & Service Level Agreement (SLA)
 
-| Stage | Target |
-|-------|--------|
-| Acknowledgment | 48 hours |
-| Triage & severity assessment | 5 business days |
-| Fix for critical/high severity | 14 business days |
-| Public disclosure (coordinated) | 30 business days after fix |
+We commit to the following Service Level Agreement (SLA) targets for all reports submitted via our private reporting channels:
 
-We will work with you to understand and validate the issue before any public disclosure.
+| Stage | Target SLA | Description |
+|-------|------------|-------------|
+| **Initial Acknowledgment** | **48 hours** | Initial response confirming receipt of report and assigning a triage coordinator. |
+| **Triage & Severity Assessment** | **5 business days** | Confirmation of reproducibility, impact classification, and severity assignment. |
+| **Fix for Critical / High Severity** | **14 business days** | Patch developed, tested in isolation, audited, and scheduled for deployment. |
+| **Fix for Medium / Low Severity** | **30 business days** | Remediation included in the next scheduled release cycle. |
+| **Coordinated Public Disclosure** | **30 business days after fix** | Public advisory published in collaboration with reporter after mainnet deployment. |
+
+#### Severity Classification
+- **Critical:** Direct unauthorized theft of funds, account takeover, or complete denial of service across all accounts.
+- **High:** Temporary lock of user funds, unauthorized permission escalation, or storage griefing compromising contract availability.
+- **Medium:** Partial policy bypass without direct fund loss, non-critical gas griefing, or state inconsistencies.
+- **Low:** Minor logic edge cases, client-side binding discrepancies, or documentation ambiguities affecting security assumptions.
+
+This SLA is mirrored in our RFC 9116 security declaration at [`.well-known/security.txt`](.well-known/security.txt). We work closely with researchers throughout the triage and disclosure process.
+
 
 ## Scope
 

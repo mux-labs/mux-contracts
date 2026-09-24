@@ -218,6 +218,14 @@ All contracts use **instance storage** (and, for `mux-policy` / `mux-delegation`
 |---|--------|--------|------------|--------|------------|
 | T-41 | Name squatting / wallet hijack | Spoofing | Low | Medium | `register_wallet*` requires `owner.require_auth()`; `MAX_WALLETS = 128` cap; existing names are overwritten only by the owner |
 
+### 4.14 Emergency Pause and Freeze (`mux-account`)
+
+| # | Threat | STRIDE | Likelihood | Impact | Mitigation |
+|---|--------|--------|------------|--------|------------|
+| T-50 | Ongoing unauthorized spending after session or delegate key leak | Elevation of Privilege | Medium | Critical | Account owner invokes `pause()` (`owner.require_auth()`); all state-mutating execution paths (`execute`, `execute_with_session`, `debit_spend`, `set_delegate`) immediately fail closed with `Unauthorized` |
+| T-51 | Protocol admin key compromise resulting in global freeze of all user wallets | Elevation of Privilege | Low | Critical | **Deliberate rejection of global freeze backdoor:** Mux Protocol does NOT implement a protocol-wide freeze backdoor over user accounts. Each smart account is self-custodial and independently controlled; compromise of a protocol admin key cannot freeze user accounts. See [pause-freeze-decision.md](pause-freeze-decision.md) |
+| T-52 | Malicious actor attempts to freeze victim's account (DoS) | Denial of Service | Low | Critical | `pause()` and `unpause()` strictly enforce `owner.require_auth()`. Delegates, guardians, session keys, and unauthenticated third parties cannot trigger or clear the pause flag |
+
 ---
 
 ## 5. Security Controls
@@ -233,6 +241,7 @@ All contracts use **instance storage** (and, for `mux-policy` / `mux-delegation`
 | Delegate `expires_at` timestamp | `mux-account` |
 | Spend limit period reset via ledger sequence | `mux-account`, `mux-policy`, `mux-spending-policy` |
 | **Fail-closed session-scope enforcement** | `mux-account::execute_with_session` (T-40) |
+| **Owner-controlled circuit breaker (`pause` / `unpause`)** | `mux-account::pause`, `mux-account::unpause` (T-50..T-52) |
 | M-of-N guardian quorum + timelock | `mux-recovery` |
 | Admin-only registry / policy / role writes | `mux-permissions`, `mux-registry`, `mux-policy`, `mux-spending-policy`, `mux-wallet-registry`, `mux-account-factory` (upgrade), `mux-delegation` (upgrade) |
 | Wallet-only spend recording | `mux-policy::record_spend` |
@@ -249,6 +258,7 @@ All contracts use **instance storage** (and, for `mux-policy` / `mux-delegation`
 - **RPC node trust** — users should use multiple RPC endpoints or run their own node.
 - **Frontend key management** — private keys in browser localStorage are a known risk; hardware wallets are recommended.
 - **Upgrade authority** — `mux-account` is immutable by design (no `upgrade()` will be added; see [account-upgrade-migration.md](account-upgrade-migration.md)); the other contracts gate `upgrade()` behind a stored admin/owner, but a compromised admin key is still catastrophic. Consider time-lock or DAO governance for admin keys on mainnet.
+- **Pause / freeze architecture decision** — `mux-account` implements a per-account, self-custodial circuit breaker (`pause` / `unpause`). A global protocol admin freeze backdoor across user accounts is deliberately rejected to preserve non-custodial ownership and eliminate central honeypot attack vectors; see [docs/pause-freeze-decision.md](pause-freeze-decision.md).
 - **Session scopes match methods, not targets** — `execute_with_session` dispatches to the caller-supplied `target` after matching `function` against the session key's `scopes`. A key scoped to `pay` may therefore call `pay` on any contract address the caller supplies; target-scoped sessions remain future work (see [aa_sequence_diagram.md](aa_sequence_diagram.md)).
 - **Session execution has no spend accounting** — per-asset spend limits are enforced on the owner-authorized `execute` path only. A target invoked through a session key must call back into `debit_spend`, which the held reentrancy guard rejects for the duration of the call.
 - **Sponsor allowlist is owner-managed** — an owner that allowlists a malicious relayer gains no protection from the contract beyond the session key's own scopes; the relayer still cannot exceed them (see [relayer-integration.md](relayer-integration.md)).
@@ -266,3 +276,4 @@ All contracts use **instance storage** (and, for `mux-policy` / `mux-delegation`
 | 2026-05-30 | 0.1.1 | Storage griefing: added T-21 TTL expiry threat; added `extend_ttl` mitigation in all contracts; added `docs/storage-griefing.md` |
 | 2026-05-30 | 0.1.2 | Added `docs/audit-prep.md` — scope, entry points, known limitations, auditor checklist |
 | 2026-08-26 | 0.2.0 | **Expanded to all ten production contracts** — previously covered only `mux-account`, `mux-batcher`, `mux-permissions`. Added §4.7 (factory), §4.8 (delegation), §4.9 (policy), §4.10 (recovery), §4.11 (registry), §4.12 (spending policy), §4.13 (wallet registry); added storage-griefing rows T-45…T-49; added T-40 fail-closed session-scope enforcement (`execute_with_session` rejects empty-scope keys) and its unit test; added threat-model coverage guard (`tests/threat_model_coverage.rs`) |
+| 2026-09-24 | 0.2.1 | Added §4.14 Emergency Pause and Freeze threats (T-50…T-52); documented architectural decision rejecting global freeze backdoor in favor of per-account self-custodial circuit breaker; cross-referenced `docs/pause-freeze-decision.md` (#845) |
