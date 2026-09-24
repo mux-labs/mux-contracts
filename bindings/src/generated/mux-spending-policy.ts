@@ -25,6 +25,54 @@ export interface MuxSpendingPolicyClientOptions {
   rpcUrl: string;
 }
 
+/** Minimum spend limit value (> 0). Setting limit <= 0 fails with InvalidInput (code 6). */
+export const SPEND_LIMIT_MIN = 1n;
+
+/** Maximum allowable i128 value for spend limits (2^127 - 1). */
+export const SPEND_LIMIT_MAX = 170141183460469231731687303715884105727n;
+
+/** Minimum period length in ledgers (> 0). period_ledgers == 0 fails with InvalidPeriod (code 7). */
+export const PERIOD_LEDGERS_MIN = 1;
+
+/** Maximum period length in ledgers (u32::MAX). */
+export const PERIOD_LEDGERS_MAX = 4294967295;
+
+/**
+ * Validates spend limit policy boundaries according to spending-policy-semantics.md:
+ * - limit must be > 0 and <= i128::MAX
+ * - period_ledgers must be > 0 and <= u32::MAX
+ */
+export function validateSpendPolicyBoundaries(limit: bigint, periodLedgers?: number): void {
+  if (limit <= 0n) {
+    throw new Error(`InvalidInput: limit must be strictly positive (> 0), got ${limit}`);
+  }
+  if (limit > SPEND_LIMIT_MAX) {
+    throw new Error(`InvalidInput: limit exceeds maximum i128 value (${SPEND_LIMIT_MAX})`);
+  }
+  if (periodLedgers !== undefined) {
+    if (periodLedgers <= 0) {
+      throw new Error(`InvalidPeriod: period_ledgers must be strictly positive (> 0), got ${periodLedgers}`);
+    }
+    if (periodLedgers > PERIOD_LEDGERS_MAX) {
+      throw new Error(`InvalidPeriod: period_ledgers exceeds maximum u32 value (${PERIOD_LEDGERS_MAX})`);
+    }
+  }
+}
+
+/**
+ * Validates check_spend amount boundaries:
+ * - amount must be >= 0 (non-negative)
+ * - amount must be <= i128::MAX
+ */
+export function validateSpendAmountBoundaries(amount: bigint): void {
+  if (amount < 0n) {
+    throw new Error(`InvalidInput: spend amount cannot be negative, got ${amount}`);
+  }
+  if (amount > SPEND_LIMIT_MAX) {
+    throw new Error(`InvalidInput: spend amount exceeds maximum i128 value (${SPEND_LIMIT_MAX})`);
+  }
+}
+
 export class MuxSpendingPolicyClient {
   private contract: Contract;
   private server: SorobanRpc.Server;
@@ -47,13 +95,19 @@ export class MuxSpendingPolicyClient {
     sourceKeypair: Keypair,
     account: Address,
     asset: Address,
-    limit: bigint
+    limit: bigint,
+    periodLedgers?: number
   ): Promise<void> {
-    const tx = await this.buildTx(sourceKeypair, "set_policy", [
+    validateSpendPolicyBoundaries(limit, periodLedgers);
+    const args: xdr.ScVal[] = [
       nativeToScVal(account.toString(), { type: "address" }),
       nativeToScVal(asset.toString(), { type: "address" }),
       nativeToScVal(limit, { type: "i128" }),
-    ]);
+    ];
+    if (periodLedgers !== undefined) {
+      args.push(nativeToScVal(periodLedgers, { type: "u32" }));
+    }
+    const tx = await this.buildTx(sourceKeypair, "set_policy", args);
     await this.submit(tx, sourceKeypair);
   }
 
@@ -76,6 +130,7 @@ export class MuxSpendingPolicyClient {
     asset: Address,
     amount: bigint
   ): Promise<void> {
+    validateSpendAmountBoundaries(amount);
     const tx = await this.buildTx(sourceKeypair, "check_spend", [
       nativeToScVal(account.toString(), { type: "address" }),
       nativeToScVal(asset.toString(), { type: "address" }),

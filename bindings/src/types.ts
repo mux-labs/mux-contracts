@@ -510,6 +510,7 @@ export function spendingPolicyErrorMessage(
     4: "policy not found",
     5: "spend limit exceeded",
     6: "invalid input",
+    7: "invalid period window",
   };
 
   const nameMap: Record<SpendingPolicyError, number> = {
@@ -519,6 +520,7 @@ export function spendingPolicyErrorMessage(
     PolicyNotFound: 4,
     SpendLimitExceeded: 5,
     InvalidInput: 6,
+    InvalidPeriod: 7,
   };
 
   const code = typeof error === "number" ? error : (nameMap[error] ?? -1);
@@ -541,7 +543,8 @@ export type SpendingPolicyError =
   | "Unauthorized"
   | "PolicyNotFound"
   | "SpendLimitExceeded"
-  | "InvalidInput";
+  | "InvalidInput"
+  | "InvalidPeriod";
 
 export type MuxWalletRegistryError =
   | "NotInitialized"

@@ -23,11 +23,47 @@ export interface MuxAccountFactoryClientOptions {
   rpcUrl: string;
 }
 
+/** Maximum allowed length for account metadata version string. */
+export const FACTORY_MAX_VERSION_LENGTH = 32;
+
+/** Maximum allowed length for account metadata description string. */
+export const FACTORY_MAX_DESCRIPTION_LENGTH = 256;
+
+/** Maximum allowed length for account metadata author string. */
+export const FACTORY_MAX_AUTHOR_LENGTH = 64;
+
 export type MuxAccountFactoryError =
   | "Unauthorized"
   | "InvalidAccount"
   | "TooManyAccounts"
-  | "MetadataNotFound";
+  | "MetadataNotFound"
+  | "MetadataTooLarge";
+
+/**
+ * Validates metadata field lengths against contract storage griefing limits.
+ * Throws MetadataTooLarge error if any field exceeds its maximum allowed size.
+ */
+export function validateFactoryMetadata(
+  version: string,
+  description: string,
+  author: string
+): void {
+  if (version.length > FACTORY_MAX_VERSION_LENGTH) {
+    throw new Error(
+      `MetadataTooLarge: version length (${version.length}) exceeds maximum of ${FACTORY_MAX_VERSION_LENGTH}`
+    );
+  }
+  if (description.length > FACTORY_MAX_DESCRIPTION_LENGTH) {
+    throw new Error(
+      `MetadataTooLarge: description length (${description.length}) exceeds maximum of ${FACTORY_MAX_DESCRIPTION_LENGTH}`
+    );
+  }
+  if (author.length > FACTORY_MAX_AUTHOR_LENGTH) {
+    throw new Error(
+      `MetadataTooLarge: author length (${author.length}) exceeds maximum of ${FACTORY_MAX_AUTHOR_LENGTH}`
+    );
+  }
+}
 
 export class MuxAccountFactoryClient {
   private contract: Contract;
@@ -64,6 +100,7 @@ export class MuxAccountFactoryClient {
     description: string,
     author: string
   ): Promise<Address> {
+    validateFactoryMetadata(version, description, author);
     const tx = await this.buildTx(sourceKeypair, "deploy_account_with_metadata", [
       nativeToScVal(owner.toString(), { type: "address" }),
       nativeToScVal(accountAddress.toString(), { type: "address" }),
@@ -110,6 +147,7 @@ export class MuxAccountFactoryClient {
     description: string,
     author: string
   ): Promise<Address> {
+    validateFactoryMetadata(version, description, author);
     const tx = await this.buildTx(sourceKeypair, "simulate_deploy_with_metadata", [
       nativeToScVal(owner.toString(), { type: "address" }),
       nativeToScVal(accountAddress.toString(), { type: "address" }),

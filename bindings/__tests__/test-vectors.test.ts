@@ -15,8 +15,10 @@ import * as fs from "fs";
 import * as path from "path";
 import {
   muxAccountErrorMessage,
+  muxAccountFactoryErrorMessage,
   muxBatcherErrorMessage,
   muxPermissionsErrorMessage,
+  spendingPolicyErrorMessage,
 } from "../src/types";
 
 const FIXTURES_DIR = path.join(__dirname, "..", "..", "tests", "fixtures");
@@ -32,8 +34,10 @@ const accountLimitVectors = loadFixture("account_limit_vectors.json");
 /** Maps a fixture's top-level contract key to its TS error-message helper. */
 const ERROR_MESSAGE_FN: Record<string, (e: any) => string> = {
   mux_account: muxAccountErrorMessage,
+  mux_account_factory: muxAccountFactoryErrorMessage,
   mux_batcher: muxBatcherErrorMessage,
   mux_permissions: muxPermissionsErrorMessage,
+  mux_spending_policy: spendingPolicyErrorMessage,
 };
 
 /** Recursively collects every `{ expect: { err, code? } }` vector found
@@ -163,6 +167,32 @@ describe("shared JSON test vectors", () => {
       expect(atCapReject.input.pre_existing_keys).toBe(
         constants.mux_account.MAX_SESSION_KEYS
       );
+    });
+
+    it("factory metadata size limits match boundary vectors", () => {
+      const { metadata_limits } = accountLimitVectors.mux_account_factory;
+      const atLimit = metadata_limits.find((v: any) => v.id === "fac-meta-at-limit");
+      const verOver = metadata_limits.find((v: any) => v.id === "fac-meta-version-over-limit");
+      const descOver = metadata_limits.find((v: any) => v.id === "fac-meta-desc-over-limit");
+      const authorOver = metadata_limits.find((v: any) => v.id === "fac-meta-author-over-limit");
+
+      expect(atLimit.input.version_len).toBe(constants.mux_account_factory.MAX_VERSION_LENGTH);
+      expect(verOver.input.version_len).toBe(constants.mux_account_factory.MAX_VERSION_LENGTH + 1);
+
+      expect(atLimit.input.description_len).toBe(constants.mux_account_factory.MAX_DESCRIPTION_LENGTH);
+      expect(descOver.input.description_len).toBe(constants.mux_account_factory.MAX_DESCRIPTION_LENGTH + 1);
+
+      expect(atLimit.input.author_len).toBe(constants.mux_account_factory.MAX_AUTHOR_LENGTH);
+      expect(authorOver.input.author_len).toBe(constants.mux_account_factory.MAX_AUTHOR_LENGTH + 1);
+    });
+
+    it("spending policy constants match boundary vectors", () => {
+      const { boundary_limits } = accountLimitVectors.mux_spending_policy;
+      const zeroLmt = boundary_limits.find((v: any) => v.id === "sp-lmt-zero-limit-reject");
+      const zeroPeriod = boundary_limits.find((v: any) => v.id === "sp-lmt-zero-period-reject");
+
+      expect(zeroLmt.input.limit).toBeLessThan(constants.mux_spending_policy.SPEND_LIMIT_MIN);
+      expect(zeroPeriod.input.period_ledgers).toBeLessThan(constants.mux_spending_policy.PERIOD_LEDGERS_MIN);
     });
   });
 });

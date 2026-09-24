@@ -16,6 +16,10 @@
     "mux_batcher": {
       "MAX_BATCH_SIZE": 50,
       "FEE_PER_OP": 100
+    },
+    "mux_spending_policy": {
+      "SPEND_LIMIT_MIN": 1,
+      "PERIOD_LEDGERS_MIN": 1
     }
   },
   "mux_account": {
@@ -163,6 +167,48 @@
         "input": {},
         "expect": { "ok": true, "max_accounts_per_owner": 64 }
       }
+    ],
+    "metadata_limits": [
+      {
+        "id": "fac-meta-at-limit",
+        "description": "Metadata fields exactly at size limits succeed",
+        "input": {
+          "version_len": 32,
+          "description_len": 256,
+          "author_len": 64
+        },
+        "expect": { "ok": true }
+      },
+      {
+        "id": "fac-meta-version-over-limit",
+        "description": "Version string > 32 chars is rejected",
+        "input": {
+          "version_len": 33,
+          "description_len": 10,
+          "author_len": 10
+        },
+        "expect": { "err": "MetadataTooLarge", "code": 5 }
+      },
+      {
+        "id": "fac-meta-desc-over-limit",
+        "description": "Description string > 256 chars is rejected",
+        "input": {
+          "version_len": 10,
+          "description_len": 257,
+          "author_len": 10
+        },
+        "expect": { "err": "MetadataTooLarge", "code": 5 }
+      },
+      {
+        "id": "fac-meta-author-over-limit",
+        "description": "Author string > 64 chars is rejected",
+        "input": {
+          "version_len": 10,
+          "description_len": 10,
+          "author_len": 65
+        },
+        "expect": { "err": "MetadataTooLarge", "code": 5 }
+      }
     ]
   },
   "mux_batcher": {
@@ -190,6 +236,52 @@
         "description": "Empty batch is rejected",
         "input": { "ops_count": 0 },
         "expect": { "err": "EmptyBatch", "code": 1 }
+      }
+    ]
+  },
+  "mux_spending_policy": {
+    "boundary_limits": [
+      {
+        "id": "sp-lmt-zero-limit-reject",
+        "description": "Zero spend limit in set_policy is rejected",
+        "input": { "limit": 0, "period_ledgers": 100 },
+        "expect": { "err": "InvalidInput", "code": 6 }
+      },
+      {
+        "id": "sp-lmt-negative-limit-reject",
+        "description": "Negative spend limit in set_policy is rejected",
+        "input": { "limit": -1, "period_ledgers": 100 },
+        "expect": { "err": "InvalidInput", "code": 6 }
+      },
+      {
+        "id": "sp-lmt-zero-period-reject",
+        "description": "Zero period_ledgers in set_policy is rejected",
+        "input": { "limit": 1000, "period_ledgers": 0 },
+        "expect": { "err": "InvalidPeriod", "code": 7 }
+      },
+      {
+        "id": "sp-lmt-negative-spend-reject",
+        "description": "Negative spend amount in check_spend is rejected",
+        "input": { "amount": -1 },
+        "expect": { "err": "InvalidInput", "code": 6 }
+      },
+      {
+        "id": "sp-lmt-exact-limit-spend-ok",
+        "description": "Spend amount exactly equal to limit succeeds",
+        "input": { "limit": 1000, "amount": 1000 },
+        "expect": { "ok": true }
+      },
+      {
+        "id": "sp-lmt-one-over-limit-reject",
+        "description": "Spend amount one unit over limit is rejected",
+        "input": { "limit": 1000, "amount": 1001 },
+        "expect": { "err": "SpendLimitExceeded", "code": 5 }
+      },
+      {
+        "id": "sp-lmt-zero-spend-ok",
+        "description": "Spend amount of zero succeeds",
+        "input": { "limit": 1000, "amount": 0 },
+        "expect": { "ok": true }
       }
     ]
   }
