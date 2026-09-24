@@ -57,6 +57,116 @@ members, and the current admin are not affected by the upgrade itself.
 
 4. **Re-run smoke tests** to confirm role lookup and permission checks work.
 
+## Production Dry-Run Procedure
+
+Before executing an upgrade on Stellar mainnet or long-lived testnets, operators must perform a full **dry-run** in a local sandbox or testnet environment.
+
+### 1. Pre-Upgrade State Snapshot & Dry-Run Setup
+
+Capture existing storage state for critical entities before initiating any upgrade transaction:
+
+```bash
+# Export current admin
+stellar contract invoke \
+  --id $PERMISSIONS_CONTRACT_ID \
+  --network $NETWORK \
+  --source $OPERATOR_KEY \
+  -- get_metadata
+
+# Check roles assigned to test/operational accounts
+stellar contract invoke \
+  --id $PERMISSIONS_CONTRACT_ID \
+  --network $NETWORK \
+  --source $OPERATOR_KEY \
+  -- get_roles --account $TARGET_ACCOUNT
+
+# Check members of critical system roles (e.g. symbol "Admin", "Operator")
+stellar contract invoke \
+  --id $PERMISSIONS_CONTRACT_ID \
+  --network $NETWORK \
+  --source $OPERATOR_KEY \
+  -- get_role_members --role Operator
+```
+
+Record the outputs and the current ledger sequence for state comparison post-dry-run.
+
+### 2. Transaction Simulation (Offline Dry-Run)
+
+Simulate the upgrade transaction using Soroban RPC simulation without broadcasting on-chain:
+
+```bash
+# Perform simulation dry-run
+stellar contract invoke \
+  --id $PERMISSIONS_CONTRACT_ID \
+  --source $ADMIN_ACCOUNT \
+  --network $NETWORK \
+  --simulate \
+  -- upgrade \
+  --new_wasm_hash $NEW_WASM_HASH
+```
+
+Verify:
+- **Simulation status**: returns success (HTTP 200 / execution success).
+- **Resource consumption**: CPU instructions and memory limits are within acceptable thresholds (under 80% maximum budget).
+- **Footprint**: Read/write storage footprint accurately targets contract instance storage and TTL extensions without unexpected persistent keys.
+- **Fail-closed checks**: If simulated without the admin signature or with an invalid key, the simulation MUST fail with authorization error / fail-closed rejection.
+
+### 3. Dry-Run Execution on Staging/Testnet
+
+1. Deploy the new WASM hash to the network:
+   ```bash
+   NEW_WASM_HASH=$(stellar contract upload \
+     --wasm target/wasm32-unknown-unknown/release/mux_permissions.wasm \
+     --source $DEPLOYER_ACCOUNT \
+     --network $NETWORK)
+   echo "Uploaded WASM hash: $NEW_WASM_HASH"
+   ```
+
+2. Execute the `upgrade` entrypoint:
+   ```bash
+   stellar contract invoke \
+     --id $PERMISSIONS_CONTRACT_ID \
+     --source $ADMIN_ACCOUNT \
+     --network $NETWORK \
+     -- upgrade \
+     --new_wasm_hash $NEW_WASM_HASH
+   ```
+
+### 4. Post-Upgrade Invariant Verification
+
+Run the automated verification assertions to ensure state integrity:
+
+- **Admin Preservation**: Stored admin address matches pre-upgrade snapshot.
+- **Role Continuity**: `get_roles(account)` returns identical Symbol vectors.
+- **Permission Grants**: `has_permission(account, perm)` preserves true/false evaluations.
+- **Pending Multi-sig Continuity**: `get_pending_admins()` preserves active threshold and pending candidates.
+- **TTL Extension Verified**: Confirm instance storage TTL has been extended to `518_400` ledgers.
+
+Verification script template:
+```bash
+# Check admin continuity
+PRE_ADMIN="G..."
+POST_ADMIN=$(stellar contract invoke --id $PERMISSIONS_CONTRACT_ID --network $NETWORK --source $OPERATOR_KEY -- get_metadata | jq -r '.admin')
+if [ "$PRE_ADMIN" != "$POST_ADMIN" ]; then
+  echo "CRITICAL: Admin mismatch post-upgrade!"
+  exit 1
+fi
+
+# Verify permission resolution
+stellar contract invoke \
+  --id $PERMISSIONS_CONTRACT_ID \
+  --network $NETWORK \
+  --source $OPERATOR_KEY \
+  -- has_permission --account $KNOWN_ACCOUNT --perm execute_batch
+```
+
+### 5. Rollback Dry-Run Procedure
+
+If verification fails during the dry-run:
+1. Re-invoke `upgrade` passing the prior WASM hash (`$PREV_WASM_HASH`).
+2. Verify all reads and permission evaluations succeed on the reverted bytecode.
+3. Document root cause and simulation diff before re-attempting.
+
 ## Breaking Changes to Watch For
 
 ### Adding a New `DataKey` Variant
@@ -93,3 +203,4 @@ Instance storage TTL is extended on every write (`TTL_EXTEND_TO = 518_400`
 ledgers ≈ 30 days), including `upgrade()` itself (T-21 mitigation) — an
 upgrade performed just before a long quiet period does not leave storage at
 risk of expiry on its own.
+
