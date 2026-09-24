@@ -231,3 +231,29 @@ ledger entries remain valid.
 
 See [docs/account-upgrade-migration.md](./account-upgrade-migration.md) for the
 full storage layout and breaking-change checklist.
+
+## Per-Contract Upgrade Reference Notes
+
+| Contract | Upgradable? | Auth Role Required | State Storage Mode | Key Upgrade Considerations & Invariants |
+|---|---|---|---|---|
+| **`mux-account`** | ❌ **Immutable** | None | Instance | Immutable user-trust guarantee. Upgrade is intentionally unsupported. State must be migrated to a new account instance if needed (see [account-upgrade-migration.md](./account-upgrade-migration.md)). |
+| **`mux-account-factory`** | ✅ Yes | Admin (`initialize(admin)`) | Instance & Persistent | `upgrade(new_wasm_hash)` requires admin auth. Pre-deployed accounts are independent contracts and are unaffected by factory upgrades. Factory instance counters and caps are preserved. |
+| **`mux-batcher`** | ✅ Yes | Admin (`initialize(admin)`) | Instance | Admin auth enforced; returns `NotInitialized` if called before initialization. Does not touch batch state in transit (batches are executed atomically within single transactions). |
+| **`mux-delegation`** | ✅ Yes | Admin (`initialize(admin)`) | Instance & Persistent | Admin-gated; delegation grants between owners and delegates are preserved across WASM replacement. TTL on active delegations must be monitored. |
+| **`mux-permissions`** | ✅ Yes | Admin (`require_admin()`) | Instance | Admin-gated; preserves roles, role members, account-role mappings, and pending multisig proposals. TTL extended on upgrade call. |
+| **`mux-policy`** | ✅ Yes | Admin (`initialize(admin)`) | Instance & Persistent | Admin auth required. Daily spend counters and limits are preserved across upgrades. Ensure ledger calculation constants remain aligned. |
+| **`mux-recovery`** | ✅ Yes | Owner (`owner.require_auth()`) | Instance | **Critical Invariant**: MUST NOT be upgraded while a social recovery request is in `Pending` status to avoid race conditions or invalidation of in-flight guardian signatures. |
+| **`mux-registry`** | ✅ Yes | Admin (`initialize(admin)`) | Instance & Persistent | Additive `DataKey` additions allow smooth non-breaking upgrades. Contract catalog and metadata lookups remain backward-compatible. |
+| **`mux-wallet-registry`** | ✅ Yes | Owner (`initialize(owner)`) | Instance | Owner-authorized upgrade; registered wallet names and addresses remain accessible. |
+
+### Upgrade Invariant & Fail-Closed Guarantees
+
+1. **Authentication Fail-Closed**: Every `upgrade(new_wasm_hash)` implementation MUST verify admin/owner authentication before invoking `env.deployer().update_current_contract_wasm()`. Uninitialized contracts return `NotInitialized` (reverting immediately).
+2. **Atomic Execution**: On-chain code replacement is atomic. If `update_current_contract_wasm()` succeeds, subsequent invocations within the same ledger sequence run against the new bytecode.
+3. **Storage Preservation & Backward Compatibility**:
+   - `DataKey` enums must be append-only.
+   - Deleted variants create permanent inaccessible dead data.
+   - Any serialization schema modifications must use `Option<T>` or include an explicit atomic migration entrypoint.
+4. **TTL Maintenance**: The upgrade invocation should automatically invoke TTL extension for contract instance storage (`TTL_EXTEND_TO = 518_400` ledgers ≈ 30 days) to prevent state expiration.
+5. **Rollback Safety**: The prior WASM hash must be archived and tested in the testnet deployment pipeline to allow immediate downgrade invocation if regression occurs.
+
