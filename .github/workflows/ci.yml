@@ -19,6 +19,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Enforce mainnet address review rule
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          set -euo pipefail
+
+      - name: Validate deploy env examples are secret-free
+        run: bash scripts/validate-deploy-env.sh
+
+      - name: Validate localnet env example is complete and secret-free
+        run: bash scripts/validate-localnet-env.sh
+
+  rust:
+    name: Rust (fmt, clippy, test, wasm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.81.0
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
