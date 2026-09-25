@@ -47,6 +47,12 @@ jobs:
         run: |
           set -euo pipefail
 
+      - name: Validate deploy env examples are secret-free
+        run: bash scripts/validate-deploy-env.sh
+
+      - name: Validate localnet env example is complete and secret-free
+        run: bash scripts/validate-localnet-env.sh
+
   rust:
     name: Rust (fmt, clippy, test, wasm)
     runs-on: ubuntu-latest

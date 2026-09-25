@@ -1,5 +1,5 @@
-// Default contract address configuration
-// This can be overridden by environment variables
+// [codegen:begin] DEFAULT_ADDRESSES — generated from config/addresses.json
+// DO NOT EDIT — run `npx ts-node scripts/generate-addresses.ts` to regenerate.
 export const DEFAULT_ADDRESSES = {
   localnet: {
     muxAccount: "",
@@ -38,6 +38,7 @@ export const DEFAULT_ADDRESSES = {
     muxWalletRegistry: "",
   },
 };
+// [codegen:end] DEFAULT_ADDRESSES
 
 /**
  * Mainnet address PR review rule (issue #871)
