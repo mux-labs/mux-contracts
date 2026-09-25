@@ -19,6 +19,7 @@ export type {
   MuxBatcherError,
   Operation,
 } from "./types";
+import type { Operation } from "./types";
 
 /**
  * On-chain batching DoS caps (issue #811).
@@ -99,7 +100,7 @@ export function assertBatchWithinCaps(
   }
 
   const aggregate = operations.reduce(
-    (sum, op) => sum + (op.weight ?? 1),
+    (sum) => sum + 1,
     0,
   );
   if (aggregate > caps.maxAggregateOps) {

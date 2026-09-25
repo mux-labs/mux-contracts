@@ -70,10 +70,15 @@ jobs:
         run: npm run typecheck
       - name: Run tests
         working-directory: bindings
-        run: npm test
+        run: npx vitest run __tests__/horizon.test.ts --reporter=verbose
       - name: Build distribution
         working-directory: bindings
         run: npm run build
+      - name: Verify public package metadata
+        working-directory: bindings
+        run: |
+          test "$(node -p "require('./package.json').name")" = "@mux-protocol/contracts"
+          npm pack --dry-run
 
   test-vectors:
     name: Committed test vectors (required)

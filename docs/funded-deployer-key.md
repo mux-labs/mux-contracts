@@ -184,3 +184,15 @@ Once contracts are deployed, rotate the deployer key:
 - [ops/deployer-key-rotation-log.md](../ops/deployer-key-rotation-log.md) — drain/rotation completion record
 - [Stellar account documentation](https://developers.stellar.org/docs/learn/fundamentals/stellar-data-structures/accounts)
 - [Stellar CLI reference](https://developers.stellar.org/docs/tools/stellar-cli)
+
+## Automated funding check
+
+Before a live deployment, run the non-mutating funded-deployer check from the bindings workspace:
+
+```bash
+cd bindings
+DEPLOYER_PRIVATE_KEY=S... MIN_DEPLOYER_BALANCE_XLM=2 \
+  node scripts/check-funded-deployer.mjs
+```
+
+The script derives the deployer public key locally, queries the configured Horizon endpoint, and verifies the native XLM balance. It never prints or transmits the secret key. Set `HORIZON_URL` for a non-testnet environment. Use `node scripts/check-funded-deployer.mjs --dry-run` in local validation when no funded key is available.

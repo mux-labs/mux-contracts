@@ -282,7 +282,7 @@ export class MuxBatcherClient {
     // On-chain Option<BatcherMeta> — void/unit retval means None.
     const raw = retval.value();
     if (raw === undefined || raw === null) return null;
-    const native = raw as { description: string; author: string };
+    const native = raw as unknown as { description: string; author: string };
     return { description: native.description, author: native.author };
   }
 

@@ -17,6 +17,17 @@ Instead, report vulnerabilities through one of these channels:
 1. **GitHub Security Advisory** (preferred): Go to the [Security tab](https://github.com/mux-labs/mux-contracts/security/advisories/new) and click "Report a vulnerability".
 2. **Email**: Send a description to **security@mux-protocol.xyz**
 
+### Verified Security Contacts
+
+The following private contacts are the canonical, verified reporting channels
+for this repository:
+
+- **Email:** [security@mux-protocol.xyz](mailto:security@mux-protocol.xyz)
+- **GitHub Security Advisory:** [Report a private vulnerability](https://github.com/mux-labs/mux-contracts/security/advisories/new)
+
+Do not send secrets, private keys, or exploit material through public issues,
+pull requests, or chat channels.
+
 ### What to Include
 
 - Description of the vulnerability and its impact

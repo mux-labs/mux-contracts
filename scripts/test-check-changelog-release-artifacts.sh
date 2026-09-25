@@ -79,7 +79,7 @@ cat > "${TMPDIR_CL}/present.md" <<'EOF'
 - Feature 1
 
 ### Release Artifacts
-- Bindings package: `@mux/bindings@1.0.0`
+- Bindings package: `@mux-protocol/contracts@1.0.0`
 - Contract WASM (SHA-256):
   | Contract | SHA-256 |
   |---|---|
@@ -106,7 +106,7 @@ cat > "${TMPDIR_CL}/mixed.md" <<'EOF'
 - Feature 1
 
 ### Release Artifacts
-- Bindings package: `@mux/bindings@1.0.0`
+- Bindings package: `@mux-protocol/contracts@1.0.0`
 EOF
 
 assert_exit "mixed changelog fails on the missing release" 1 \
