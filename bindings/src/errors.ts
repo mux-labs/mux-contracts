@@ -293,3 +293,28 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   BatchCapConfigMissing: 403,
   BatchCapConfigInvalid: 400,
 };
+
+export const MuxErrorCode = {
+  NETWORK_NOT_CONFIGURED: "NETWORK_NOT_CONFIGURED",
+  NETWORK_UNKNOWN: "NETWORK_UNKNOWN",
+  CROSS_NETWORK_BLOCKED: "CROSS_NETWORK_BLOCKED",
+} as const;
+export type MuxErrorCode = (typeof MuxErrorCode)[keyof typeof MuxErrorCode];
+
+export class MuxError extends Error {
+  constructor(public readonly code: MuxErrorCode, message: string) {
+    super(message);
+    this.name = "MuxError";
+  }
+}
+
+/** Convert a contract or SDK error into a stable HTTP-shaped response. */
+export function contractErrorToHttp(error: unknown): HttpErrorResponse {
+  const value = error as { code?: string; message?: string; name?: string };
+  const errorType = value.code ?? value.name ?? "UnknownError";
+  return {
+    statusCode: ERROR_HTTP_MAP[errorType] ?? 500,
+    message: value.message ?? "Unknown contract error",
+    errorType,
+  };
+}

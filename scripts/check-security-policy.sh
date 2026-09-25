@@ -15,7 +15,9 @@
 #      Acknowledgments fields resolves to a file that actually exists (a
 #      stale link here would 404 for a researcher trying to reach the
 #      private channel).
-#   7. .github/ISSUE_TEMPLATE/config.yml exists and offers a contact link
+#   7. SECURITY.md and security.txt publish the same verified security email.
+#   8. security.txt has canonical and policy metadata for this repository.
+#   9. .github/ISSUE_TEMPLATE/config.yml exists and offers a contact link
 #      that routes security reports off the public issue tracker.
 #
 # Usage:
@@ -116,6 +118,26 @@ else
     ok "offers a security-reporting contact link"
   else
     fail "no security-reporting contact link found"
+  fi
+
+  contact_email=$(grep -oE 'mailto:[^[:space:]]+' "$SECURITY_TXT" | head -1 | sed 's/^mailto://' || true)
+  policy_email=$(grep -oE '[[:alnum:].+_-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}' "$SECURITY_MD" | head -1 || true)
+  if [[ -n "$contact_email" && "$contact_email" == "$policy_email" ]]; then
+    ok "Contact email matches SECURITY.md verified contact"
+  else
+    fail "security.txt Contact does not match SECURITY.md verified contact"
+  fi
+
+  if grep -qE '^Canonical: https://github\.com/mux-labs/mux-contracts/blob/main/\.well-known/security\.txt$' "$SECURITY_TXT"; then
+    ok "has the repository canonical security.txt URL"
+  else
+    fail "security.txt Canonical URL is missing or points at another repository"
+  fi
+
+  if grep -qE '^Policy: https://github\.com/mux-labs/mux-contracts/blob/main/SECURITY\.md$' "$SECURITY_TXT"; then
+    ok "has the repository SECURITY.md policy URL"
+  else
+    fail "security.txt Policy URL is missing or points at another repository"
   fi
 fi
 

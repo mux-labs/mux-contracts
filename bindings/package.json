@@ -1,5 +1,5 @@
 {
-  "name": "@mux/bindings",
+  "name": "@mux-protocol/contracts",
   "version": "0.1.0",
   "description": "Typed bindings for Mux Protocol Soroban contracts",
   "type": "module",
@@ -30,6 +30,7 @@
     "local-invoke": "npx ts-node src/local-invoke.ts",
     "generate": "bash ../scripts/generate-bindings.sh",
     "generate:bindings": "npx ts-node ../scripts/generate-bindings.ts",
+    "check:funded-deployer": "node scripts/check-funded-deployer.mjs",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -44,6 +45,8 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
     "eslint": "^8.57.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
