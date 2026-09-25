@@ -108,12 +108,22 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-deploy-
 
+      # Refuse to build deployable artifacts from a non-conforming release
+      # profile (#780, docs/release-profile-verification.md).
+      - name: Verify release profile invariants
+        run: bash scripts/check-release-profile.sh
+
       - name: Build release WASMs
+        env:
+          RUSTFLAGS: "-D warnings"
         run: |
           cargo build \
             --target wasm32-unknown-unknown \
             --release \
             --workspace
+
+      - name: Verify release wasm artifacts
+        run: bash scripts/check-release-profile.sh --wasm-dir target/wasm32-unknown-unknown/release
 
       - name: Upload WASMs
         uses: actions/upload-artifact@v4

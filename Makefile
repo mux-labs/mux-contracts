@@ -3,6 +3,7 @@
         coverage coverage-ci test-coverage \
         deny \
         check-no-testutils \
+        check-release-profile \
         verify-wasm-hashes \
         deploy-dry-run deploy-ci
 
@@ -58,6 +59,14 @@ generate-bindings: bindings
 # Requires: cargo install cargo-deny
 deny:
 	cargo deny check
+
+# Fail-closed check that [profile.release] matches
+# docs/release-profile-verification.md, plus artifact checks when WASMs exist. (#780)
+check-release-profile:
+	bash scripts/check-release-profile.sh
+	@if [ -d target/wasm32-unknown-unknown/release ]; then \
+		bash scripts/check-release-profile.sh --wasm-dir target/wasm32-unknown-unknown/release; \
+	fi
 
 # Ensure no mux-* Cargo.toml enables soroban-sdk testutils in [dependencies]
 # and that built WASMs (if present) contain no testutils bytes. (#663)

@@ -35,8 +35,21 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      # Fail closed before spending time on a build: the workspace release
+      # profile must match docs/release-profile-verification.md (#780).
+      - name: Verify release profile invariants
+        run: |
+          bash scripts/test-check-release-profile.sh
+          bash scripts/check-release-profile.sh
+
+      # Release compilation must be warning-free; any rustc warning fails CI.
       - name: Build contracts (wasm)
+        env:
+          RUSTFLAGS: "-D warnings"
         run: cargo build --release --target wasm32-unknown-unknown
+
+      - name: Verify release wasm artifacts
+        run: bash scripts/check-release-profile.sh --wasm-dir target/wasm32-unknown-unknown/release
 
       - name: Enforce wasm size budget
         run: |
@@ -64,13 +77,15 @@ jobs:
           fi
           echo "All wasm artifacts are within budget."
 
+      # Only artifacts that passed every release-profile and size gate above
+      # are published; a failed gate leaves no downloadable wasm behind.
       - name: Upload wasm artifacts
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: wasm-artifacts
           path: target/wasm32-unknown-unknown/release/*.wasm
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
       - name: Run tests

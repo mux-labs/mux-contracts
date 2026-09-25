@@ -39,6 +39,8 @@ expect_used = "warn"
 [profile.dev]
 overflow-checks = true
 
+# Enforced in CI by scripts/check-release-profile.sh; any change here must be
+# mirrored in docs/release-profile-verification.md (#780).
 [profile.release]
 opt-level = "z"
 overflow-checks = true
