@@ -995,20 +995,6 @@ mod tests {
         assert_eq!(client.estimate_fees(&50), 5_000);
     }
 
-    #[test
-    // ── Issue #79: estimate_fees ───────────────────────────────────────────────
-
-    #[test]
-    fn test_estimate_fees_returns_fee_per_op_times_count() {
-        let env = Env::default();
-        let contract_id = env.register_contract(None, MuxBatcher);
-        let client = MuxBatcherClient::new(&env, &contract_id);
-
-        assert_eq!(client.estimate_fees(&1), 100);
-        assert_eq!(client.estimate_fees(&10), 1_000);
-        assert_eq!(client.estimate_fees(&50), 5_000);
-    }
-
     #[test]
     fn test_estimate_fees_zero_ops_rejected() {
         let env = Env::default();
