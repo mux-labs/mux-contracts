@@ -40,9 +40,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.81.0
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          # Pin to the MSRV declared in rust-toolchain.toml so CI and local
+          # dev always use the same channel.  Any toolchain drift is caught
+          # immediately on PRs rather than silently on contributor machines.
+          toolchain: "1.81.0"
           targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -67,6 +72,11 @@ jobs:
         env:
           RUSTFLAGS: "-D warnings"
         run: cargo build --release --target wasm32-unknown-unknown
+
+      - name: Check formatting
+        # Enforces the rustfmt rules in rustfmt.toml.  Running `cargo fmt
+        # --all` locally produces identical output.  See issue #838.
+        run: cargo fmt --all -- --check
 
       - name: Verify release wasm artifacts
         run: bash scripts/check-release-profile.sh --wasm-dir target/wasm32-unknown-unknown/release
