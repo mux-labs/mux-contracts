@@ -274,7 +274,7 @@ async function main(): Promise<void> {
   await revokeSessionKey(owner, Address.fromString(sessionKey.publicKey()));
 }
 
-if (require.main === module) {
+if (process.argv[1]?.endsWith("session-key-usage.ts") || process.argv[1]?.endsWith("session-key-usage.js")) {
   main().catch((error) => {
     console.error(error);
     process.exit(1);

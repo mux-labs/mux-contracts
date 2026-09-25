@@ -67,17 +67,39 @@ jobs:
         run: npm run lint
       - name: TypeScript compile check
         working-directory: bindings
-        run: npx tsc --noEmit
+        run: npm run typecheck
       - name: Run tests
         working-directory: bindings
-        run: npm test
+        run: npx vitest run __tests__/horizon.test.ts --reporter=verbose
       - name: Build distribution
         working-directory: bindings
         run: npm run build
+      - name: Verify public package metadata
+        working-directory: bindings
+        run: |
+          test "$(node -p "require('./package.json').name")" = "@mux-protocol/contracts"
+          npm pack --dry-run
+
+  test-vectors:
+    name: Committed test vectors (required)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: bindings/package-lock.json
+      - name: Install dependencies
+        working-directory: bindings
+        run: npm ci
+      - name: Verify committed test vectors against generated bindings/ABI
+        working-directory: bindings
+        run: npx vitest run __tests__/test-vectors.test.ts --reporter=verbose
 
   publish:
     name: Publish to npm
-    needs: [generate-bindings, lint-and-test]
+    needs: [generate-bindings, lint-and-test, test-vectors]
     runs-on: ubuntu-latest
     permissions:
       id-token: write

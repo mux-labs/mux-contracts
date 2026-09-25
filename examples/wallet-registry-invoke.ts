@@ -16,7 +16,13 @@
  */
 
 import { Address, Keypair, Networks } from "@stellar/stellar-sdk";
-import { MuxWalletRegistryClient } from "@mux-protocol/contracts";
+import {
+  MuxWalletRegistryClient,
+  isValidWalletName,
+  validateWalletName,
+  WALLET_NAME_REGEX,
+  WALLET_NAME_MAX_LEN,
+} from "@mux-protocol/contracts";
 
 const RPC_URL = process.env.RPC_URL ?? "https://soroban-testnet.stellar.org";
 const SECRET_KEY = process.env.SECRET_KEY;
@@ -55,6 +61,28 @@ const walletClient = new MuxWalletRegistryClient({
 async function main() {
   console.log(`Connecting to ${NETWORK} RPC at ${RPC_URL}`);
   console.log(`Wallet registry contract: ${WALLET_CONTRACT}`);
+
+  // ── Name Charset Policy Demonstration ─────────────────────────────────────
+  // Wallet names must follow the Soroban Symbol charset policy:
+  // - 1 to 32 characters
+  // - Allowed charset: [a-zA-Z0-9_] (alphanumeric and underscore only)
+  // - No spaces, dashes, dots, emojis, or special characters
+  console.log(`\nValidating wallet name charset policy: ${WALLET_NAME_REGEX} (max ${WALLET_NAME_MAX_LEN} chars)`);
+
+  const validExamples = ["treasury", "hot_wallet_01", "vault_cold", "A1_B2"];
+  for (const sample of validExamples) {
+    console.log(`  ✓ Name '${sample}' is valid: ${isValidWalletName(sample)}`);
+  }
+
+  const invalidExamples = ["invalid-name", "has space", "too_many_characters_12345678901234567890", "bad@char!"];
+  for (const sample of invalidExamples) {
+    try {
+      validateWalletName(sample);
+      console.warn(`  ⚠️ Unexpectedly valid: '${sample}'`);
+    } catch (err) {
+      console.log(`  ✗ Name '${sample}' correctly rejected fail-closed: ${(err as Error).message}`);
+    }
+  }
 
   const name = "treasury";
   const wallet = Address.fromString(signer.publicKey());

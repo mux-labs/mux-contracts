@@ -15,8 +15,9 @@ source account**, which does not have to be the account whose authority is being
 exercised. A relayer therefore sponsors a call by submitting the transaction
 from its own account while the session key supplies the authorization.
 
-The contract's job is to decide **who may submit on the account's behalf**. That
-is the sponsor allowlist.
+The contract's job is to decide **who may submit on the account's behalf** and
+**how much sponsorship each relayer is permitted to consume**. Those are the
+sponsor allowlist and the sponsorship limits.
 
 ## Allowlist
 
@@ -29,6 +30,52 @@ The allowlist is fail-closed: `execute_with_session_sponsored` rejects any
 relayer that is not currently allowlisted with `SponsorNotAuthorized`, even when
 the session-key signature is valid. Removal takes effect on the next call — there
 is no grace window.
+
+## Sponsorship limits
+
+Allowlisting a relayer grants it the *ability* to sponsor; it does not grant an
+unbounded budget. The owner sets explicit caps so a compromised or buggy relayer
+cannot drain the account's sponsored-call budget or grief the account with an
+unbounded stream of submissions.
+
+| Entrypoint | Auth | Effect |
+|---|---|---|
+| `set_sponsor_limit(sponsor, max_calls, max_fee)` | owner | Sets the per-relayer cap; emits `spn_lim` |
+| `sponsor_limit(sponsor)` | none | Read-only `(max_calls, max_fee)` for a relayer |
+| `sponsor_usage(sponsor)` | none | Read-only `(calls_used, fee_used)` for the current window |
+| `reset_sponsor_usage(sponsor)` | owner | Clears usage counters; emits `spn_rst` |
+
+Limits are enforced **before** the session key is loaded, alongside the allowlist
+check, so an over-limit relayer learns nothing about the account's session-key
+state. The contract is the source of truth: a relayer cannot raise its own cap,
+reset its own usage, or bypass the check by submitting from a different source
+account (the sponsor argument is bound by `sponsor.require_auth()`).
+
+### Semantics
+
+- `max_calls` is the maximum number of sponsored executions a relayer may submit
+  per window. `0` means **deny** — a relayer with a zero cap is treated as
+  unauthorized even if it is on the allowlist.
+- `max_fee` is the maximum cumulative Soroban resource fee (in stroops) the
+  relayer may consume per window. `0` means **deny**.
+- A relayer with no limit set is **deny-by-default**: it is rejected with
+  `SponsorLimitNotSet` until the owner sets a cap. Allowlisting alone is not
+  sufficient to sponsor.
+- Usage is incremented atomically with the sponsored execution. If the call
+  would exceed either cap it is rejected with `SponsorLimitExceeded` and no
+  counters are mutated (fail-closed, no partial accounting).
+- The window is the account's current `sponsor_window()`; the owner advances it
+  with `reset_sponsor_usage`, which is the only way counters decrease. This keeps
+  the money path deterministic and replay-safe.
+
+### Stable error codes
+
+| Error | Meaning |
+|---|---|
+| `SponsorNotAuthorized` | Relayer is not on the allowlist |
+| `SponsorLimitNotSet` | Relayer is allowlisted but has no cap (deny-by-default) |
+| `SponsorLimitExceeded` | Call would exceed `max_calls` or `max_fee` |
+| `InvalidSponsorLimit` | `max_calls`/`max_fee` rejected (e.g. negative or malformed) |
 
 ## Sponsored execution
 
@@ -43,7 +90,8 @@ Both parties authorize:
 - `session_key.require_auth()` proves the account granted the capability.
 
 The sponsor is checked **before** the session key is loaded, so an unknown
-relayer learns nothing about the account's session-key state.
+relayer learns nothing about the account's session-key state. The allowlist and
+sponsorship-limit checks run together, before any session-key state is read.
 
 Sponsorship changes who pays, never what is permitted. After the sponsor check,
 the sponsored path runs the identical validation as the unsponsored path:
@@ -62,17 +110,25 @@ billing should reconcile against. The contract performs no on-chain fee
 refund or accounting — reimbursement between the account owner and the relayer
 is an off-chain arrangement and belongs in `mux-backend`.
 
+The on-chain `sponsor_usage` counters are the authoritative cap enforcement; the
+`ses_exe` event stream is the authoritative audit trail. Off-chain billing must
+reconcile against both: a relayer that hits `SponsorLimitExceeded` should be
+visible as a rejected submission in the relayer's own logs, not as a `ses_exe`
+event.
+
 ## Relayer checklist
 
 1. Owner allowlists the relayer with `set_sponsor(relayer, true)`.
-2. Relayer builds the transaction with its own account as source.
-3. Relayer adds the `execute_with_session_sponsored` invocation.
-4. Relayer reads `nonce()` and builds the call with that exact value; a relayer
+2. Owner sets a cap with `set_sponsor_limit(relayer, max_calls, max_fee)`.
+   Without this step the relayer is denied by default.
+3. Relayer builds the transaction with its own account as source.
+4. Relayer adds the `execute_with_session_sponsored` invocation.
+5. Relayer reads `nonce()` and builds the call with that exact value; a relayer
    with several queued calls must submit them in nonce order.
-5. Relayer simulates, then collects the session key's signature on the assembled
+6. Relayer simulates, then collects the session key's signature on the assembled
    transaction and adds its own.
-6. Relayer submits and pays the fee.
-7. Relayer indexes `ses_exe` events for billing; each carries the session key,
+7. Relayer submits and pays the fee.
+8. Relayer indexes `ses_exe` events for billing; each carries the session key,
    target, function, and sponsor.
 
 A runnable version of this flow is in
@@ -86,3 +142,11 @@ A runnable version of this flow is in
   in-flight transactions signed against the old address will fail closed.
 - Pausing the account (`pause()`) blocks sponsored execution along with every
   other non-admin entrypoint.
+- When a relayer is suspected compromised, remove it from the allowlist first
+  (`set_sponsor(relayer, false)`), then reset its usage. Removal is immediate and
+  fail-closed; resetting usage alone does not revoke the ability to sponsor.
+- Limits are per-account. A relayer serving many accounts has an independent cap
+  on each; there is no global relayer budget in the contract.
+- Testnet and mainnet deployments have independent instance storage. A cap set on
+  testnet does not carry to mainnet — re-apply limits as part of the mainnet
+  readiness checklist before enabling a relayer.

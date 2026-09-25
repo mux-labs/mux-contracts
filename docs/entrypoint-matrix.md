@@ -178,3 +178,206 @@ by a specific actor; public entrypoints are callable by anyone.
 | `get_wallet(name)` | P | Read-only |
 | `get_metadata(name)` | P | Read-only |
 | `list_wallets()` | P | Read-only |
+
+## Auth Examples Per Role
+
+This section provides concrete authorization patterns and invocation examples for each principal role within Mux Protocol.
+
+### 1. Owner Role
+
+The **Owner** has root authority over their `mux-account`, delegation grants, and wallet registries.
+Operations require explicit authorization via `owner.require_auth()`.
+
+#### Soroban Rust SDK
+```rust
+// Owner configures a delegate
+client.set_delegate(&delegate_addr, &expires_at_timestamp, &true);
+
+// Owner executes a target call through their account
+client.execute(
+    &target_contract_address,
+    &Symbol::new(&env, "transfer"),
+    &args_vec,
+    &Some(usdc_token_address),
+    &Some(1_000_000_i128),
+    &current_nonce
+);
+```
+
+#### Stellar CLI
+```bash
+# Owner executes a transfer through account abstraction
+stellar contract invoke \
+  --id $MUX_ACCOUNT_ID \
+  --source $OWNER_SECRET_OR_IDENTITY \
+  --network $NETWORK \
+  -- execute \
+  --target $TARGET_CONTRACT \
+  --function "transfer" \
+  --args "[...]" \
+  --nonce $NONCE
+```
+
+---
+
+### 2. Delegate Role
+
+A **Delegate** is granted bounded authority by an Account Owner. Entrypoints verify delegate validity, expiration timestamp, and optional spending allowances.
+
+#### Soroban Rust SDK
+```rust
+// Delegate invokes debit_spend or checks delegation status
+let is_valid = delegation_client.is_delegate(&owner_addr, &delegate_addr, &Symbol::new(&env, "swap"));
+assert!(is_valid);
+```
+
+#### Stellar CLI
+```bash
+# Delegate queries permission status before execution
+stellar contract invoke \
+  --id $MUX_DELEGATION_ID \
+  --source $DELEGATE_IDENTITY \
+  --network $NETWORK \
+  -- check_delegate \
+  --owner $OWNER_ADDRESS \
+  --delegate $DELEGATE_ADDRESS \
+  --perm "swap"
+```
+
+---
+
+### 3. Guardian Role
+
+A **Guardian** participates in social recovery workflows for lost or compromised accounts. In multi-guardian setups, recovery requires $M$-of-$N$ threshold quorum.
+
+#### Soroban Rust SDK
+```rust
+// Guardian initiates recovery for an account
+guardian_1.require_auth();
+recovery_client.initiate_recovery(&guardian_1, &candidate_new_owner);
+
+// Co-guardian approves pending recovery to reach threshold
+guardian_2.require_auth();
+recovery_client.approve_recovery(&guardian_2);
+
+// Execute once timelock expires and quorum threshold is satisfied
+recovery_client.execute_recovery(&guardian_1);
+```
+
+#### Stellar CLI
+```bash
+# Guardian approves an active recovery request
+stellar contract invoke \
+  --id $MUX_RECOVERY_ID \
+  --source $GUARDIAN_SECRET_KEY \
+  --network $NETWORK \
+  -- approve_recovery \
+  --guardian $GUARDIAN_ADDRESS
+```
+
+---
+
+### 4. Session Key Role
+
+A **Session Key** is an ephemeral signer authorized for scoped functions and constrained time windows. Scopes are strictly enforced **fail-closed** (empty or missing scope reverts with `Unauthorized`).
+
+#### Soroban Rust SDK
+```rust
+// Invocations via session key enforce valid signature, active registration, and scope match
+session_key.require_auth();
+account_client.execute_with_session(
+    &session_key_addr,
+    &target_contract,
+    &Symbol::new(&env, "swap_exact_tokens"),
+    &call_args,
+    &nonce
+);
+```
+
+#### Stellar CLI
+```bash
+# Session key performs authorized scoped execution
+stellar contract invoke \
+  --id $MUX_ACCOUNT_ID \
+  --source $SESSION_KEY_IDENTITY \
+  --network $NETWORK \
+  -- execute_with_session \
+  --session_key $SESSION_KEY_ADDRESS \
+  --target $TARGET_CONTRACT \
+  --function "swap_exact_tokens" \
+  --args "[...]" \
+  --nonce $NONCE
+```
+
+---
+
+### 5. Sponsor Role (Co-Auth / Gas Relayer)
+
+A **Sponsor** provides gas abstraction (fee sponsorship) for user transactions. Both the registered sponsor and the caller/session key must authorize the transaction concurrently (`A+U`).
+
+#### Soroban Rust SDK
+```rust
+// Dual-auth requirement: sponsor pays gas while session key signs operation
+sponsor.require_auth();
+session_key.require_auth();
+
+account_client.execute_with_session_sponsored(
+    &session_key_addr,
+    &sponsor_addr,
+    &target_contract,
+    &function_symbol,
+    &call_args,
+    &nonce
+);
+```
+
+---
+
+### 6. Admin Role
+
+An **Admin** manages registry configurations, daily limits, role memberships, and contract WASM upgrades. Admin actions fail closed if the contract is uninitialized.
+
+#### Soroban Rust SDK
+```rust
+// Admin creates role and assigns permissions in mux-permissions
+admin.require_auth();
+permissions_client.create_role(&Symbol::new(&env, "Relayer"), &vec![&env, Symbol::new(&env, "batch_submit")]);
+permissions_client.grant_role(&relayer_addr, &Symbol::new(&env, "Relayer"));
+
+// Admin performs contract bytecode upgrade
+permissions_client.upgrade(&new_wasm_hash);
+```
+
+#### Stellar CLI
+```bash
+# Admin grants role to a service account
+stellar contract invoke \
+  --id $MUX_PERMISSIONS_ID \
+  --source $ADMIN_IDENTITY \
+  --network $NETWORK \
+  -- grant_role \
+  --account $SERVICE_ACCOUNT \
+  --role "Relayer"
+```
+
+---
+
+### 7. Public / Unauthenticated Caller
+
+**Public** entrypoints require no cryptographic signatures or authorizations. They provide read-only queries and dry-run simulations.
+
+#### Stellar CLI
+```bash
+# Anyone can query account owner, read permissions, or simulate batch execution
+stellar contract invoke \
+  --id $MUX_ACCOUNT_ID \
+  --network $NETWORK \
+  -- owner
+
+stellar contract invoke \
+  --id $MUX_BATCHER_ID \
+  --network $NETWORK \
+  -- estimate_fees \
+  --op_count 5
+```
+

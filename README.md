@@ -9,6 +9,8 @@ This repository contains the **core Soroban smart contracts** that power Mux. Co
 - Permissions and delegation
 - Automated workflows for Stellar accounts
 
+See [`docs/aa_sequence_diagram.md`](docs/aa_sequence_diagram.md) for the authoritative account-abstraction sequence diagram covering account creation, delegation, spending policy, recovery, and batcher flows.
+
 ## Contracts
 
 | Contract | Description |
@@ -23,6 +25,53 @@ This repository contains the **core Soroban smart contracts** that power Mux. Co
 | [`contracts/mux-registry`](contracts/mux-registry/) | Contract version and metadata registry — tracks deployed crate names and versions |
 | [`contracts/mux-spending-policy`](contracts/mux-spending-policy/) | Per-account/per-asset spend-limit policy and validation |
 | [`contracts/mux-wallet-registry`](contracts/mux-wallet-registry/) | Named wallet address registry — register and look up wallet addresses by symbolic name |
+
+## Registry vs Wallet-Registry Split
+
+Mux ships **two distinct registries**. They are not interchangeable and must not be conflated — each has a different trust model, ownership, and set of invariants. See [`docs/registry-contracts-comparison.md`](docs/registry-contracts-comparison.md) for the full comparison.
+
+| | `mux-registry` | `mux-wallet-registry` |
+|---|---|---|
+| **Purpose** | Contract version/metadata registry | Named wallet address registry |
+| **Keyed by** | Deployed crate name | Symbolic wallet name |
+| **Value** | Version + metadata | Wallet address |
+| **Ownership** | Registry admin (owner) | Per-owner namespace |
+| **Authz** | Owner/admin only for writes | Owner (or authorized delegate) for writes; reads are public |
+| **Money path** | No — informational only | No — address lookup only; never authorizes spends |
+| **Source of truth** | Contract metadata | Wallet address mapping |
+
+### Invariants
+
+- **`mux-registry`** is the single source of truth for *which contract version is deployed under a given crate name*. Writes are restricted to the registry owner/admin; clients cannot self-register versions. Reads are public and side-effect free.
+- **`mux-wallet-registry`** maps a symbolic name to a wallet address **within an owner's namespace**. Writes require the owner (or an explicitly authorized delegate); a name cannot be silently reassigned by a non-owner. Reads are public.
+- **Neither registry authorizes spends, recovery, or admin actions.** Spend authorization lives in `mux-spending-policy` / `mux-account`; recovery lives in `mux-recovery`. A registry entry is a lookup, never a capability.
+- **Fail-closed:** unknown names/crates return a not-found error rather than a default address or version. Callers must treat a missing entry as a hard failure, not a fallback.
+
+### Authz boundaries
+
+| Surface | Owner | Delegate | Guardian | API-key / JWT |
+|---|---|---|---|---|
+| `mux-registry` write | ✅ | ❌ | ❌ | ❌ |
+| `mux-registry` read | ✅ | ✅ | ✅ | ✅ |
+| `mux-wallet-registry` write | ✅ | ✅ (if granted) | ❌ | ❌ |
+| `mux-wallet-registry` read | ✅ | ✅ | ✅ | ✅ |
+
+Clients cannot bypass policy: privileged writes are deny-by-default and require the owner (or an explicitly granted delegate for the wallet registry). API-key/JWT callers are read-only against both registries.
+
+## WASM Size Budget & CI Artifacts
+
+The CI pipeline ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) builds every contract to `wasm32-unknown-unknown` and enforces a **fail-closed WASM size budget**: if any compiled contract exceeds the configured limit, the build fails and the PR cannot merge.
+
+- **Budget:** `MAX_WASM_SIZE_BYTES` (default `262144` bytes / 256 KiB) is defined in the `wasm-size-budget` job in `.github/workflows/ci.yml`.
+- **Adjusting the budget:** edit `MAX_WASM_SIZE_BYTES` in that job. Raising it is a deliberate, reviewable change — keep it as small as the largest legitimate contract allows so accidental bloat is caught early.
+- **Artifacts:** the built `.wasm` files are uploaded as the `wasm-artifacts` artifact on every CI run, so contributors and reviewers can download and inspect the exact binaries that were size-checked.
+
+To reproduce the check locally:
+
+```bash
+cargo build --target wasm32-unknown-unknown --release --workspace
+find target/wasm32-unknown-unknown/release -maxdepth 1 -name '*.wasm' -exec ls -l {} \;
+```
 
 ## TypeScript Bindings
 
@@ -45,6 +94,9 @@ The CI pipeline ([`.github/workflows/bindings.yml`](.github/workflows/bindings.y
 
 See [`examples/bindings-usage.ts`](examples/bindings-usage.ts) for a working end-to-end example showing `check_spend` and `register_wallet`.
 See [`examples/wallet-registry-invoke.ts`](examples/wallet-registry-invoke.ts) for a dedicated wallet registry invoke script.
+See [`examples/authorize-flow.ts`](examples/authorize-flow.ts) for the owner → scoped session key → optional relayer → revocation authorization flow. The flow requires explicit environment variables and verifies that a revoked key is rejected.
+
+The runtime call relationships between contracts are documented in [`docs/dependency_graph.md`](docs/dependency_graph.md); the address key set is maintained in [`CONTRACT_IDS.md`](CONTRACT_IDS.md) and [`config/addresses.json`](config/addresses.json).
 
 ```ts
 import {
@@ -226,191 +278,28 @@ async function handleContractCall(req, res) {
 - **401 Unauthorized** — `Unauthorized`, `Expired`
 - **404 Not Found** — `*NotFound`, `*NotInRole`, `*NotInitialized` (when expected to exist)
 - **400 Bad Request** — Invalid input, validation failures, constraint violations
-- **409 Conflict** — `AlreadyInitialized`
-- **500 Internal Server Error** — Unexpected or initialization errors
+- **409 Conflict** — `AlreadyInitial
 
 ## Local Soroban Development
 
 ### Using Docker Compose
 
-[`docker-compose.yml`](docker-compose.yml) starts the official `stellar/quickstart` image in standalone
-mode with **core, horizon, and RPC** all enabled.  It replaces the deprecated
-`QUICKSTART_SOROBAN` environment variable with the modern `--enable` flag and
-adds resource limits, a bounded named volume, and an extended health-check
-`start_period` so slow hosts don't produce spurious failures.
-
-#### Quick start
+[`docker-compose.yml`](docker-compose.yml) starts the official `stellar/quickstart` image with Soroban RPC and Horizon for local development.
 
 ```bash
-# 1. (Optional) copy and customise the env file
-cp .env.localnet.example .env.localnet
-# edit .env.localnet — at minimum set QUICKSTART_CPUS / QUICKSTART_MEMORY
-#                      and fill in contract IDs after deploying
-
-# 2. Start the localnet (waits until the RPC endpoint is healthy)
-docker-compose --env-file .env.localnet up --wait
-
-# 3. Verify the RPC endpoint
-curl -s -X POST http://localhost:8000 \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"getNetwork","params":[]}' | jq .
-
-# 4. In another terminal, run integration tests against localnet
-cd bindings
-SOROBAN_NETWORK=localnet npm test
-
-# 5. Stop the localnet (ledger data is preserved in the named volume)
-docker-compose down
-
-# 6. Wipe persisted ledger data and start fresh
-docker-compose down -v
+docker compose up -d
 ```
 
-#### What the compose file configures
+This exposes:
+- Soroban RPC on `http://localhost:8000`
+- Horizon on `http://localhost:8001`
 
-| Setting | Value | Why |
-|---|---|---|
-| Image tag | `QUICKSTART_IMAGE_TAG` (default `soroban-latest`) | Pin to a digest for reproducible CI; use `soroban-latest` for local dev |
-| Services | `--enable core,horizon,rpc` | Explicit — replaces the deprecated `QUICKSTART_SOROBAN=true` env var |
-| Network mode | `--standalone` | Private chain with fast ledger closes and built-in Friendbot |
-| Protocol version | `--protocol-version` (default `21`) | Matches current mainnet to catch protocol-level incompatibilities early |
-| Health check | `getNetwork` JSON-RPC probe every 10 s, `start_period` 90 s | Quickstart boots core → horizon → rpc via supervisord; 90 s avoids false failures on slow hosts |
-| CPU limit | `QUICKSTART_CPUS` (default `2.0`) | Prevents the container from monopolising the developer machine |
-| Memory limit | `QUICKSTART_MEMORY` (default `2G`) | Soroban RPC keeps a ledger DB in memory; 2 GB is comfortable |
-| Volume cap | `SOROBAN_DATA_SIZE` (default `2g`) | Bounds disk growth from a long-running local chain |
-| Network | named bridge `mux-network` | Isolates the node from other Docker projects |
-
-#### Environment configuration
-
-See [`.env.localnet.example`](.env.localnet.example) for the full variable reference.
-Key variables:
-
-```
-QUICKSTART_IMAGE_TAG   Image tag or digest (default: soroban-latest)
-PROTOCOL_VERSION       Soroban protocol version to activate (default: 21)
-QUICKSTART_CPUS        CPU limit for the container (default: 2.0)
-QUICKSTART_MEMORY      Memory limit for the container (default: 2G)
-SOROBAN_DATA_DRIVER    Volume driver: local (persist) or tmpfs (ephemeral CI)
-SOROBAN_DATA_SIZE      Volume size cap (default: 2g)
-LOCALNET_RPC_URL       RPC base URL consumed by tests (default: http://localhost:8000)
-LOCALNET_MUX_*_ID     Contract addresses — populate after deployment
-```
-
-#### Storage and TTL notes
-
-Soroban ledger entries expire after a TTL (the Mux contracts default to ~30 days).
-On a long-running local node, extend TTLs with the Stellar CLI before they
-expire:
-
-```bash
-stellar contract extend \
-  --id $LOCALNET_MUX_ACCOUNT_ID \
-  --ledgers-to-extend 518400 \
-  --source <KEEPER_SECRET> \
-  --network localnet
-```
-
-Repeat for every contract ID. Run at least once every 25 days. See
-[`docs/storage-griefing.md`](docs/storage-griefing.md) for per-contract
-collection caps and the full keeper runbook.
-
-#### Local contract invocation helper
-
-```bash
-bash scripts/local-invoke.sh --contract-name mux-account --function owner --secret-key S... --arg true
-```
-
-Supported options:
-- `--network <network>` — `localnet|testnet|mainnet` (default: `localnet`)
-- `--contract-id <id>` or `--contract-name <name>` — contract to call
-- `--function <name>` — contract function to invoke
-- `--secret-key <secret>` — signer secret key for the transaction
-- `--arg <value>` — argument values; repeatable
-- `--simulate-only` — simulate without submitting
-
-**Post-deploy smoke checks** (simulate-only reads across core contracts):
-
-```bash
-bash scripts/local-invoke-smoke.sh --secret-key S... --network localnet
-# List planned checks without RPC:
-bash scripts/local-invoke-smoke.sh --dry-run
-```
-
-If dependencies are not installed, run:
-
-```bash
-cd bindings && npm ci
-```
-
-#### Deploying contracts to localnet
-
-After the localnet is healthy, build and deploy all contracts:
-
-```bash
-# Build WASM artifacts
-cargo build --target wasm32-unknown-unknown --release --workspace
-
-# Deploy each contract (requires `stellar` CLI installed)
-stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/mux_account.wasm \
-  --source <DEPLOYER_SECRET> \
-  --network localnet
-
-# Save the returned contract ID to .env.localnet:
-# LOCALNET_MUX_ACCOUNT_ID=C...
-# Repeat for: mux-batcher, mux-permissions, mux-spending-policy,
-#             mux-registry, mux-wallet-registry, mux-delegation,
-#             mux-recovery, mux-policy, mux-account-factory
-```
-
-See the [Deploying Contracts](#deploying-contracts) section above for the full deploy workflow.
-
-## Documentation
-
-- [Contract IDs](CONTRACT_IDS.md) — Per-network program addresses, update process, and upgrade authority
-- [Contract Upgrade Pattern](docs/contract-upgrade-pattern.md) — Soroban WASM upgrade flow, admin authorization, storage compatibility, rollback, and integrator checklist
-
-## Documentation (Extended)
-
-- [Contract Upgrade Pattern](docs/contract-upgrade-pattern.md) — canonical upgrade procedure for all Mux Soroban contracts
-
-- [Architecture Overview](docs/architecture-overview.md) — High-level diagram and system components
-- [Delegation Permission Model](docs/delegation-permission-model.md) — Permission grant/revoke semantics, storage bounds, error codes, and TypeScript binding notes
-- [Policy Semantics](docs/policy-semantics.md) — Per-wallet daily spend limit design, reset logic, and error codes
-- [Account Abstraction Design](docs/account-abstraction.md) — Goals, architecture, session key design, and transaction flows
-- [Backend Orchestrator Integration](docs/aa-backend-orchestrator.md) — Scope and architecture for relayer integration
-- [Threat Model](docs/threat-model.md) — assets, trust boundaries, and mitigations
-- [Access Control Review Checklist](docs/access-control-checklist.md) — pre-deployment and pre-audit checklist
-- [Storage Griefing Notes](docs/storage-griefing.md) — collection caps, TTL management, keeper runbook
-- [External Audit Prep](docs/audit-prep.md) — scope, entry points, known limitations, auditor checklist
-- [Error Codes Reference](docs/error_codes.md) — all contract error codes and HTTP mappings
-- [Bindings Error Mapping](docs/bindings-error-mapping.md) — how Rust error enums flow to TS unions and HTTP statuses
-- [Registry Contracts Comparison](docs/registry-contracts-comparison.md) — mux-registry vs mux-wallet-registry: purpose, error codes, auth models, and storage layouts
+Stop the stack with `docker compose down`.
 
 ## Security
 
-See [SECURITY.md](SECURITY.md) for the vulnerability disclosure policy and
-safe-harbor guidelines.
-
-To report a vulnerability, open a private security advisory on GitHub or email
-**security@mux-protocol.xyz**.
-
-## Testing & coverage
-
-```bash
-cargo test --workspace --all-features
-make coverage                          # LLVM coverage, or stub if tools missing
-bash scripts/coverage.sh --stub        # print coverage report stub only
-bash scripts/test-coverage.sh          # validate stub lists all mux-* crates
-```
-
-`Cargo.lock` is committed — see [CONTRIBUTING.md](CONTRIBUTING.md#cargolock-policy).
-
-## Contributing
-
-- [CONTRIBUTING.md](CONTRIBUTING.md) — commit conventions, PR process, contract PR guidelines
-- [Breaking Change Policy](docs/BREAKING_CHANGES.md) — guidelines for backward compatibility, deprecation periods, and versioning
+See [`SECURITY.md`](SECURITY.md) for the threat model, secret-handling rules, and the registry authz boundaries summarized above. The registry split (version/metadata vs named wallet addresses) is documented in [`docs/registry-contracts-comparison.md`](docs/registry-contracts-comparison.md); keep both in sync when either registry changes.
 
 ## License
 
-[MIT](LICENSE)
+Apache-2.0

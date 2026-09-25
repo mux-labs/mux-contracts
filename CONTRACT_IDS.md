@@ -1,87 +1,44 @@
-# Contract IDs
+# Mux Contract IDs
 
-This document explains the structure and lifecycle of `config/addresses.json` — the canonical source for deployed Mux Protocol contract addresses.
+`config/addresses.json` is the machine-readable source of truth for deployed Mux Protocol contract addresses. This document is the human-readable companion and must contain the same contract key set as `bindings/src/types.ts` and `docs/contract-ids.md`.
 
-## File location
+## Canonical contract set
 
-[`config/addresses.json`](config/addresses.json)
+| Key | Contract crate | Responsibility |
+|---|---|---|
+| `muxAccount` | `mux-account` | Per-user smart account and authorized execution |
+| `muxAccountFactory` | `mux-account-factory` | Deterministic account deployment and owner index |
+| `muxBatcher` | `mux-batcher` | Bounded atomic multi-operation dispatch |
+| `muxDelegation` | `mux-delegation` | Scoped delegate grants and revocation |
+| `muxPermissions` | `mux-permissions` | Role and permission policy evaluation |
+| `muxPolicy` | `mux-policy` | Per-wallet daily spend policy |
+| `muxRecovery` | `mux-recovery` | Guardian-driven account recovery |
+| `muxRegistry` | `mux-registry` | Generic contract/version metadata registry |
+| `muxSpendingPolicy` | `mux-spending-policy` | Spend-limit and allow/deny enforcement |
+| `muxWalletRegistry` | `mux-wallet-registry` | Wallet discovery and account associations |
 
-## Structure
+All ten keys are present for `localnet`, `testnet`, and `mainnet` in `config/addresses.json`. An empty value means that the contract has not yet been deployed on that network; it is not permission to substitute an address from another network.
 
-```json
-{
-  "localnet": {
-    "muxAccount": "", "muxBatcher": "", "muxDelegation": "",
-    "muxPermissions": "", "muxWalletRegistry": "",
-    "muxAccountFactory": "", "muxRegistry": "", "muxPolicy": ""
-  },
-  "testnet": { "...same eight keys...": "" },
-  "mainnet": { "...same eight keys...": "" }
-}
+## Address update procedure
+
+After a deployment, update only the matching network and contract key. Validate the result before opening a PR:
+
+```bash
+jq empty config/addresses.json
+bash scripts/check-contract-ids-sync.sh
 ```
 
-This key set mirrors the `MuxContractIds` TypeScript interface in
-[`bindings/src/types.ts`](bindings/src/types.ts), which is what
-`bindings/src/addresses.ts` actually validates against. `scripts/check-contract-ids-sync.sh`
-enforces that this file, `docs/contract-ids.md`, and `config/addresses.json`
-all track that same set — see [`docs/contract-ids.md`](docs/contract-ids.md#how-drift-is-caught).
+A mainnet address change requires the approval marker and audit record described by the `_review` object in `config/addresses.json`. Never commit secret keys or treat an environment override as a replacement for a reviewed manifest update.
 
-### Contracts
+## Network and environment overrides
 
-| Key | Contract | Purpose |
-|---|---|---|
-| `muxAccount` | `contracts/mux-account` | Account abstraction: owner management, delegates, spend limits |
-| `muxBatcher` | `contracts/mux-batcher` | Atomic multi-op batching with per-op failure handling |
-| `muxDelegation` | `contracts/mux-delegation` | Delegated permission grants, separate from account delegates |
-| `muxPermissions` | `contracts/mux-permissions` | RBAC registry — roles, grant/revoke |
-| `muxWalletRegistry` | `contracts/mux-wallet-registry` | Wallet discovery/registry for client lookups |
-| `muxAccountFactory` | `contracts/mux-account-factory` | Deploys and indexes `mux-account` instances per owner |
-| `muxRegistry` | `contracts/mux-registry` | Generic version/metadata registry for deployed contracts |
-| `muxPolicy` | `contracts/mux-policy` | Per-wallet daily spend policy limits |
-
-Two more contract crates are deployed by `scripts/deploy.sh` (`mux-recovery`,
-`mux-spending-policy`) but do not yet have a key in `MuxContractIds` or an
-entry in `addresses.json` — their deployed addresses currently have to be
-tracked out-of-band. Adding them is tracked as a follow-up; it touches
-`bindings/src/types.ts`, `addresses.ts`, `network.ts`, and
-`addresses-config.ts` together, which is out of scope for this doc/config
-sync fix.
-
-### Networks
-
-| Key | Network | Notes |
-|---|---|---|
-| `localnet` | Local Docker node | Populated after `stellar contract deploy` against the Docker Compose node |
-| `testnet` | Stellar testnet | Populated by CI or a manual testnet deploy |
-| `mainnet` | Stellar mainnet | Populated after an audited mainnet release; treat as immutable once set |
-
-## How IDs are updated
-
-1. Build the WASM: `cargo build --target wasm32-unknown-unknown --release --workspace`
-2. Deploy via `stellar contract deploy --wasm <path>.wasm --network <network>`
-3. Copy the returned contract ID into the appropriate key in `config/addresses.json`
-4. Commit the updated file on a release branch — IDs are intentionally tracked in VCS
-
-## Environment variable overrides
-
-Runtime overrides follow the pattern `{NETWORK}_MUX_*_ID` and take precedence over `addresses.json`:
+The supported networks are `localnet`, `testnet`, and `mainnet`. Runtime overrides follow the pattern `{NETWORK}_MUX_*_ID` and take precedence over the manifest for explicitly configured environments, for example:
 
 ```bash
 SOROBAN_NETWORK=testnet
 TESTNET_MUX_ACCOUNT_ID=C...
-TESTNET_MUX_BATCHER_ID=C...
-TESTNET_MUX_DELEGATION_ID=C...
-TESTNET_MUX_PERMISSIONS_ID=C...
-TESTNET_MUX_WALLET_REGISTRY_ID=C...
-TESTNET_MUX_ACCOUNT_FACTORY_ID=C...
-TESTNET_MUX_REGISTRY_ID=C...
-TESTNET_MUX_POLICY_ID=C...
+TESTNET_MUX_RECOVERY_ID=C...
+TESTNET_MUX_SPENDING_POLICY_ID=C...
 ```
 
-See [`.env.deploy.example`](.env.deploy.example) for the full variable reference.
-
-## Upgrade authority
-
-Contract upgrades require the deployer keypair that owns the upgrade authority.  
-Store the corresponding secret key in `SOROBAN_SECRET_KEY` (never commit it).  
-Mainnet upgrade authority is held by the Mux Labs multisig; contact the core team before deploying to mainnet.
+See [`.env.deploy.example`](.env.deploy.example) and [`docs/contract-ids.md`](docs/contract-ids.md) for deployment history and rollback guidance. The synchronization check treats the `MuxContractIds` interface as the canonical key set and fails closed when any network or document drifts.

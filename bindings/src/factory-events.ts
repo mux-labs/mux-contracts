@@ -56,6 +56,105 @@ export const FACTORY_EVENT_TOPICS = {
 
 export type FactoryEventAction = (typeof FACTORY_EVENT_TOPICS)[keyof typeof FACTORY_EVENT_TOPICS];
 
+// ── getAccounts bounds ─────────────────────────────────────────────────────────
+
+/**
+ * Hard maximum page size accepted by the factory `get_accounts` entrypoint.
+ *
+ * The on-chain contract rejects any `limit` above this value with
+ * {@link FactoryBoundsErrorCode.LimitTooLarge} rather than silently clamping,
+ * so callers cannot accidentally request an unbounded result set. Keep this in
+ * sync with the contract constant `MAX_ACCOUNTS_PAGE_SIZE`.
+ */
+export const MAX_ACCOUNTS_PAGE_SIZE = 100 as const;
+
+/**
+ * Stable, typed error codes returned by the factory `get_accounts` bounds
+ * validation. These mirror the contract's `Error` enum discriminants so that
+ * off-chain callers can branch on a stable code instead of parsing strings.
+ */
+export const FactoryBoundsErrorCode = {
+  /** `offset` was negative or otherwise not a valid u32. */
+  InvalidOffset: "InvalidOffset",
+  /** `limit` was zero — callers must request at least one account. */
+  InvalidLimit: "InvalidLimit",
+  /** `limit` exceeded {@link MAX_ACCOUNTS_PAGE_SIZE}. */
+  LimitTooLarge: "LimitTooLarge",
+} as const;
+
+export type FactoryBoundsErrorCode =
+  (typeof FactoryBoundsErrorCode)[keyof typeof FactoryBoundsErrorCode];
+
+/**
+ * Typed error thrown by {@link validateGetAccountsBounds} when the requested
+ * bounds are invalid or out of range. Carries a stable {@link FactoryBoundsErrorCode}
+ * so callers can fail closed without string matching.
+ */
+export class FactoryBoundsError extends Error {
+  readonly code: FactoryBoundsErrorCode;
+
+  constructor(code: FactoryBoundsErrorCode, message?: string) {
+    super(message ?? code);
+    this.name = "FactoryBoundsError";
+    this.code = code;
+  }
+}
+
+/**
+ * Validated, normalised bounds for a `get_accounts` call.
+ */
+export interface GetAccountsBounds {
+  /** Zero-based offset into the owner's account list. */
+  offset: number;
+  /** Page size, guaranteed to be within `1..MAX_ACCOUNTS_PAGE_SIZE`. */
+  limit: number;
+}
+
+/**
+ * Validate and normalise `get_accounts` pagination bounds before they reach the
+ * contract. Enforces a hard maximum page size and rejects invalid values with a
+ * stable {@link FactoryBoundsErrorCode} instead of panicking or returning an
+ * unbounded result set.
+ *
+ * @throws {FactoryBoundsError} when `offset` or `limit` are out of range.
+ *
+ * @example
+ * ```ts
+ * const bounds = validateGetAccountsBounds({ offset: 0, limit: 50 });
+ * const accounts = await factory.get_accounts(owner, bounds.offset, bounds.limit);
+ * ```
+ */
+export function validateGetAccountsBounds(input: {
+  offset?: number;
+  limit?: number;
+}): GetAccountsBounds {
+  const offset = input.offset ?? 0;
+  const limit = input.limit ?? MAX_ACCOUNTS_PAGE_SIZE;
+
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new FactoryBoundsError(
+      FactoryBoundsErrorCode.InvalidOffset,
+      `offset must be a non-negative integer, received ${offset}`,
+    );
+  }
+
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new FactoryBoundsError(
+      FactoryBoundsErrorCode.InvalidLimit,
+      `limit must be a positive integer, received ${limit}`,
+    );
+  }
+
+  if (limit > MAX_ACCOUNTS_PAGE_SIZE) {
+    throw new FactoryBoundsError(
+      FactoryBoundsErrorCode.LimitTooLarge,
+      `limit ${limit} exceeds maximum page size ${MAX_ACCOUNTS_PAGE_SIZE}`,
+    );
+  }
+
+  return { offset, limit };
+}
+
 // ── Parsed event types ─────────────────────────────────────────────────────────
 
 /**

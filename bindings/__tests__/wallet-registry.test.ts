@@ -2,7 +2,14 @@
  * Tests for MuxWalletRegistryClient binding shape and integration stubs.
  */
 
-import { MuxWalletRegistryClient } from "../src/generated/mux-wallet-registry";
+import {
+  MuxWalletRegistryClient,
+  WALLET_NAME_REGEX,
+  WALLET_NAME_MIN_LEN,
+  WALLET_NAME_MAX_LEN,
+  isValidWalletName,
+  validateWalletName,
+} from "../src/generated/mux-wallet-registry";
 import { NETWORK_CONFIGS } from "../src/network";
 import { ERROR_HTTP_MAP } from "../src/errors";
 
@@ -103,4 +110,87 @@ describe("Wallet registry integration stubs", () => {
   it.todo("get_metadata returns WalletNotFound for entry with no metadata");
   it.todo("non-owner register_wallet call is rejected with Unauthorized");
   it.todo("double initialize returns AlreadyInitialized");
+});
+
+describe("Wallet registry name charset policy", () => {
+  it("exports charset constants and validation helpers", () => {
+    expect(WALLET_NAME_REGEX).toBeInstanceOf(RegExp);
+    expect(WALLET_NAME_MIN_LEN).toBe(1);
+    expect(WALLET_NAME_MAX_LEN).toBe(32);
+    expect(typeof isValidWalletName).toBe("function");
+    expect(typeof validateWalletName).toBe("function");
+  });
+
+  it("accepts valid names conforming to [a-zA-Z0-9_]{1,32}", () => {
+    const validNames = [
+      "a",
+      "Z",
+      "9",
+      "_",
+      "treasury",
+      "hot_wallet",
+      "ops_01_backup",
+      "a".repeat(32), // boundary: exactly 32 chars
+    ];
+    for (const name of validNames) {
+      expect(isValidWalletName(name)).toBe(true);
+      expect(() => validateWalletName(name)).not.toThrow();
+    }
+  });
+
+  it("rejects empty string (below min length boundary)", () => {
+    expect(isValidWalletName("")).toBe(false);
+    expect(() => validateWalletName("")).toThrow("Invalid wallet name");
+  });
+
+  it("rejects names exceeding 32 characters (above max length boundary)", () => {
+    const tooLong = "a".repeat(33);
+    expect(isValidWalletName(tooLong)).toBe(false);
+    expect(() => validateWalletName(tooLong)).toThrow("between 1 and 32 characters");
+  });
+
+  it("rejects names with spaces or whitespace", () => {
+    const invalidWithSpaces = ["treasury 1", " treasury", "treasury ", "hot\twallet"];
+    for (const name of invalidWithSpaces) {
+      expect(isValidWalletName(name)).toBe(false);
+      expect(() => validateWalletName(name)).toThrow("alphanumeric characters and underscores");
+    }
+  });
+
+  it("rejects names with hyphens or dashes", () => {
+    expect(isValidWalletName("treasury-01")).toBe(false);
+    expect(() => validateWalletName("treasury-01")).toThrow("alphanumeric characters and underscores");
+  });
+
+  it("rejects names with punctuation or special characters", () => {
+    const invalidSpecial = ["treasury.eth", "user@mux", "wallet#1", "vault/primary", "admin:key"];
+    for (const name of invalidSpecial) {
+      expect(isValidWalletName(name)).toBe(false);
+      expect(() => validateWalletName(name)).toThrow("alphanumeric characters and underscores");
+    }
+  });
+
+  it("rejects names with emojis or non-ASCII characters", () => {
+    const invalidUnicode = ["wallet🚀", "trésor", "ウォレット"];
+    for (const name of invalidUnicode) {
+      expect(isValidWalletName(name)).toBe(false);
+      expect(() => validateWalletName(name)).toThrow("alphanumeric characters and underscores");
+    }
+  });
+
+  it("client methods validate name charset before making RPC requests", async () => {
+    const client = new MuxWalletRegistryClient({
+      contractId: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+      networkPassphrase: "Test SDF Network ; September 2015",
+      rpcUrl: "http://localhost:8000/soroban/rpc",
+    });
+    const keypair = { publicKey: () => "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF" } as any;
+
+    await expect(client.getWallet(keypair, "invalid-name")).rejects.toThrow(
+      "Invalid wallet name"
+    );
+    await expect(client.registerWallet(keypair, "bad name", "GAAA" as any)).rejects.toThrow(
+      "Invalid wallet name"
+    );
+  });
 });

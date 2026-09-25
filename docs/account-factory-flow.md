@@ -392,9 +392,11 @@ The global `AccountCount` counter increments for every successful deploy regardl
 
 ---
 
-## Duplicate Registration
+## Duplicate Registration and Idempotency
 
-The factory does **not** deduplicate `account_address` values within an owner's list. Registering the same address twice is allowed and both entries will appear in `get_accounts`. This is intentional: re-registering after an upgrade or recovery is a valid workflow. Callers that need deduplication must enforce it off-chain.
+The factory handles duplicate registrations idempotently: calling `deploy_account` or `deploy_account_with_metadata` with an `account_address` that is already registered for that `owner` succeeds without inserting duplicate entries into `get_accounts` or incrementing the global `account_count()`.
+
+Metadata attached to an already-registered account can be updated idempotently via `deploy_account_with_metadata`. Furthermore, re-registering an existing account succeeds even if the owner's account list is currently at the 64-account cap (`MAX_ACCOUNTS_PER_OWNER`).
 
 ---
 

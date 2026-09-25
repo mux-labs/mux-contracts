@@ -3,6 +3,29 @@
 > [`docs/architecture-overview.md`](docs/architecture-overview.md) and
 > [`contracts/README.md`](contracts/README.md).
 
+# Somzilla.md — status
+
+**Status: archived (historical).** This document is retained only as a record of
+past issue-tracking notes. It is **not** a source of truth for the current
+contract workspace and must not be used to infer current behavior, interfaces,
+or security policy.
+
+## Canonical documentation
+
+For up-to-date, authoritative information, use the following instead:
+
+- Architecture: [`docs/architecture-overview.md`](docs/architecture-overview.md)
+- Contracts workspace: [`contracts/README.md`](contracts/README.md)
+- Project overview: [`README.md`](README.md)
+- Security policy: [`SECURITY.md`](SECURITY.md)
+- Contributing guide: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Deployed contract IDs: [`CONTRACT_IDS.md`](CONTRACT_IDS.md)
+
+If any statement below conflicts with the canonical docs above, the canonical
+docs win. Do not treat the notes below as current requirements.
+
+## Historical notes (superseded)
+
 Issue:#396 Define recovery request storage struct
 
 Context

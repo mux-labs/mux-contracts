@@ -937,6 +937,32 @@ mod tests {
     }
 
     #[test]
+    fn test_timelock_cannot_be_shortened_illicitly() {
+        let (env, client, _, guardian) = setup();
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&guardian, &new_owner);
+
+        // One ledger before timelock expiry: execution MUST fail with TimelockNotExpired
+        env.ledger()
+            .with_mut(|l| l.sequence_number += RECOVERY_TIMELOCK - 1);
+        let err = client.try_execute_recovery(&guardian).unwrap_err().unwrap();
+        assert_eq!(
+            err,
+            RecoveryError::TimelockNotExpired,
+            "timelock cannot be shortened: must reject execution before executable_at"
+        );
+
+        // At exactly executable_at (initiated_at + RECOVERY_TIMELOCK): execution succeeds
+        env.ledger().with_mut(|l| l.sequence_number += 1);
+        let result = client.try_execute_recovery(&guardian);
+        assert!(
+            result.is_ok(),
+            "execution at exact timelock boundary must succeed: {result:?}"
+        );
+        assert_eq!(client.owner(), new_owner);
+    }
+
+    #[test]
     fn test_execute_recovery_non_guardian_rejected() {
         let (env, client, _, guardian) = setup();
         let new_owner = Address::generate(&env);

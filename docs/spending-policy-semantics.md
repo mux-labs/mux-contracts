@@ -98,6 +98,44 @@ All state-mutating operations emit a structured event with topics `[mux_spend, a
 
 Instance storage TTL is extended on every write (`TTL_THRESHOLD = 17 280`, `TTL_EXTEND_TO = 518 400` ledgers ≈ 30 days). Deployers should run a keeper job to extend TTL proactively.
 
+## Spend Limit Zero and Max Boundaries
+
+The contract and client SDK enforce boundary semantics fail-closed to prevent invalid states, arithmetic wrap-around, and probing attacks.
+
+### 1. Zero Limit Boundary (`limit == 0`)
+- `limit` parameter in `set_policy` must be strictly positive (`limit > 0`).
+- Calling `set_policy` with `limit == 0` is rejected with `InvalidInput` (error code 6).
+- Calling `set_policy` with negative values (`limit < 0`) is rejected with `InvalidInput` (error code 6).
+- Minimum valid limit is `1` (`SPEND_LIMIT_MIN = 1n`).
+
+### 2. Maximum Limit Boundary (`limit == i128::MAX`)
+- Spend limits are typed as signed 128-bit integers (`i128`).
+- Maximum valid limit is `i128::MAX` = `170,141,183,460,469,231,731,687,303,715,884,105,727` (`SPEND_LIMIT_MAX`).
+- Setting `limit = i128::MAX` succeeds and allows spends up to `i128::MAX`.
+- Values exceeding `i128::MAX` are rejected fail-closed during client validation and Soroban ScVal serialization.
+
+### 3. Zero Spend Amount Boundary (`amount == 0`)
+- In `check_spend(account, asset, amount)`, spending 0 is valid (`0 <= limit`).
+- Returns success (`chk_ok` event emitted) when a valid policy exists.
+- Negative spend amounts (`amount < 0`) are rejected with `InvalidInput` (error code 6).
+
+### 4. Exact Limit Boundary (`amount == limit`)
+- When `amount == policy.limit`, `check_spend` succeeds.
+- Emits `chk_ok` event with `(account, asset, amount)`.
+
+### 5. One-Over Boundary (`amount == limit + 1`)
+- When `amount == policy.limit + 1`, `check_spend` fails with `SpendLimitExceeded` (error code 5).
+- Emits `chk_ex` event recording the excess spend attempt.
+
+### 6. Period Window Boundaries (`period_ledgers`)
+- `period_ledgers == 0` is rejected with `InvalidPeriod` (error code 7).
+- Minimum valid period is `1` ledger (`PERIOD_LEDGERS_MIN = 1`).
+- Maximum valid period is `u32::MAX` (`4,294,967,295`) ledgers (`PERIOD_LEDGERS_MAX`).
+
+### 7. Authorization Precedence
+- Admin authentication (`require_admin()`) runs **before** boundary parameter validation.
+- Unauthenticated callers are rejected immediately with `Unauthorized` / host auth failure, ensuring zero-information disclosure regarding boundary or policy state.
+
 ## Key Invariants
 
 - Policy records are keyed by (account, asset) — each account can have separate limits per asset.

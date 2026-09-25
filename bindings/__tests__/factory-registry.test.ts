@@ -2,7 +2,13 @@
  * Unit tests for MuxAccountFactoryClient and MuxRegistryClient binding shapes.
  */
 
-import { MuxAccountFactoryClient } from "../src/generated/mux-account-factory";
+import {
+  MuxAccountFactoryClient,
+  FACTORY_MAX_VERSION_LENGTH,
+  FACTORY_MAX_DESCRIPTION_LENGTH,
+  FACTORY_MAX_AUTHOR_LENGTH,
+  validateFactoryMetadata,
+} from "../src/generated/mux-account-factory";
 import { MuxRegistryClient } from "../src/generated/mux-registry";
 import { ERROR_HTTP_MAP } from "../src/errors";
 
@@ -167,5 +173,70 @@ describe("Factory and registry error HTTP mapping", () => {
 
   it("maps TooManyContracts to 409", () => {
     expect(ERROR_HTTP_MAP.TooManyContracts).toBe(409);
+  });
+});
+
+describe("Factory metadata size limits (Issue #842)", () => {
+  it("exports metadata limit constants matching storage griefing caps", () => {
+    expect(FACTORY_MAX_VERSION_LENGTH).toBe(32);
+    expect(FACTORY_MAX_DESCRIPTION_LENGTH).toBe(256);
+    expect(FACTORY_MAX_AUTHOR_LENGTH).toBe(64);
+  });
+
+  it("accepts metadata strings exactly at size limits", () => {
+    const version = "v".repeat(32);
+    const description = "d".repeat(256);
+    const author = "a".repeat(64);
+    expect(() => validateFactoryMetadata(version, description, author)).not.toThrow();
+  });
+
+  it("rejects version string > 32 chars with MetadataTooLarge", () => {
+    const version = "v".repeat(33);
+    expect(() => validateFactoryMetadata(version, "desc", "author")).toThrow("MetadataTooLarge");
+    expect(() => validateFactoryMetadata(version, "desc", "author")).toThrow("version length (33) exceeds maximum of 32");
+  });
+
+  it("rejects description string > 256 chars with MetadataTooLarge", () => {
+    const description = "d".repeat(257);
+    expect(() => validateFactoryMetadata("1.0.0", description, "author")).toThrow("MetadataTooLarge");
+    expect(() => validateFactoryMetadata("1.0.0", description, "author")).toThrow("description length (257) exceeds maximum of 256");
+  });
+
+  it("rejects author string > 64 chars with MetadataTooLarge", () => {
+    const author = "a".repeat(65);
+    expect(() => validateFactoryMetadata("1.0.0", "desc", author)).toThrow("MetadataTooLarge");
+    expect(() => validateFactoryMetadata("1.0.0", "desc", author)).toThrow("author length (65) exceeds maximum of 64");
+  });
+
+  it("client methods validate metadata before dispatching transactions", async () => {
+    const dummyClient = new MuxAccountFactoryClient({
+      contractId: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+      networkPassphrase: "Test SDF Network ; September 2015",
+      rpcUrl: "http://localhost:8000/soroban/rpc",
+    });
+    const dummyKeypair = { publicKey: () => "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF" } as any;
+    const dummyAddress = { toString: () => "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF" } as any;
+
+    await expect(
+      dummyClient.deployAccountWithMetadata(
+        dummyKeypair,
+        dummyAddress,
+        dummyAddress,
+        "v".repeat(33),
+        "desc",
+        "author"
+      )
+    ).rejects.toThrow("MetadataTooLarge");
+
+    await expect(
+      dummyClient.simulateDeployWithMetadata(
+        dummyKeypair,
+        dummyAddress,
+        dummyAddress,
+        "1.0.0",
+        "d".repeat(257),
+        "author"
+      )
+    ).rejects.toThrow("MetadataTooLarge");
   });
 });

@@ -9,11 +9,13 @@ extend instance-storage TTL.
 | Entrypoint | Required authorization |
 |---|---|
 | `initialize` | supplied `owner` |
+| `pause` | stored owner |
 | `unpause` | stored owner |
 | `set_delegate` | stored owner |
 | `remove_delegate` | stored owner |
 | `set_spend_limit` | stored owner |
 | `debit_spend` | current contract address |
+| `execute` | stored owner |
 | `set_metadata` | stored owner |
 | `register_session_key` | stored owner |
 | `revoke_session_key` | stored owner |
@@ -35,6 +37,7 @@ missing. Contract validation failures use `MuxAccountError`.
 - `guardians() -> Result<Vec<Address>, MuxAccountError>` returns guardians.
 - `nonce() -> Result<u64, MuxAccountError>` returns the account's transaction
   counter — the exact value the next execution call must supply.
+- `pause() -> Result<(), MuxAccountError>` sets the pause flag, suspending non-admin operations.
 - `is_paused() -> bool` returns the pause flag.
 - `unpause() -> Result<(), MuxAccountError>` clears the pause flag.
 
@@ -65,6 +68,12 @@ missing. Contract validation failures use `MuxAccountError`.
 - `debit_spend(asset, spend) -> Result<(), MuxAccountError>` atomically rolls
   the period forward when needed and increments `spent`. Missing or exceeded
   limits return `SpendLimitExceeded`.
+- `execute(target, function, args, asset, spend, nonce) -> Result<Val, MuxAccountError>`
+  validates that the account is not paused and the owner is authorized, validates
+  the spend against the configured spend limit, consumes `nonce` (which must equal
+  the account's current `nonce()`), invokes `function` on `target` with `args` while
+  holding the reentrancy guard, and persists the debit only after the external call
+  returns (checks-effects-interactions). Emits `executed`.
 
 `SpendLimit` contains `asset`, `amount`, `period_ledgers`, `spent`, and
 `reset_ledger`.

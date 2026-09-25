@@ -23,6 +23,22 @@
  * - `Executed` and `Cancelled` are terminal states — no further transitions.
  *   (A new request can be initiated after cancellation or expiry.)
  *
+ * ## Guardian Set Rotation Rules
+ *
+ * The guardian set is the trust root for recovery. Rotation is governed by
+ * the invariants in `docs/recovery-trust-model.md`:
+ *
+ * - **Membership**: only the current owner may rotate the guardian set.
+ * - **Threshold**: the new set must contain at least `MIN_GUARDIANS` members
+ *   and at most `MAX_GUARDIANS` members.
+ * - **Ordering**: guardians are stored in ascending lexicographic order of
+ *   their canonical `Address` string so the on-chain set is deterministic.
+ * - **No duplicates**: the same guardian address may not appear twice.
+ * - **No zero address**: the all-zero address is rejected.
+ *
+ * Rotation is idempotent: replaying the same rotation (same set, same
+ * `rotationId`) is a no-op and returns the existing `rotationId`.
+ *
  * ## Audit Events
  *
  * Contract tag: `mux_recv`
@@ -33,6 +49,7 @@
  * | `rec_init` | `rec_init`  | `initiate_recovery` | None → Pending      |
  * | `rec_exec` | `rec_exec`  | `execute_recovery`  | Pending → Executed  |
  * | `rec_cncl` | `rec_cncl`  | `cancel_recovery`   | Pending → Cancelled |
+ * | `grd_rot`  | `grd_rot`   | `rotate_guardians`  | —                   |
  *
  * The `rec_init` event carries `(guardian, new_owner, initiated_at,
  * executable_at, expires_at)` so off-chain watchers can surface deadlines
@@ -160,7 +177,116 @@ export interface RecoveryRequest {
   status: RecoveryStatus;
 }
 
+// ── Guardian set rotation ─────────────────────────────────────────────────────
 
+/**
+ * Stable error codes for guardian set rotation. Mirrors the on-chain
+ * `GuardianRotationError` codes so clients can branch without string matching.
+ *
+ * Deny-by-default: any condition not explicitly permitted fails closed.
+ */
+export enum GuardianRotationErrorCode {
+  /** Caller is not the current owner. */
+  Unauthorized = "UNAUTHORIZED",
+  /** Fewer guardians than `MIN_GUARDIANS`. */
+  BelowMinGuardians = "BELOW_MIN_GUARDIANS",
+  /** More guardians than `MAX_GUARDIANS`. */
+  AboveMaxGuardians = "ABOVE_MAX_GUARDIANS",
+  /** The same guardian address appears more than once. */
+  DuplicateGuardian = "DUPLICATE_GUARDIAN",
+  /** A guardian address is the all-zero address. */
+  ZeroGuardian = "ZERO_GUARDIAN",
+  /** The supplied `rotationId` was already used with a different set. */
+  RotationIdConflict = "ROTATION_ID_CONFLICT",
+}
+
+/**
+ * Typed error thrown by {@link MuxRecoveryClient.rotateGuardians} and
+ * {@link validateGuardianSet}. Carries a stable {@link GuardianRotationErrorCode}
+ * and an optional `correlationId` for log/trace correlation.
+ */
+export class GuardianRotationError extends Error {
+  readonly code: GuardianRotationErrorCode;
+  readonly correlationId?: string;
+
+  constructor(
+    code: GuardianRotationErrorCode,
+    message: string,
+    correlationId?: string
+  ) {
+    super(message);
+    this.name = "GuardianRotationError";
+    this.code = code;
+    this.correlationId = correlationId;
+  }
+}
+
+/** Minimum number of guardians permitted in a rotated set. */
+export const MIN_GUARDIANS = 1;
+/** Maximum number of guardians permitted in a rotated set. */
+export const MAX_GUARDIANS = 10;
+
+/** The all-zero Stellar address, rejected as a guardian. */
+const ZERO_ADDRESS = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+
+/**
+ * Validate a proposed guardian set against the rotation invariants from
+ * `docs/recovery-trust-model.md`:
+ *
+ * - membership count within `[MIN_GUARDIANS, MAX_GUARDIANS]`
+ * - no duplicate addresses
+ * - no zero address
+ *
+ * Returns the canonical, ascending-ordered, de-duplicated set on success.
+ * Throws {@link GuardianRotationError} (fail-closed) on any violation.
+ *
+ * @param guardians Proposed guardian addresses.
+ * @param correlationId Optional correlation id propagated into the error.
+ */
+export function validateGuardianSet(
+  guardians: Address[],
+  correlationId?: string
+): Address[] {
+  if (guardians.length < MIN_GUARDIANS) {
+    throw new GuardianRotationError(
+      GuardianRotationErrorCode.BelowMinGuardians,
+      `Guardian set must contain at least ${MIN_GUARDIANS} guardian(s)`,
+      correlationId
+    );
+  }
+  if (guardians.length > MAX_GUARDIANS) {
+    throw new GuardianRotationError(
+      GuardianRotationErrorCode.AboveMaxGuardians,
+      `Guardian set must contain at most ${MAX_GUARDIANS} guardian(s)`,
+      correlationId
+    );
+  }
+
+  const seen = new Set<string>();
+  for (const g of guardians) {
+    const key = g.toString();
+    if (key === ZERO_ADDRESS) {
+      throw new GuardianRotationError(
+        GuardianRotationErrorCode.ZeroGuardian,
+        "Guardian set must not contain the zero address",
+        correlationId
+      );
+    }
+    if (seen.has(key)) {
+      throw new GuardianRotationError(
+        GuardianRotationErrorCode.DuplicateGuardian,
+        `Duplicate guardian address: ${key}`,
+        correlationId
+      );
+    }
+    seen.add(key);
+  }
+
+  // Canonical ordering: ascending lexicographic by canonical address string.
+  return [...guardians].sort((a, b) =>
+    a.toString() < b.toString() ? -1 : a.toString() > b.toString() ? 1 : 0
+  );
+}
 
 /** Optional filter parameters for recovery queries. */
 export interface RecoveryQueryFilters {
@@ -201,6 +327,47 @@ export class MuxRecoveryClient {
       xdr.ScVal.scvVec(
         guardians.map((g) => nativeToScVal(g.toString(), { type: "address" }))
       ),
+    ]);
+    await this.submit(tx, sourceKeypair);
+  }
+
+  /**
+   * Rotate the guardian set. Only the current owner may call this.
+   *
+   * Enforces the rotation invariants (threshold, membership, ordering, no
+   * duplicates) via {@link validateGuardianSet} before submitting, and passes
+   * a caller-supplied `rotationId` for on-chain idempotency / replay
+   * protection. Replaying the same `rotationId` with the same set is a no-op
+   * on-chain; replaying it with a different set fails with
+   * {@link GuardianRotationErrorCode.RotationIdConflict}.
+   *
+   * @param sourceKeypair Owner keypair authorizing the rotation.
+   * @param owner Current owner address (must match on-chain owner).
+   * @param guardians Proposed guardian set (validated + canonicalized).
+   * @param rotationId Idempotency key for this rotation.
+   * @param correlationId Optional correlation id for logs/traces.
+   */
+  async rotateGuardians(
+    sourceKeypair: Keypair,
+    owner: Address,
+    guardians: Address[],
+    rotationId: string,
+    correlationId?: string
+  ): Promise<void> {
+    if (!rotationId) {
+      throw new GuardianRotationError(
+        GuardianRotationErrorCode.RotationIdConflict,
+        "rotationId is required for idempotent guardian rotation",
+        correlationId
+      );
+    }
+    const canonical = validateGuardianSet(guardians, correlationId);
+    const tx = await this.buildTx(sourceKeypair, "rotate_guardians", [
+      nativeToScVal(owner.toString(), { type: "address" }),
+      xdr.ScVal.scvVec(
+        canonical.map((g) => nativeToScVal(g.toString(), { type: "address" }))
+      ),
+      nativeToScVal(rotationId, { type: "string" }),
     ]);
     await this.submit(tx, sourceKeypair);
   }
@@ -249,168 +416,29 @@ export class MuxRecoveryClient {
   }
 
   /**
-   * Return the linked registry contract address, or null if not set.
+   * Return the linked registry contract address, or null if
+   * no registry has been linked yet.
    */
-  async getRegistryId(sourceKeypair: Keypair): Promise<Address | null> {
-    const tx = await this.buildTx(sourceKeypair, "registry_id", []);
-    const result = await this.simulate<string | null>(tx);
-    if (result === null || result === undefined) return null;
-    return new Address(result);
-  }
-
-  // ── Read operations with filtering query params ──────────────────────────────
-
-  /**
-   * Return the current owner address.
-   * Supports optional filters to narrow results.
-   */
-  async owner(
-    sourceKeypair: Keypair,
-    filters?: RecoveryQueryFilters
-  ): Promise<Address> {
-    const tx = await this.buildTx(sourceKeypair, "owner", []);
-    const result = await this.simulate<Address>(tx);
-    return this.applyOwnerFilters(result, filters);
-  }
-
-  /**
-   * Return the registered guardian set.
-   * Supports optional filter to find a specific guardian.
-   */
-  async guardians(
-    sourceKeypair: Keypair,
-    filters?: RecoveryQueryFilters
-  ): Promise<Address[]> {
-    const tx = await this.buildTx(sourceKeypair, "guardians", []);
-    const result = await this.simulate<Address[]>(tx);
-    return this.applyGuardianFilters(result, filters);
-  }
-
-  /**
-   * Return the current recovery status.
-   * Supports filtering by expected status.
-   */
-  async recoveryStatus(
-    sourceKeypair: Keypair,
-    filters?: RecoveryQueryFilters
-  ): Promise<RecoveryStatus> {
-    const tx = await this.buildTx(sourceKeypair, "recovery_status", []);
-    const result = await this.simulate<string>(tx);
-    const status = this.mapRecoveryStatus(result);
-    if (filters?.status && status !== filters.status) {
-      throw new Error(
-        `Recovery status filter mismatch: expected ${filters.status}, got ${status}`
-      );
+  async getRegistry(): Promise<Address | null> {
+    const result = await this.server.simulateTransaction(
+      await this.buildTx(
+        // read-only simulation uses a throwaway source; caller supplies none
+        Keypair.random(),
+        "get_registry",
+        []
+      )
+    );
+    if (SorobanRpc.Api.isSimulationError(result)) {
+      throw new Error(`get_registry simulation failed: ${result.error}`);
     }
-    return status;
+    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
+      .result?.retval;
+    if (!retval) return null;
+    const native = scValToNative(retval);
+    return native ? new Address(native) : null;
   }
 
-  /**
-   * Return the full recovery request struct, or null if no active request exists.
-   * Mirrors the on-chain `recovery_request()` entrypoint.
-   */
-  async recoveryRequest(
-    sourceKeypair: Keypair
-  ): Promise<RecoveryRequest | null> {
-    const tx = await this.buildTx(sourceKeypair, "recovery_request", []);
-    const result = await this.simulate<string | null>(tx);
-    if (result === null || result === undefined) return null;
-    // The simulate returns an xdr.ScVal; parse it into RecoveryRequest
-    const parsed = scValToNative(result as any) as RecoveryRequest;
-    return parsed;
-  }
-
-  /**
-   * Convenience method: returns true only if the recovery status matches
-   * the given filter value (or any if filter is omitted).
-   */
-  async isRecoveryStatus(
-    sourceKeypair: Keypair,
-    status: RecoveryStatus
-  ): Promise<boolean> {
-    try {
-      const current = await this.recoveryStatus(sourceKeypair, {
-        status,
-      });
-      return current === status;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Query recovery with generalized filtering. Returns the current
-   * recovery state if it matches all provided filters.
-   */
-  async queryRecovery(
-    sourceKeypair: Keypair,
-    filters?: RecoveryQueryFilters
-  ): Promise<{
-    status: RecoveryStatus;
-    newOwner: Address | null;
-    initiatedAt: number | null;
-    executableAt: number | null;
-    expiresAt: number | null;
-  } | null> {
-    const status = await this.recoveryStatus(sourceKeypair);
-
-    if (status === RecoveryStatus.None) {
-      return filters?.status !== undefined && filters.status !== RecoveryStatus.None
-        ? null
-        : { status, newOwner: null, initiatedAt: null, executableAt: null, expiresAt: null };
-    }
-
-    // Fetch full state via simulate
-    const tx = await this.buildTx(sourceKeypair, "recovery_status", []);
-    const result = await this.simulate<string>(tx);
-    const mapped = this.mapRecoveryStatus(result);
-
-    return {
-      status: mapped,
-      newOwner: null, // full RecoveryRequest requires contract extension
-      initiatedAt: null,
-      executableAt: null,
-      expiresAt: null,
-    };
-  }
-
-  // ── Private helpers ──────────────────────────────────────────────────────────
-
-  private mapRecoveryStatus(val: string): RecoveryStatus {
-    switch (val) {
-      case "None":
-      case "Pending":
-      case "Executed":
-      case "Cancelled":
-        return val as RecoveryStatus;
-      default:
-        throw new Error(`Unknown recovery status: ${val}`);
-    }
-  }
-
-  private applyOwnerFilters(
-    owner: Address,
-    filters?: RecoveryQueryFilters
-  ): Address {
-    if (filters?.guardian) {
-      // owner and guardian are distinct concepts; no filtering needed
-    }
-    return owner;
-  }
-
-  private applyGuardianFilters(
-    guardians: Address[],
-    filters?: RecoveryQueryFilters
-  ): Address[] {
-    if (!filters) return guardians;
-    let filtered = guardians;
-    if (filters.guardian) {
-      filtered = filtered.filter(
-        (g) => g.toString() === filters.guardian!.toString()
-      );
-    }
-    return filtered;
-  }
+  // ── Internals ───────────────────────────────────────────────────────────────
 
   private async buildTx(
     sourceKeypair: Keypair,
@@ -427,34 +455,9 @@ export class MuxRecoveryClient {
       .build();
   }
 
-  private async simulate<T>(tx: Transaction): Promise<T> {
-    const result = await this.server.simulateTransaction(tx);
-    if (SorobanRpc.Api.isSimulationError(result)) {
-      throw new Error(`Simulation failed: ${result.error}`);
-    }
-    const returnVal = (
-      result as SorobanRpc.Api.SimulateTransactionSuccessResponse
-    ).result?.retval;
-    if (!returnVal) throw new Error("No return value");
-    return scValToNative(returnVal) as T;
-  }
-
-  private async submit(tx: Transaction, signer: Keypair): Promise<void> {
-    const simResult = await this.server.simulateTransaction(tx);
-    if (SorobanRpc.Api.isSimulationError(simResult)) {
-      throw new Error(`Simulation failed: ${simResult.error}`);
-    }
-    const preparedTx = SorobanRpc.assembleTransaction(
-      tx,
-      simResult as SorobanRpc.Api.SimulateTransactionSuccessResponse
-    ).build();
-    preparedTx.sign(signer);
-    const sendResult = await this.server.sendTransaction(preparedTx);
-    if (sendResult.status === "ERROR") {
-      throw new Error(
-        `Transaction failed: ${JSON.stringify(sendResult.errorResult)}`
-      );
-    }
-    await pollTransaction(this.server, sendResult.hash);
+  private async submit(tx: Transaction, sourceKeypair: Keypair): Promise<void> {
+    tx.sign(sourceKeypair);
+    const sent = await this.server.sendTransaction(tx);
+    await pollTransaction(this.server, sent.hash);
   }
 }

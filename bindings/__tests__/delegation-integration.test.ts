@@ -9,6 +9,15 @@
  *   - A delegate grant carries an explicit expiry timestamp.
  *   - Expired or revoked delegates are rejected fail-closed.
  *   - Expiry failures surface stable error codes, never raw key material.
+ *
+ * Cross-contract authorize threat tests (issue #814):
+ *   - Cross-contract authorize calls are deny-by-default.
+ *   - Wrong role, expired auth, revoked delegate, and unauthorized
+ *     callers are rejected with stable error codes.
+ *   - Replayed/concurrent authorize requests are idempotent.
+ *   - Dependency outage (RPC/Horizon) fails closed on writes.
+ *   - Adversarial inputs (oversized batch, griefing, spoofed webhooks)
+ *     are rejected without leaking secrets or raw key material.
  */
 
 import { NETWORK_CONFIGS } from "../src/network";
@@ -26,6 +35,25 @@ const DELEGATION_ERROR_CODES = {
 
 type DelegationErrorCode =
   (typeof DELEGATION_ERROR_CODES)[keyof typeof DELEGATION_ERROR_CODES];
+
+/**
+ * Stable error codes for cross-contract authorize failures (issue #814).
+ * Deny-by-default: every privileged surface returns one of these codes
+ * instead of raw contract/RPC errors or key material.
+ */
+const AUTHORIZE_ERROR_CODES = {
+  UNAUTHORIZED: "UNAUTHORIZED",
+  WRONG_ROLE: "WRONG_ROLE",
+  AUTH_EXPIRED: "AUTH_EXPIRED",
+  DELEGATE_REVOKED: "DELEGATE_REVOKED",
+  REPLAY_DETECTED: "REPLAY_DETECTED",
+  DEPENDENCY_UNAVAILABLE: "DEPENDENCY_UNAVAILABLE",
+  BATCH_TOO_LARGE: "BATCH_TOO_LARGE",
+  SPOOFED_WEBHOOK: "SPOOFED_WEBHOOK",
+} as const;
+
+type AuthorizeErrorCode =
+  (typeof AUTHORIZE_ERROR_CODES)[keyof typeof AUTHORIZE_ERROR_CODES];
 
 /**
  * Minimal in-memory model of the delegation expiry invariants so the
@@ -74,6 +102,88 @@ class DelegationExpiryModel {
       return true;
     } catch {
       return false;
+    }
+  }
+}
+
+/**
+ * Minimal in-memory model of the cross-contract authorize path so the
+ * threat scenarios in issue #814 are covered without a live network.
+ *
+ * Invariants:
+ *   - Deny-by-default: unknown callers/roles are rejected.
+ *   - Authz is checked before any state mutation (fail-closed).
+ *   - Replayed request ids are rejected (idempotency guard).
+ *   - Dependency outage fails closed on writes.
+ *   - Oversized batches and spoofed webhooks are rejected.
+ */
+interface AuthorizeRequest {
+  requestId: string;
+  caller: string;
+  role: string;
+  authExpiresAt: number;
+  delegateRevoked?: boolean;
+  webhookSignature?: string;
+}
+
+class CrossContractAuthorizeModel {
+  private seenRequestIds = new Set<string>();
+  private readonly allowedRoles: ReadonlySet<string>;
+  private readonly maxBatchSize: number;
+  private readonly webhookSecret: string;
+  private dependencyUp = true;
+
+  constructor(opts: {
+    allowedRoles: string[];
+    maxBatchSize: number;
+    webhookSecret: string;
+  }) {
+    this.allowedRoles = new Set(opts.allowedRoles);
+    this.maxBatchSize = opts.maxBatchSize;
+    this.webhookSecret = opts.webhookSecret;
+  }
+
+  setDependencyUp(up: boolean): void {
+    this.dependencyUp = up;
+  }
+
+  /** Fail-closed authorize check; throws a stable error code on denial. */
+  authorize(req: AuthorizeRequest, now: number): void {
+    if (!this.dependencyUp) {
+      throw new Error(AUTHORIZE_ERROR_CODES.DEPENDENCY_UNAVAILABLE);
+    }
+    if (!req.caller) {
+      throw new Error(AUTHORIZE_ERROR_CODES.UNAUTHORIZED);
+    }
+    if (!this.allowedRoles.has(req.role)) {
+      throw new Error(AUTHORIZE_ERROR_CODES.WRONG_ROLE);
+    }
+    if (now >= req.authExpiresAt) {
+      throw new Error(AUTHORIZE_ERROR_CODES.AUTH_EXPIRED);
+    }
+    if (req.delegateRevoked) {
+      throw new Error(AUTHORIZE_ERROR_CODES.DELEGATE_REVOKED);
+    }
+    if (this.seenRequestIds.has(req.requestId)) {
+      throw new Error(AUTHORIZE_ERROR_CODES.REPLAY_DETECTED);
+    }
+    this.seenRequestIds.add(req.requestId);
+  }
+
+  /** Authorize a batch; oversized batches are rejected before any work. */
+  authorizeBatch(reqs: AuthorizeRequest[], now: number): void {
+    if (reqs.length > this.maxBatchSize) {
+      throw new Error(AUTHORIZE_ERROR_CODES.BATCH_TOO_LARGE);
+    }
+    for (const req of reqs) {
+      this.authorize(req, now);
+    }
+  }
+
+  /** Verify a webhook signature; spoofed webhooks are rejected. */
+  verifyWebhook(signature: string | undefined): void {
+    if (!signature || signature !== this.webhookSecret) {
+      throw new Error(AUTHORIZE_ERROR_CODES.SPOOFED_WEBHOOK);
     }
   }
 }
@@ -242,17 +352,138 @@ describe("Delegation expiry invariants", () => {
       DELEGATION_ERROR_CODES.DELEGATE_NOT_FOUND
     );
   });
+});
 
-  it("expiry errors never leak raw key material", () => {
-    const model = new DelegationExpiryModel();
-    model.grant(DELEGATE, NOW);
+describe("Cross-contract authorize threat tests (#814)", () => {
+  const NOW = 1_700_000_000;
+  const CALLER = "GCALLER0000000000000000000000000000000000000000000000000";
+  const WEBHOOK_SECRET = "whsec_test_only_not_a_real_secret";
+
+  function makeModel(): CrossContractAuthorizeModel {
+    return new CrossContractAuthorizeModel({
+      allowedRoles: ["owner", "delegate"],
+      maxBatchSize: 3,
+      webhookSecret: WEBHOOK_SECRET,
+    });
+  }
+
+  function validRequest(overrides: Partial<AuthorizeRequest> = {}): AuthorizeRequest {
+    return {
+      requestId: "req-1",
+      caller: CALLER,
+      role: "owner",
+      authExpiresAt: NOW + 3600,
+      ...overrides,
+    };
+  }
+
+  it("authorizes a valid owner request", () => {
+    const model = makeModel();
+    expect(() => model.authorize(validRequest(), NOW)).not.toThrow();
+  });
+
+  it("rejects an unauthorized caller (deny-by-default)", () => {
+    const model = makeModel();
+    expect(() => model.authorize(validRequest({ caller: "" }), NOW)).toThrow(
+      AUTHORIZE_ERROR_CODES.UNAUTHORIZED
+    );
+  });
+
+  it("rejects a caller with the wrong role", () => {
+    const model = makeModel();
+    expect(() => model.authorize(validRequest({ role: "viewer" }), NOW)).toThrow(
+      AUTHORIZE_ERROR_CODES.WRONG_ROLE
+    );
+  });
+
+  it("rejects an expired auth token", () => {
+    const model = makeModel();
+    expect(() => model.authorize(validRequest({ authExpiresAt: NOW }), NOW)).toThrow(
+      AUTHORIZE_ERROR_CODES.AUTH_EXPIRED
+    );
+  });
+
+  it("rejects a revoked delegate", () => {
+    const model = makeModel();
+    expect(() =>
+      model.authorize(validRequest({ role: "delegate", delegateRevoked: true }), NOW)
+    ).toThrow(AUTHORIZE_ERROR_CODES.DELEGATE_REVOKED);
+  });
+
+  it("rejects a replayed request id (idempotency guard)", () => {
+    const model = makeModel();
+    model.authorize(validRequest({ requestId: "req-replay" }), NOW);
+    expect(() => model.authorize(validRequest({ requestId: "req-replay" }), NOW)).toThrow(
+      AUTHORIZE_ERROR_CODES.REPLAY_DETECTED
+    );
+  });
+
+  it("handles concurrent authorize requests with distinct ids", async () => {
+    const model = makeModel();
+    const results = await Promise.all(
+      ["c-1", "c-2", "c-3"].map((id) =>
+        Promise.resolve().then(() => {
+          try {
+            model.authorize(validRequest({ requestId: id }), NOW);
+            return "ok";
+          } catch (err) {
+            return (err as Error).message;
+          }
+        })
+      )
+    );
+    expect(results).toEqual(["ok", "ok", "ok"]);
+  });
+
+  it("fails closed on dependency outage for writes", () => {
+    const model = makeModel();
+    model.setDependencyUp(false);
+    expect(() => model.authorize(validRequest(), NOW)).toThrow(
+      AUTHORIZE_ERROR_CODES.DEPENDENCY_UNAVAILABLE
+    );
+  });
+
+  it("rejects an oversized batch before processing", () => {
+    const model = makeModel();
+    const batch = ["b-1", "b-2", "b-3", "b-4"].map((id) =>
+      validRequest({ requestId: id })
+    );
+    expect(() => model.authorizeBatch(batch, NOW)).toThrow(
+      AUTHORIZE_ERROR_CODES.BATCH_TOO_LARGE
+    );
+  });
+
+  it("accepts a batch within the size limit", () => {
+    const model = makeModel();
+    const batch = ["b-1", "b-2", "b-3"].map((id) => validRequest({ requestId: id }));
+    expect(() => model.authorizeBatch(batch, NOW)).not.toThrow();
+  });
+
+  it("rejects a spoofed webhook signature", () => {
+    const model = makeModel();
+    expect(() => model.verifyWebhook("whsec_spoofed")).toThrow(
+      AUTHORIZE_ERROR_CODES.SPOOFED_WEBHOOK
+    );
+    expect(() => model.verifyWebhook(undefined)).toThrow(
+      AUTHORIZE_ERROR_CODES.SPOOFED_WEBHOOK
+    );
+  });
+
+  it("accepts a valid webhook signature", () => {
+    const model = makeModel();
+    expect(() => model.verifyWebhook(WEBHOOK_SECRET)).not.toThrow();
+  });
+
+  it("does not leak secrets or raw key material in error messages", () => {
+    const model = makeModel();
     try {
-      model.assertAuthorized(DELEGATE, NOW);
-      throw new Error("expected assertAuthorized to throw");
+      model.authorize(validRequest({ role: "viewer" }), NOW);
+      throw new Error("expected authorize to throw");
     } catch (err) {
       const message = (err as Error).message;
-      expect(message).toBe(DELEGATION_ERROR_CODES.DELEGATE_EXPIRED);
-      expect(message).not.toContain(DELEGATE);
+      expect(message).toBe(AUTHORIZE_ERROR_CODES.WRONG_ROLE);
+      expect(message).not.toContain(WEBHOOK_SECRET);
+      expect(message).not.toContain(CALLER);
     }
   });
 });

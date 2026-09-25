@@ -34,7 +34,16 @@ On Soroban, every contract pays **rent** for the ledger entries it occupies.  Al
 
 Caps are enforced on **new insertions only**; updates to existing entries are always allowed.
 
-String size limits are enforced on metadata fields to prevent storage bloat through large strings.
+### Metadata size limits (`mux-account-factory`)
+
+String size limits are enforced on metadata fields to prevent storage bloat through oversized strings (issue #842):
+
+| Field | Max Length | Error on overflow | HTTP code |
+|---|---|---|---|
+| `version` | `MAX_VERSION_LENGTH = 32` bytes | `MetadataTooLarge` (code 5) | 400 |
+| `description` | `MAX_DESCRIPTION_LENGTH = 256` bytes | `MetadataTooLarge` (code 5) | 400 |
+| `author` | `MAX_AUTHOR_LENGTH = 64` bytes | `MetadataTooLarge` (code 5) | 400 |
+
 
 ### Vec-backed storage notes
 

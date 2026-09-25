@@ -1,54 +1,65 @@
-# Contributing to Mux Contracts
+# Contributing to mux-contracts
 
-Thank you for your interest in contributing to Mux! This guide explains how to submit changes, what we expect, and how we work together.
+Thanks for contributing to Mux Protocol's Soroban contracts. This guide covers the
+basics; for deeper protocol context see the canonical docs linked below.
 
-## Code of Conduct
+## Canonical documentation
 
-Be respectful and constructive. We're committed to providing a welcoming and inclusive environment.
+- [`README.md`](./README.md) — repo overview, build/test instructions, and layout.
+- [`SECURITY.md`](./SECURITY.md) — vulnerability disclosure and security policy.
+- [`CONTRACT_IDS.md`](./CONTRACT_IDS.md) — deployed contract IDs per network.
+- [`Somzilla.md`](./Somzilla.md) — status/audit notes for the Somzilla review.
+  This file is a status document only; where it disagrees with `README.md`,
+  `SECURITY.md`, or `CONTRACT_IDS.md`, those canonical docs win.
 
-## Getting Started
+## Getting started
 
-1. **Fork the repository** — Click the "Fork" button on GitHub
-2. **Clone your fork** — `git clone https://github.com/your-username/mux-contracts.git`
-3. **Create a branch** — `git checkout -b feature/your-feature-name`
-4. **Make your changes** — See guidelines below
-5. **Test** — Run `cargo test --workspace --all-features`
-6. **Commit** — Follow commit message conventions
-7. **Push** — `git push origin feature/your-feature-name`
-8. **Open a Pull Request** — Describe your changes clearly
+1. Fork and clone the repository.
+2. Install the Rust toolchain and `soroban-cli` per `README.md`.
+3. Build and run the test suite as described in `README.md`.
 
-## Commit Message Convention
+## CI: wasm size budget and artifacts
 
-Use descriptive commit messages following this format:
+The CI workflow (`.github/workflows/ci.yml`) enforces a **wasm size budget** on
+every compiled contract. The build fails closed if any `*.wasm` exceeds the
+configured limit, so oversized contracts cannot land unnoticed.
 
-```
-<type>(<scope>): <short description> (#<issue>)
+- The budget is defined by the `WASM_SIZE_BUDGET_BYTES` environment variable in
+the workflow (default `65536` bytes / 64 KiB per contract).
+- To adjust the budget, change that value in `.github/workflows/ci.yml` and
+explain the rationale in your PR description.
+- Built wasm artifacts are uploaded from each CI run as the `wasm-artifacts`
+artifact, so contributors and reviewers can download and inspect them directly
+from the workflow run page.
 
-<optional body explaining the change in detail>
-```
+If a contract legitimately needs more space, raise the budget in the same PR
+that grows the contract and note the reason; do not bypass the check.
 
-**Type** — Choose one:
-- `feat:` — New feature or functionality
-- `fix:` — Bug fix
-- `docs:` — Documentation changes
-- `test:` — Test additions or modifications
-- `refactor:` — Code refactoring without feature changes
-- `perf:` — Performance improvements
-- `chore:` — Build, dependency, or tooling changes
+## Pull requests
 
-**Scope** — One of:
-- `contracts:` — Contract code changes
-- `tests:` — Test-specific changes
-- `docs:` — Documentation files
-- `scripts:` — Build or utility scripts
-- `bindings:` — TypeScript bindings
+- Keep changes scoped to a single issue; avoid unrelated refactors.
+- Include tests for new behavior and authz/idempotency negatives where relevant.
+- Update docs (`README.md`, `SECURITY.md`, `CONTRACT_IDS.md`, `Somzilla.md`)
+  when behavior or status changes so they stay consistent.
+- Do not commit secrets, keys, JWTs, or webhook secrets.
 
-**Examples:**
-```
-feat(contracts): add session key validation for account abstraction (#26)
-fix(tests): handle ledger timestamp overflow in session key tests (#26)
-docs(docs): add account abstraction design guide (#27)
-```
+## Reporting security issues
+
+pace, raise the budget in the same PR
+that grows the contract and note the reason; do not bypass the check.
+
+## Pull requests
+
+- Keep changes scoped to a single issue; avoid unrelated refactors.
+- Include tests for new behavior and authz/idempotency negatives where relevant.
+- Update docs (`README.md`, `SECURITY.md`, `CONTRACT_IDS.md`, `Somzilla.md`)
+  when behavior or status changes so they stay consistent.
+- Do not commit secrets, keys, JWTs, or webhook secrets.
+
+## Reporting security issues
+
+Do not open public issues for vulnerabilities. Follow the process in
+[`SECURITY.md`](./SECURITY.md).
 
 ## Pull Request Process
 
@@ -172,24 +183,25 @@ pushing. The CI also runs `cargo test --workspace --all-features`.
 Before requesting review on a contract PR:
 
 - [ ] `#![no_std]` — no `std` imports
-- [ ] `cargo build --target wasm32-unknown-unknown --release -p <crate>` succeeds
+- [ ] `cargo build --target wasm32-unknown-unknown --release -p <crate>` succeeds (or `make wasm` for all contracts)
 - [ ] Error enum follows the convention (single `#[contracterror]`, `#[repr(u32)]`, codes start at 1)
 - [ ] `docs/error_codes.md` updated for new or changed error variants
-- [ ] TypeScript bindings regenerated (`bash scripts/generate-bindings.sh`)
+- [ ] TypeScript bindings regenerated (`make bindings` or `bash scripts/generate-bindings.sh`)
 - [ ] `bindings/src/types.ts` union type and error-message map updated
 - [ ] `bindings/src/errors.ts` HTTP map updated for new variants
 - [ ] All collection storage has a cap (`MAX_*` constant + `TooMany*` error)
 - [ ] Persistent storage entries call `extend_ttl` on write
 - [ ] Unit tests cover happy path, each error variant, and edge cases
-- [ ] `cargo clippy --workspace --all-features` is clean
-- [ ] `cargo fmt --check` passes
+- [ ] `cargo clippy --workspace --all-features` is clean (or `make lint`)
+- [ ] `cargo fmt --check` passes (or `make fmt`, format via `make fmt-fix`)
+- [ ] Workspace test suite passes: `cargo test --workspace --all-features` (or `make test`)
 
 ## Code Style
 
 ### Rust
 
-- **Format** — Run `cargo fmt` before committing
-- **Lint** — Run `cargo clippy` and fix warnings
+- **Format** — Run `cargo fmt` before committing (or `make fmt-fix`)
+- **Lint** — Run `cargo clippy` and fix warnings (or `make lint`)
 - **Comments** — Add doc comments (`///`) to public functions and types
 - **Tests** — All new public functionality must have unit tests
 - **Error Handling** — Use Result types; avoid unwrap() in library code
@@ -201,15 +213,33 @@ Before requesting review on a contract PR:
 - **Public APIs** — Document with examples in doc comments
 - **Architecture** — Document design decisions in `docs/` directory
 
-## Testing
+## Testing & Makefile Reference
 
-- **Unit Tests** — Run `cargo test --lib`
-- **All Tests** — Run `cargo test --workspace --all-features`
+The root `Makefile` provides standardized targets mirroring the CI checks:
+
+| Target | Command | Description |
+|---|---|---|
+| `make all` | `fmt`, `lint`, `build`, `test` | Run all standard pre-push checks |
+| `make build` | `cargo build --workspace --all-targets` | Compile all workspace targets |
+| `make test` | `cargo test --workspace --all-features` | Run complete test suite with all features enabled |
+| `make test-unit` | `cargo test --lib` | Run unit tests across workspace libraries |
+| `make fmt` | `cargo fmt --all -- --check` | Verify code formatting |
+| `make fmt-fix` | `cargo fmt --all` | Automatically format code |
+| `make lint` / `make clippy` | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | Run Clippy linter with strict warning denial |
+| `make wasm` | `bash scripts/build-wasm.sh --release` | Build release WASM artifacts |
+| `make check-sizes` | `bash scripts/check-contract-sizes.sh` | Verify contract sizes against budget |
+| `make bindings` | `bash scripts/generate-bindings.sh` | Generate TypeScript contract bindings |
+| `make deny` | `cargo deny check` | Supply-chain advisory and license check |
+| `make coverage` | `bash scripts/coverage.sh` | Measure LLVM source coverage |
+| `make test-coverage` | `bash scripts/test-coverage.sh` | Validate coverage script stub behavior |
+
+- **Unit Tests** — Run `make test-unit` or `cargo test --lib`
+- **All Tests** — Run `make test` or `cargo test --workspace --all-features`
 - **Integration Tests** — Require localnet setup (see README.md)
 - **Coverage** — Aim for >90% coverage on new code. Generate a report with
   `make coverage` or `bash scripts/coverage.sh` (add `--html` / `--lcov` as needed).
   If `llvm-tools-preview` is not installed, the script prints a **coverage report stub**
-  listing workspace crates; validate the stub with `bash scripts/test-coverage.sh`.
+  listing workspace crates; validate the stub with `make test-coverage` or `bash scripts/test-coverage.sh`.
 
 ## Cargo.lock Policy
 
@@ -368,3 +398,4 @@ By contributing, you agree that your contributions will be licensed under the MI
 ---
 
 Thank you for contributing to Mux! 🚀
+

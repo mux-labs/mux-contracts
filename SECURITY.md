@@ -17,6 +17,17 @@ Instead, report vulnerabilities through one of these channels:
 1. **GitHub Security Advisory** (preferred): Go to the [Security tab](https://github.com/mux-labs/mux-contracts/security/advisories/new) and click "Report a vulnerability".
 2. **Email**: Send a description to **security@mux-protocol.xyz**
 
+### Verified Security Contacts
+
+The following private contacts are the canonical, verified reporting channels
+for this repository:
+
+- **Email:** [security@mux-protocol.xyz](mailto:security@mux-protocol.xyz)
+- **GitHub Security Advisory:** [Report a private vulnerability](https://github.com/mux-labs/mux-contracts/security/advisories/new)
+
+Do not send secrets, private keys, or exploit material through public issues,
+pull requests, or chat channels.
+
 ### What to Include
 
 - Description of the vulnerability and its impact
@@ -24,16 +35,26 @@ Instead, report vulnerabilities through one of these channels:
 - Suggested fix (if any)
 - Your contact information for follow-up
 
-### Response Timeline
+### Response Timeline & Service Level Agreement (SLA)
 
-| Stage | Target |
-|-------|--------|
-| Acknowledgment | 48 hours |
-| Triage & severity assessment | 5 business days |
-| Fix for critical/high severity | 14 business days |
-| Public disclosure (coordinated) | 30 business days after fix |
+We commit to the following Service Level Agreement (SLA) targets for all reports submitted via our private reporting channels:
 
-We will work with you to understand and validate the issue before any public disclosure.
+| Stage | Target SLA | Description |
+|-------|------------|-------------|
+| **Initial Acknowledgment** | **48 hours** | Initial response confirming receipt of report and assigning a triage coordinator. |
+| **Triage & Severity Assessment** | **5 business days** | Confirmation of reproducibility, impact classification, and severity assignment. |
+| **Fix for Critical / High Severity** | **14 business days** | Patch developed, tested in isolation, audited, and scheduled for deployment. |
+| **Fix for Medium / Low Severity** | **30 business days** | Remediation included in the next scheduled release cycle. |
+| **Coordinated Public Disclosure** | **30 business days after fix** | Public advisory published in collaboration with reporter after mainnet deployment. |
+
+#### Severity Classification
+- **Critical:** Direct unauthorized theft of funds, account takeover, or complete denial of service across all accounts.
+- **High:** Temporary lock of user funds, unauthorized permission escalation, or storage griefing compromising contract availability.
+- **Medium:** Partial policy bypass without direct fund loss, non-critical gas griefing, or state inconsistencies.
+- **Low:** Minor logic edge cases, client-side binding discrepancies, or documentation ambiguities affecting security assumptions.
+
+This SLA is mirrored in our RFC 9116 security declaration at [`.well-known/security.txt`](.well-known/security.txt). We work closely with researchers throughout the triage and disclosure process.
+
 
 ## Scope
 
@@ -64,6 +85,16 @@ We will not pursue legal action against researchers who follow these guidelines.
 
 See [docs/threat-model.md](docs/threat-model.md) for the current threat model, trust boundaries, and known mitigations.
 
+## Architecture Overview
+
+The current crate set, inter-crate relationships, and the invariants that all
+crates must uphold (contract as source of truth for spends/recovery/admin,
+deny-by-default for privileged surfaces, fail-closed on RPC/DB/Horizon outages
+for writes) are documented in [docs/architecture-overview.md](docs/architecture-overview.md).
+That document is the authoritative reference for the crate set and the
+authorization model (owner/delegate/guardian/API-key/JWT); report issues that
+violate its invariants against it.
+
 ## Partial Crate Rollback
 
 Partial rollback is a privileged, money-path-adjacent surface. It is authorized
@@ -79,6 +110,22 @@ stable error codes, idempotency, and fail-closed requirements are defined in
 [docs/aa-milestone-roadmap.md](docs/aa-milestone-roadmap.md). That document is the
 authoritative exit-criteria reference for AA work; report AA-related issues against
 its invariants.
+
+## Somzilla Status
+
+`Somzilla.md` is a historical status document and is **not** a canonical source of
+truth. Its content has been reconciled with the current repo state and archived; it
+now points to the canonical documentation below. Do not rely on `Somzilla.md` for
+security assumptions, invariants, or exit criteria.
+
+Canonical references:
+
+- [README.md](README.md) — project overview, build/test instructions, and contributor entry points
+- [CONTRIBUTING.md](CONTRIBUTING.md) — contribution workflow and review expectations
+- [CONTRACT_IDS.md](CONTRACT_IDS.md) — deployed contract ids per network
+- [docs/threat-model.md](docs/threat-model.md) — threat model and trust boundaries
+- [docs/aa-milestone-roadmap.md](docs/aa-milestone-roadmap.md) — AA invariants and exit criteria
+- [docs/rollback-guide.md](docs/rollback-guide.md) — rollback invariants, error codes, and kill-switch strategy
 
 ## Audit History
 

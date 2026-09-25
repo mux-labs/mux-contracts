@@ -436,6 +436,16 @@ Maps symbolic names (`Symbol`) to wallet addresses. One owner is set at deploy
 time and is the only account permitted to write entries. Reads are open to any
 caller.
 
+### Name Charset Policy
+
+Wallet registry keys are Soroban `Symbol` values and must strictly conform to the following charset policy:
+
+- **Pattern**: `^[a-zA-Z0-9_]{1,32}$`
+- **Length**: 1 to 32 characters (inclusive)
+- **Allowed characters**: ASCII alphanumeric (`a-z`, `A-Z`, `0-9`) and underscores (`_`)
+- **Prohibited characters**: Spaces, dashes/hyphens (`-`), punctuation, slashes, unicode/emojis, and control characters
+- **Validation**: Enforced fail-closed on both client SDK (`validateWalletName`) and contract invocation.
+
 ### Types
 
 ```rust

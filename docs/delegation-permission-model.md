@@ -177,12 +177,46 @@ alert on spikes in `DelegationExpired` / `DelegationRevoked`.
   network's ledger time; a delegation created for one network is not valid on
   another because owner/delegate addresses and nonces are network-scoped.
 
-## Kill switch
+## Permissions → Delegation → Spend Integration Path (Issue #849)
 
-Any change to expiry semantics on a money path ships behind a feature flag.
-When the flag is off, the previous (stricter) behavior applies. Rollback is
-flipping the flag; no migration is required because expired delegations are
-already inert.
+The permission-delegation-spend path provides secure, scoped account abstraction on Stellar/Soroban:
+
+```
+[Owner] ──(1. Grant Permissions)──> [mux-permissions / mux-delegation]
+                                             │
+                                     (2. Grant Delegation)
+                                             │
+                                             ▼
+[Delegate] ──(3. Execute Spend)──> [Delegation Gate] ──(Within Limit & Scope)──> [Account Spend]
+                                             │
+                                   (Fail-Closed Rejections)
+                                             ▼
+                          [Unauthorized | ScopeViolation |
+                           DelegationExpired | DelegationRevoked |
+                           SpendLimitExceeded | ReplayDetected]
+```
+
+### Invariants & Validation Order
+
+Every spend invocation executed via delegation follows a strict fail-closed pipeline:
+
+1. **Authentication Gate**: Caller must match the registered `delegate` address. Unauthenticated callers are rejected immediately with `Unauthorized` (code 1).
+2. **Revocation Gate**: If `revoked == true`, spend is rejected immediately with `DelegationRevoked` (code 4).
+3. **Expiry Gate**: Evaluated against the execution ledger timestamp `now`. If `now >= expires_at`, spend is rejected with `DelegationExpired` (code 3).
+4. **Replay / Nonce Gate**: Request `nonce` must match the stored monotonic nonce. Replayed requests are rejected with `ReplayDetected` (code 7). Nonce advances monotonically on successful spend.
+5. **Scope Authorization**: The requested action (e.g. `"transfer"`, `"spend"`) must belong to the delegate's active permissions set. Unauthorized actions are rejected with `ScopeViolation` (code 5).
+6. **Spend Limit Enforcement**: The spend amount must satisfy `spent + amount <= limit`. Amounts exceeding the limit are rejected with `SpendLimitExceeded` (code 5).
+7. **Boundary Precision**: Exact limit spends (`spent + amount == limit`) succeed; spends one unit above (`spent + amount == limit + 1`) fail.
+
+### Observability & Security
+
+- State changes emit `delegation_spend_executed` with public identifiers: `{ owner, delegate, amount, remaining_limit, nonce, correlation_id }`.
+- **Zero Secret Leakage**: No private keys, seed phrases, signatures, or raw authorization tokens are ever logged, emitted in events, or surfaced in error messages.
+- Correlation IDs (`correlation_id`) are propagated across log records to enable end-to-end tracing without disclosing sensitive parameters.
+
+### Kill Switch / Rollback Strategy
+
+Delegation spend enforcement is protected by the `ENABLE_DELEGATION_SPEND` feature flag. In the event of an anomaly, disabling the flag immediately halts delegate spend routing while preserving owner-direct recovery and settlement operations.
 
 ## References
 

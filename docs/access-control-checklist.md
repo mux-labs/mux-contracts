@@ -48,13 +48,13 @@ Legend:
 
 ### 1.2 `mux-batcher`
 
-- [ ] `execute_batch` — `caller.require_auth()` called before any operations are dispatched; emits `bat_start` before execution, `executed`/`bat_ok`/`bat_abort` on completion.
+- [x] `execute_batch` — `caller.require_auth()` called before any operations are dispatched; emits `bat_start` before execution, `executed`/`bat_ok`/`bat_abort` on completion.
 - [ ] `simulate_batch` — `caller.require_auth()` called (preflight is also auth-gated); emits `sim_done` on completion.
 - [ ] `submit_batch` — delegates to `execute_batch`, deriving `caller` from the invoker; same auth guarantee applies.
 - [ ] `set_registry_metadata` — `require_admin` helper called before the `MetadataAlreadySet` check (fail-closed: unauthenticated callers cannot probe metadata state); returns `NotInitialized` if `initialize` was never called.
 - [ ] Batch operations are dispatched under the **caller's** auth context, not the batcher contract's.
 - [ ] `initialize` — `admin.require_auth()` called before storage write; optional (batching works without it).
-- [ ] `upgrade` — `require_admin` helper called; `NotInitialized` (fail-closed) if `initialize` was never called; no silent skip of the auth check.
+- [x] `upgrade` — `require_admin` helper called; `NotInitialized` (fail-closed) if `initialize` was never called; no silent skip of the auth check.
 
 ### 1.3 `mux-permissions`
 
@@ -358,7 +358,7 @@ rg 'panic!|unreachable!|unimplemented!' contracts/*/src/lib.rs | grep -v '#\[cfg
 - [ ] `scripts/check-gitignore-secret-patterns.sh` passes — `.env`, `*.secret`,  
       `deployment.env`, and `deployer.json` remain git-ignored (see  
       [deployer-key-requirements.md](deployer-key-requirements.md#security-checklist)).
-- [ ] `scripts/check-deployer-key-rotation-log.sh` passes — any entry in  
+- [x] `scripts/check-deployer-key-rotation-log.sh` passes — any entry in  
       [`ops/deployer-key-rotation-log.md`](../ops/deployer-key-rotation-log.md) is  
       complete and its drain/archive confirmations are checked.
 - [ ] `scripts/check-rollback-log.sh` passes — any entry in  

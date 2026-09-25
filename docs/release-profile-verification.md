@@ -1,8 +1,8 @@
 # Release Profile Panic Abort Verification
 
 **Version:** 0.1.0  
-**Date:** 2026-07-25  
-**Status:** Verified  
+**Date:** 2026-09-25  
+**Status:** Verified (enforced in CI, #780)  
 **Related:** [Storage Griefing Notes](storage-griefing.md), [Audit Prep](audit-prep.md)
 
 ---
@@ -119,20 +119,64 @@ wasm-objdump -x target/wasm32-unknown-unknown/release/mux_account_factory.wasm |
 
 ## CI integration
 
-The CI pipeline should verify release profile settings:
+Release profile verification is enforced, fail-closed, by
+`scripts/check-release-profile.sh` (#780). It runs in:
+
+| Workflow | Step | When |
+|----------|------|------|
+| `.github/workflows/ci.yml` | `Verify release profile invariants` | Before the wasm build (also runs `scripts/test-check-release-profile.sh`) |
+| `.github/workflows/ci.yml` | `Build contracts (wasm)` with `RUSTFLAGS="-D warnings"` | Release compilation must be warning-free |
+| `.github/workflows/ci.yml` | `Verify release wasm artifacts` | After the build, before the size budget and upload |
+| `.github/workflows/deploy.yml` | Same three gates in the `build` job | Before deployable WASMs are uploaded |
+
+### What the check enforces
+
+1. **Profile invariants** — every row of the [verification checklist](#verification-checklist)
+   must be present in `[profile.release]` with exactly the listed value.
+   Missing keys, different values, keys set twice, or a second
+   `[profile.release]` table all fail.
+2. **No per-crate overrides** — `[profile.release.package.*]` and
+   `[profile.release.build-override]` tables are rejected, because they can
+   weaken the invariants for a single contract without touching the main table.
+3. **Artifact checks** (`--wasm-dir`) — every `*.wasm` in the release output
+   must carry the WASM magic header and contain no DWARF `.debug_*` sections.
+   An empty or missing artifact directory fails.
+
+### Artifact publication
+
+The `wasm-artifacts` upload in `ci.yml` runs only when every preceding gate
+succeeded (`if: success()`, `if-no-files-found: error`), so a non-conforming
+or unoptimised WASM never becomes a downloadable CI artifact. In `deploy.yml`
+the `Upload WASMs` step already runs only after the build job's gates pass,
+and the `deploy` job requires `needs.build.result == 'success'` (or an
+explicit `skip_build`).
+
+### Running locally
 
 ```bash
-# Assert panic=abort is set in workspace Cargo.toml
-grep -q 'panic = "abort"' Cargo.toml || { echo "FAIL: panic != abort"; exit 1; }
+# Profile invariants only
+bash scripts/check-release-profile.sh
 
-# Assert overflow checks are enabled
-grep -q 'overflow-checks = true' Cargo.toml || { echo "FAIL: overflow-checks disabled"; exit 1; }
+# Profile + artifact checks (after `make wasm`)
+make check-release-profile
 
-# Build and verify WASM size is under threshold (e.g., 500 KB)
-cargo build --target wasm32-unknown-unknown --release -p mux-account-factory
-SIZE=$(stat -f%z target/wasm32-unknown-unknown/release/mux_account_factory.wasm 2>/dev/null || stat -c%s target/wasm32-unknown-unknown/release/mux_account_factory.wasm)
-[ "$SIZE" -lt 512000 ] || { echo "FAIL: WASM too large ($SIZE bytes)"; exit 1; }
+# Self-tests for the checker (conforming and non-conforming fixtures)
+bash scripts/test-check-release-profile.sh
 ```
+
+### Changing the release profile
+
+Any change to `[profile.release]` must update, in the same PR:
+
+1. the [verification checklist](#verification-checklist) above,
+2. the `REQUIRED` map in `scripts/check-release-profile.sh`, and
+3. the `GOOD_PROFILE` fixture in `scripts/test-check-release-profile.sh`.
+
+### Rollback
+
+The gates only add checks; they do not change build output. If a gate
+misfires, revert the commit that introduced it (or remove the step from the
+workflow) — the `[profile.release]` table itself is unchanged by #780.
 
 ---
 

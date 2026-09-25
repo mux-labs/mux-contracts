@@ -3,6 +3,9 @@ name = "mux-registry"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+version = "0.1.0"
+edition = "2021"
+publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -15,3 +18,5 @@ soroban-sdk = { workspace = true, features = ["testutils"] }
 
 [lints]
 workspace = true
+[features]
+testutils = ["soroban-sdk/testutils"]

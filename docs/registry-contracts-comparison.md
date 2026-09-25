@@ -1,7 +1,7 @@
 # Registry Contracts: mux-registry vs mux-wallet-registry
 
 **Status:** Reference  
-**Related:** [Delegation Permission Model](delegation-permission-model.md), [Error Codes](error_codes.md), [Bindings Error Mapping](bindings-error-mapping.md)
+**Related:** [Delegation Permission Model](delegation-permission-model.md), [Error Codes](error_codes.md), [Bindings Error Mapping](bindings-error-mapping.md), [Recovery Trust Model](recovery-trust-model.md), [SECURITY](../SECURITY.md)
 
 ---
 
@@ -24,6 +24,58 @@ distinction to prevent confusion during integration, auditing, and deployment.
 | **Contract tag** | `mux_reg` | `mux_wreg` |
 | **Metadata support** | Yes: `version`, `description`, `author`, `repository` | Yes: `label`, `description` |
 | **WASM** | Compiles to `mux_registry.wasm` | Compiles to `mux_wallet_registry.wasm` |
+
+---
+
+## Registry split: responsibilities, ownership, and invariants
+
+The two registries are **independent surfaces** with no cross-contract calls.
+The split is deliberate: `mux-registry` is protocol infrastructure, while
+`mux-wallet-registry` is an application-layer lookup. Keeping them separate
+means a compromise or misconfiguration of one cannot affect the other's
+invariants.
+
+### `mux-registry` — protocol component version registry
+
+- **Responsibility:** record which version of each Mux component is deployed,
+  for tooling, indexers, and upgrade pipelines. Not part of end-user flows.
+- **Ownership:** a single stored `admin`, set once at `initialize(admin)`.
+  The admin is the sole write authority; reads are public.
+- **Invariants:**
+  - `initialize` may be called at most once (`AlreadyInitialized` otherwise).
+  - Every state-mutating entrypoint requires the stored admin's auth
+    (`Unauthorized` otherwise).
+  - The `Names` index is capped at `MAX_CONTRACTS` (128); exceeding it fails
+    with `TooManyContracts` and leaves state unchanged.
+  - `check_version` is a dry-run and never mutates state.
+
+### `mux-wallet-registry` — named wallet address lookup
+
+- **Responsibility:** resolve a human-readable label (e.g. `"treasury"`,
+  `"hot-wallet"`) to a Stellar `Address` for end-user and integrator flows.
+- **Ownership:** a single stored `owner`, set once at `initialize(owner)`.
+  The owner is the sole write authority; reads are public.
+- **Invariants:**
+  - `initialize` may be called at most once (`AlreadyInitialized` otherwise).
+  - Every state-mutating entrypoint requires the stored owner's auth
+    (`Unauthorized` otherwise).
+  - The `WalletNames` index is capped at `MAX_WALLETS` (128); exceeding it
+    fails with `TooManyWallets` and leaves state unchanged.
+  - A label resolves to exactly one `Address`; re-registering a label
+    overwrites the previous address atomically.
+
+### Authz boundaries (deny-by-default)
+
+Neither registry exposes a delegate, guardian, or API-key surface. Write
+access is limited to the single stored authority, and every privileged
+entrypoint is deny-by-default: an uninitialized contract rejects writes with
+`NotInitialized`, and a caller that is not the stored authority is rejected
+with `Unauthorized`. Clients cannot bypass policy by supplying a different
+signer — the contract compares against the stored address and calls
+`require_auth()` on it. Delegate/guardian/API-key roles belong to other
+contracts (see [Delegation Permission Model](delegation-permission-model.md)
+and [Recovery Trust Model](recovery-trust-model.md)) and must not be assumed
+here.
 
 ---
 
@@ -183,6 +235,8 @@ These contracts are independent and serve different audiences:
   namespace that needs symbolic wallet address lookup.
 
 There is no cross-contract dependency between them — neither calls the other.
+Because the split is enforced at the contract boundary, a failure or
+misconfiguration of one registry cannot alter the other's state or authz.
 
 ---
 

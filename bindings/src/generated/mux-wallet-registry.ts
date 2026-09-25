@@ -33,6 +33,38 @@ export interface WalletMetadata {
   description: string;
 }
 
+/** Allowed charset and pattern for wallet registry names: 1-32 alphanumeric or underscore characters. */
+export const WALLET_NAME_REGEX = /^[a-zA-Z0-9_]{1,32}$/;
+export const WALLET_NAME_MIN_LEN = 1;
+export const WALLET_NAME_MAX_LEN = 32;
+
+/**
+ * Checks whether a given string adheres to the wallet registry name charset policy.
+ */
+export function isValidWalletName(name: string): boolean {
+  return typeof name === "string" && WALLET_NAME_REGEX.test(name);
+}
+
+/**
+ * Validates a wallet registry name against the charset and length policy.
+ * Throws an Error with a descriptive message if the name is invalid.
+ */
+export function validateWalletName(name: string): void {
+  if (!name || typeof name !== "string") {
+    throw new Error(`Invalid wallet name: name must be a non-empty string`);
+  }
+  if (name.length < WALLET_NAME_MIN_LEN || name.length > WALLET_NAME_MAX_LEN) {
+    throw new Error(
+      `Invalid wallet name length (${name.length}): name must be between ${WALLET_NAME_MIN_LEN} and ${WALLET_NAME_MAX_LEN} characters`
+    );
+  }
+  if (!WALLET_NAME_REGEX.test(name)) {
+    throw new Error(
+      `Invalid wallet name "${name}": must contain only alphanumeric characters and underscores ([a-zA-Z0-9_])`
+    );
+  }
+}
+
 export type MuxWalletRegistryError =
   | "NotInitialized"
   | "AlreadyInitialized"
@@ -73,15 +105,16 @@ export class MuxWalletRegistryClient {
    * initialisation. Calling this with an existing `name` silently replaces
    * the previous entry.
    *
-   * @param name   Symbolic key (max 10 UTF-8 bytes — Soroban `Symbol` limit).
+   * @param name   Symbolic key (1-32 characters, [a-zA-Z0-9_]).
    * @param wallet Wallet address to associate with `name`.
-   * @throws if the contract is not initialised or the source is not the owner.
+   * @throws if the contract is not initialised, the source is not the owner, or the name violates charset policy.
    */
   async registerWallet(
     sourceKeypair: Keypair,
     name: string,
     wallet: Address
   ): Promise<void> {
+    validateWalletName(name);
     const tx = await this.buildTx(sourceKeypair, "register_wallet", [
       xdr.ScVal.scvSymbol(name),
       nativeToScVal(wallet.toString(), { type: "address" }),
@@ -95,11 +128,12 @@ export class MuxWalletRegistryClient {
    * This is a read-only simulation; no on-chain transaction is submitted and
    * no auth is required.
    *
-   * @param name Symbolic key to look up.
+   * @param name Symbolic key to look up (1-32 characters, [a-zA-Z0-9_]).
    * @throws if no wallet is registered under `name` (contract returns
-   *         `WalletNotFound`, error code 4).
+   *         `WalletNotFound`, error code 4) or name violates charset policy.
    */
   async getWallet(sourceKeypair: Keypair, name: string): Promise<Address> {
+    validateWalletName(name);
     const tx = await this.buildTx(sourceKeypair, "get_wallet", [
       xdr.ScVal.scvSymbol(name),
     ]);
@@ -127,6 +161,7 @@ export class MuxWalletRegistryClient {
     label: string,
     description: string
   ): Promise<void> {
+    validateWalletName(name);
     const tx = await this.buildTx(sourceKeypair, "register_wallet_with_metadata", [
       xdr.ScVal.scvSymbol(name),
       nativeToScVal(wallet.toString(), { type: "address" }),
@@ -146,9 +181,10 @@ export class MuxWalletRegistryClient {
    *
    * @param name Symbolic key to look up.
    * @throws if no wallet with metadata is registered under `name`
-   *         (`WalletNotFound`, error code 4).
+   *         (`WalletNotFound`, error code 4) or name violates charset policy.
    */
   async getMetadata(sourceKeypair: Keypair, name: string): Promise<WalletMetadata> {
+    validateWalletName(name);
     const tx = await this.buildTx(sourceKeypair, "get_metadata", [
       xdr.ScVal.scvSymbol(name),
     ]);
