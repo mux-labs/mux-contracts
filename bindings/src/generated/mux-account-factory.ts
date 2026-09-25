@@ -32,12 +32,20 @@ export const FACTORY_MAX_DESCRIPTION_LENGTH = 256;
 /** Maximum allowed length for account metadata author string. */
 export const FACTORY_MAX_AUTHOR_LENGTH = 64;
 
+/**
+ * Hard maximum page size for `getAccounts`. Requests for a larger limit are
+ * rejected with `InvalidBounds` rather than silently clamped, so callers can
+ * never receive an unbounded result set.
+ */
+export const FACTORY_MAX_ACCOUNTS_PAGE_SIZE = 64;
+
 export type MuxAccountFactoryError =
   | "Unauthorized"
   | "InvalidAccount"
   | "TooManyAccounts"
   | "MetadataNotFound"
-  | "MetadataTooLarge";
+  | "MetadataTooLarge"
+  | "InvalidBounds";
 
 /**
  * Validates metadata field lengths against contract storage griefing limits.
@@ -61,6 +69,27 @@ export function validateFactoryMetadata(
   if (author.length > FACTORY_MAX_AUTHOR_LENGTH) {
     throw new Error(
       `MetadataTooLarge: author length (${author.length}) exceeds maximum of ${FACTORY_MAX_AUTHOR_LENGTH}`
+    );
+  }
+}
+
+/**
+ * Validates pagination bounds for `getAccounts`.
+ *
+ * Fail-closed: negative offsets, non-positive limits, and limits above
+ * `FACTORY_MAX_ACCOUNTS_PAGE_SIZE` all throw `InvalidBounds` instead of
+ * panicking or returning an unbounded result set.
+ */
+export function validateGetAccountsBounds(offset: number, limit: number): void {
+  if (!Number.isInteger(offset) || offset < 0) {
+    throw new Error(`InvalidBounds: offset (${offset}) must be a non-negative integer`);
+  }
+  if (!Number.isInteger(limit) || limit <= 0) {
+    throw new Error(`InvalidBounds: limit (${limit}) must be a positive integer`);
+  }
+  if (limit > FACTORY_MAX_ACCOUNTS_PAGE_SIZE) {
+    throw new Error(
+      `InvalidBounds: limit (${limit}) exceeds maximum page size of ${FACTORY_MAX_ACCOUNTS_PAGE_SIZE}`
     );
   }
 }
@@ -164,12 +193,24 @@ export class MuxAccountFactoryClient {
     return retval.value() as unknown as Address;
   }
 
+  /**
+   * Return a bounded page of accounts owned by `owner`.
+   *
+   * `offset` must be a non-negative integer and `limit` must be a positive
+   * integer no greater than `FACTORY_MAX_ACCOUNTS_PAGE_SIZE`. Invalid bounds
+   * throw `InvalidBounds` before any RPC call is made (fail-closed).
+   */
   async getAccounts(
     sourceKeypair: Keypair,
-    owner: Address
+    owner: Address,
+    offset = 0,
+    limit = FACTORY_MAX_ACCOUNTS_PAGE_SIZE
   ): Promise<Address[]> {
+    validateGetAccountsBounds(offset, limit);
     const tx = await this.buildTx(sourceKeypair, "get_accounts", [
       nativeToScVal(owner.toString(), { type: "address" }),
+      nativeToScVal(offset, { type: "u32" }),
+      nativeToScVal(limit, { type: "u32" }),
     ]);
     const result = await this.server.simulateTransaction(tx);
     if (SorobanRpc.Api.isSimulationError(result)) {
@@ -218,58 +259,4 @@ export class MuxAccountFactoryClient {
   async maxAccountsPerOwner(sourceKeypair: Keypair): Promise<number> {
     const tx = await this.buildTx(sourceKeypair, "max_accounts_per_owner", []);
     const result = await this.server.simulateTransaction(tx);
-    if (SorobanRpc.Api.isSimulationError(result)) {
-      throw new Error(`Simulation failed: ${result.error}`);
-    }
-    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
-    if (!retval) return 64; // contract constant fallback
-    return retval.value() as unknown as number;
-  }
-
-  // â”€â”€ Private helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-  private async buildTx(
-    sourceKeypair: Keypair,
-    method: string,
-    args: xdr.ScVal[]
-  ): Promise<Transaction> {
-    const account = await this.server.getAccount(sourceKeypair.publicKey());
-    return new TransactionBuilder(account, {
-      fee: "100",
-      networkPassphrase: this.networkPassphrase,
-    })
-      .addOperation(this.contract.call(method, ...args))
-      .setTimeout(30)
-      .build();
-  }
-
-  private async submitAndRead<T>(tx: Transaction, signer: Keypair): Promise<T> {
-    const simResult = await this.server.simulateTransaction(tx);
-    if (SorobanRpc.Api.isSimulationError(simResult)) {
-      throw new Error(`Simulation failed: ${simResult.error}`);
-    }
-    const prepared = SorobanRpc.assembleTransaction(
-      tx,
-      simResult as SorobanRpc.Api.SimulateTransactionSuccessResponse
-    ).build();
-    prepared.sign(signer);
-    const sendResult = await this.server.sendTransaction(prepared);
-    if (sendResult.status === "ERROR") {
-      throw new Error(`Transaction failed: ${JSON.stringify(sendResult.errorResult)}`);
-    }
-    const confirmed = await pollTransaction(this.server, sendResult.hash);
-    const retval = confirmed.returnValue;
-    if (!retval) return {} as T;
-    return retval.value() as unknown as T;
-  }
-
-  private async simulate<T>(tx: Transaction): Promise<T> {
-    const result = await this.server.simulateTransaction(tx);
-    if (SorobanRpc.Api.isSimulationError(result)) {
-      throw new Error(`Simulation failed: ${result.error}`);
-    }
-    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
-    if (!retval) return {} as T;
-    return retval.value() as unknown as T;
-  }
-}
+    if (SorobanRpc.Api.isSimulat

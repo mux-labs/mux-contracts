@@ -63,6 +63,10 @@ export const MAINNET_REVIEW_ERROR_CODES = {
   REVIEW_MARKER_MISMATCH: "MUX_MAINNET_REVIEW_MARKER_MISMATCH",
   /** Mainnet addresses were supplied for a non-mainnet network. */
   NETWORK_MISCONFIG: "MUX_MAINNET_NETWORK_MISCONFIG",
+  /** A mainnet-affecting deploy ran without the immutable mainnet flag. */
+  MAINNET_FLAG_REQUIRED: "MUX_MAINNET_FLAG_REQUIRED",
+  /** The immutable mainnet flag was set to an unrecognized value. */
+  MAINNET_FLAG_INVALID: "MUX_MAINNET_FLAG_INVALID",
 } as const;
 
 export type MainnetReviewErrorCode =
@@ -202,6 +206,90 @@ export function assertNetworkAddresses(
     throw new MainnetAddressReviewError(
       MAINNET_REVIEW_ERROR_CODES.NETWORK_MISCONFIG,
       `Non-mainnet network '${network}' must not carry mainnet addresses`,
+      correlationId,
+    );
+  }
+}
+
+/**
+ * Immutable mainnet flag for deploy scripts (issue #809)
+ *
+ * Invariant: any mainnet-affecting deploy path MUST require an explicit,
+ * immutable mainnet flag. The flag is deny-by-default: when it is absent or
+ * not exactly the expected sentinel value, the deploy aborts with a stable,
+ * actionable error code. The flag is read once and frozen so it cannot be
+ * silently overridden at runtime after the deploy has started.
+ *
+ * The flag is supplied via the `MUX_MAINNET_DEPLOY_FLAG` environment variable
+ * and must equal `MUX_MAINNET_DEPLOY_FLAG_VALUE`. It is intentionally a
+ * sentinel (not a boolean) so a stray `true`/`1` cannot enable mainnet by
+ * accident.
+ */
+export const MUX_MAINNET_DEPLOY_FLAG_ENV = "MUX_MAINNET_DEPLOY_FLAG";
+export const MUX_MAINNET_DEPLOY_FLAG_VALUE = "I_ACKNOWLEDGE_MAINNET_DEPLOY";
+
+/**
+ * Immutable, deny-by-default mainnet deploy flag.
+ *
+ * `enabled` is only true when the environment variable is set to the exact
+ * sentinel value. The object is frozen so callers cannot flip it at runtime.
+ */
+export interface MainnetDeployFlag {
+  readonly enabled: boolean;
+  readonly value: string | undefined;
+}
+
+/**
+ * Read the immutable mainnet deploy flag from the environment.
+ *
+ * Fail-closed: an unrecognized value yields `enabled: false` rather than
+ * throwing here, so callers can decide whether to abort. Use
+ * `assertMainnetDeployFlag` on any mainnet-affecting path.
+ */
+export function readMainnetDeployFlag(
+  env: Record<string, string | undefined> = typeof process !== "undefined"
+    ? process.env
+    : {},
+): MainnetDeployFlag {
+  const value = env[MUX_MAINNET_DEPLOY_FLAG_ENV];
+  return Object.freeze({
+    enabled: value === MUX_MAINNET_DEPLOY_FLAG_VALUE,
+    value,
+  });
+}
+
+/**
+ * Enforce the immutable mainnet flag on a mainnet-affecting deploy path.
+ *
+ * Fail-closed: throws a `MainnetAddressReviewError` with a stable code when
+ * the flag is missing, malformed, or set to an unrecognized value. Non-mainnet
+ * networks are unaffected.
+ *
+ * @param network the target network for the deploy
+ * @param flag the immutable flag (defaults to reading the environment)
+ * @param correlationId opaque id for log correlation (never a secret)
+ */
+export function assertMainnetDeployFlag(
+  network: AddressNetwork,
+  flag: MainnetDeployFlag = readMainnetDeployFlag(),
+  correlationId: string = "addresses-config",
+): void {
+  if (network !== "mainnet") {
+    return;
+  }
+
+  if (flag.value === undefined || flag.value.trim().length === 0) {
+    throw new MainnetAddressReviewError(
+      MAINNET_REVIEW_ERROR_CODES.MAINNET_FLAG_REQUIRED,
+      `Mainnet deploy requires ${MUX_MAINNET_DEPLOY_FLAG_ENV}=${MUX_MAINNET_DEPLOY_FLAG_VALUE}`,
+      correlationId,
+    );
+  }
+
+  if (!flag.enabled) {
+    throw new MainnetAddressReviewError(
+      MAINNET_REVIEW_ERROR_CODES.MAINNET_FLAG_INVALID,
+      `${MUX_MAINNET_DEPLOY_FLAG_ENV} must equal the expected sentinel value`,
       correlationId,
     );
   }

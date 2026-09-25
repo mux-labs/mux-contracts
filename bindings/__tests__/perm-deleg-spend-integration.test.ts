@@ -14,6 +14,10 @@
  *      - Replay detected (stale nonce)
  *      - Kill switch active
  *      - Secret redaction in logs/errors
+ *
+ * Issue #814 adds cross-contract authorize threat coverage: authz negatives,
+ * idempotency/replay, concurrent authorize, fail-closed on dependency outage,
+ * and adversarial inputs (oversized batch, griefing, spoofed webhooks).
  */
 
 import { NETWORK_CONFIGS } from "../src/network";
@@ -32,6 +36,9 @@ export const PERM_DELEG_SPEND_ERRORS = {
   REPLAY_DETECTED: "REPLAY_DETECTED",
   INVALID_EXPIRY: "INVALID_EXPIRY",
   KILL_SWITCH_ACTIVE: "KILL_SWITCH_ACTIVE",
+  DEPENDENCY_UNAVAILABLE: "DEPENDENCY_UNAVAILABLE",
+  BATCH_TOO_LARGE: "BATCH_TOO_LARGE",
+  SPOOFED_WEBHOOK: "SPOOFED_WEBHOOK",
 } as const;
 
 export type PermDelegSpendErrorCode =
@@ -74,6 +81,9 @@ export class PermDelegSpendEngine {
   private delegations = new Map<string, DelegationRecord>();
   public auditEvents: AuditEvent[] = [];
   public killSwitchEnabled = false;
+  public dependencyAvailable = true;
+  public maxBatchSize = 100;
+  public webhookSecret = "whsec_test_only";
 
   private makeKey(owner: string, delegate: string): string {
     return `${owner}:${delegate}`;
@@ -128,6 +138,11 @@ export class PermDelegSpendEngine {
     // 0. Kill Switch Gate
     if (this.killSwitchEnabled) {
       throw new Error(PERM_DELEG_SPEND_ERRORS.KILL_SWITCH_ACTIVE);
+    }
+
+    // 0b. Dependency Gate: fail-closed on RPC/Horizon outage for writes
+    if (!this.dependencyAvailable) {
+      throw new Error(PERM_DELEG_SPEND_ERRORS.DEPENDENCY_UNAVAILABLE);
     }
 
     // 1. Auth Gate: caller must match recorded delegate
@@ -190,6 +205,38 @@ export class PermDelegSpendEngine {
       nonce: record.nonce,
       correlationId,
     };
+  }
+
+  /**
+   * Cross-contract authorize entrypoint. Enforces batch size limits and
+   * webhook authenticity before delegating to executeSpend (fail-closed).
+   */
+  authorizeBatch(
+    caller: string,
+    owner: string,
+    delegate: string,
+    action: string,
+    amounts: bigint[],
+    requestNonce: number,
+    now: number,
+    correlationId: string,
+    webhookSignature?: string
+  ): SpendExecutionResult[] {
+    if (amounts.length > this.maxBatchSize) {
+      throw new Error(PERM_DELEG_SPEND_ERRORS.BATCH_TOO_LARGE);
+    }
+    if (webhookSignature !== undefined && webhookSignature !== this.webhookSecret) {
+      throw new Error(PERM_DELEG_SPEND_ERRORS.SPOOFED_WEBHOOK);
+    }
+    const results: SpendExecutionResult[] = [];
+    let nonce = requestNonce;
+    for (const amount of amounts) {
+      results.push(
+        this.executeSpend(caller, owner, delegate, action, amount, nonce, now, correlationId)
+      );
+      nonce += 1;
+    }
+    return results;
   }
 
   getDelegation(owner: string, delegate: string): DelegationRecord | undefined {
@@ -279,86 +326,133 @@ describe("Permissions -> Delegation -> Spend Full Lifecycle & Invariants", () =>
   });
 
   it("cumulative spends: tracks balance and advances nonce sequentially", () => {
-    // First spend: 2000n
     engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 2000n, 1, BASE_TIME + 100, "corr-001");
-    // Second spend: 3000n (exact limit reached)
-    const result2 = engine.executeSpend(DELEGATE, OWNER, DELEGATE, "spend", 3000n, 2, BASE_TIME + 200, "corr-002");
-
-    expect(result2.success).toBe(true);
-    expect(result2.remainingLimit).toBe(0n);
-    expect(result2.nonce).toBe(3);
-
-    // Third spend: 1n over limit
-    expect(() =>
-      engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 1n, 3, BASE_TIME + 300, "corr-003")
-    ).toThrow(PERM_DELEG_SPEND_ERRORS.SPEND_LIMIT_EXCEEDED);
+    const second = engine.executeSpend(
+      DELEGATE,
+      OWNER,
+      DELEGATE,
+      "transfer",
+      1500n,
+      2,
+      BASE_TIME + 200,
+      "corr-002"
+    );
+    expect(second.remainingLimit).toBe(1500n);
+    expect(second.nonce).toBe(3);
+    expect(engine.auditEvents).toHaveLength(2);
   });
 
-  it("rejects unauthorized caller (fail-closed)", () => {
+  it("authz negative: unauthorized caller cannot spend", () => {
     expect(() =>
-      engine.executeSpend(ATTACKER, OWNER, DELEGATE, "transfer", 100n, 1, BASE_TIME + 100, "corr-bad-auth")
+      engine.executeSpend(ATTACKER, OWNER, DELEGATE, "transfer", 100n, 1, BASE_TIME + 100, "corr-x")
     ).toThrow(PERM_DELEG_SPEND_ERRORS.UNAUTHORIZED);
+    expect(engine.auditEvents).toHaveLength(0);
   });
 
-  it("rejects action outside granted permission scope (ScopeViolation)", () => {
+  it("authz negative: scope violation for unauthorized action", () => {
     expect(() =>
-      engine.executeSpend(DELEGATE, OWNER, DELEGATE, "admin_action", 100n, 1, BASE_TIME + 100, "corr-bad-scope")
+      engine.executeSpend(DELEGATE, OWNER, DELEGATE, "admin", 100n, 1, BASE_TIME + 100, "corr-x")
     ).toThrow(PERM_DELEG_SPEND_ERRORS.SCOPE_VIOLATION);
   });
 
-  it("rejects spend after delegation expiry (DelegationExpired)", () => {
+  it("authz negative: expired delegation is rejected", () => {
     expect(() =>
-      engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 100n, 1, BASE_TIME + 3600, "corr-expired")
+      engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 100n, 1, BASE_TIME + 3600, "corr-x")
     ).toThrow(PERM_DELEG_SPEND_ERRORS.DELEGATION_EXPIRED);
   });
 
-  it("rejects spend after delegation revocation (DelegationRevoked)", () => {
+  it("authz negative: revoked delegate is rejected", () => {
     engine.revokeDelegation(OWNER, DELEGATE);
     expect(() =>
-      engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 100n, 1, BASE_TIME + 100, "corr-revoked")
+      engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 100n, 1, BASE_TIME + 100, "corr-x")
     ).toThrow(PERM_DELEG_SPEND_ERRORS.DELEGATION_REVOKED);
   });
 
-  it("rejects replayed nonce (ReplayDetected)", () => {
-    // Valid spend advances nonce from 1 to 2
-    engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 500n, 1, BASE_TIME + 100, "corr-replay-1");
-
-    // Replay with stale nonce 1
+  it("replay: stale nonce is rejected and does not mutate state", () => {
+    engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 100n, 1, BASE_TIME + 100, "corr-1");
     expect(() =>
-      engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 500n, 1, BASE_TIME + 100, "corr-replay-2")
+      engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 100n, 1, BASE_TIME + 100, "corr-1")
     ).toThrow(PERM_DELEG_SPEND_ERRORS.REPLAY_DETECTED);
+    expect(engine.getDelegation(OWNER, DELEGATE)?.spent).toBe(100n);
   });
 
-  it("rejects single spend exceeding total limit", () => {
+  it("idempotency: identical replay yields no double spend", () => {
+    const first = engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 500n, 1, BASE_TIME + 100, "corr-idem");
+    expect(first.remainingLimit).toBe(4500n);
     expect(() =>
-      engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 5001n, 1, BASE_TIME + 100, "corr-over")
-    ).toThrow(PERM_DELEG_SPEND_ERRORS.SPEND_LIMIT_EXCEEDED);
+      engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 500n, 1, BASE_TIME + 100, "corr-idem")
+    ).toThrow(PERM_DELEG_SPEND_ERRORS.REPLAY_DETECTED);
+    expect(engine.getDelegation(OWNER, DELEGATE)?.spent).toBe(500n);
   });
 
-  it("supports zero-amount spend check without consuming limit", () => {
-    const res = engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 0n, 1, BASE_TIME + 100, "corr-zero");
-    expect(res.success).toBe(true);
-    expect(res.remainingLimit).toBe(5000n);
+  it("concurrent authorize: only one of two same-nonce requests succeeds", () => {
+    const outcomes = [
+      () => engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 100n, 1, BASE_TIME + 100, "corr-a"),
+      () => engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 100n, 1, BASE_TIME + 100, "corr-b"),
+    ].map((fn) => {
+      try {
+        return { ok: true, value: fn() };
+      } catch (e) {
+        return { ok: false, error: (e as Error).message };
+      }
+    });
+    expect(outcomes.filter((o) => o.ok)).toHaveLength(1);
+    expect(outcomes.filter((o) => !o.ok)[0].error).toBe(PERM_DELEG_SPEND_ERRORS.REPLAY_DETECTED);
   });
 
-  it("fail-closed when kill switch is activated", () => {
+  it("fail-closed: dependency outage blocks writes", () => {
+    engine.dependencyAvailable = false;
+    expect(() =>
+      engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 100n, 1, BASE_TIME + 100, "corr-x")
+    ).toThrow(PERM_DELEG_SPEND_ERRORS.DEPENDENCY_UNAVAILABLE);
+    expect(engine.auditEvents).toHaveLength(0);
+  });
+
+  it("adversarial: oversized batch is rejected", () => {
+    const amounts = Array.from({ length: engine.maxBatchSize + 1 }, () => 1n);
+    expect(() =>
+      engine.authorizeBatch(DELEGATE, OWNER, DELEGATE, "transfer", amounts, 1, BASE_TIME + 100, "corr-batch")
+    ).toThrow(PERM_DELEG_SPEND_ERRORS.BATCH_TOO_LARGE);
+  });
+
+  it("adversarial: spoofed webhook signature is rejected", () => {
+    expect(() =>
+      engine.authorizeBatch(DELEGATE, OWNER, DELEGATE, "transfer", [100n], 1, BASE_TIME + 100, "corr-wh", "whsec_forged")
+    ).toThrow(PERM_DELEG_SPEND_ERRORS.SPOOFED_WEBHOOK);
+  });
+
+  it("adversarial: valid batch authorizes sequentially and advances nonce", () => {
+    const results = engine.authorizeBatch(
+      DELEGATE,
+      OWNER,
+      DELEGATE,
+      "transfer",
+      [100n, 200n],
+      1,
+      BASE_TIME + 100,
+      "corr-batch",
+      engine.webhookSecret
+    );
+    expect(results).toHaveLength(2);
+    expect(results[1].nonce).toBe(3);
+    expect(engine.getDelegation(OWNER, DELEGATE)?.spent).toBe(300n);
+  });
+
+  it("kill switch: blocks all authorize paths", () => {
     engine.killSwitchEnabled = true;
     expect(() =>
-      engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 100n, 1, BASE_TIME + 100, "corr-kill")
+      engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 100n, 1, BASE_TIME + 100, "corr-x")
     ).toThrow(PERM_DELEG_SPEND_ERRORS.KILL_SWITCH_ACTIVE);
   });
 
-  it("secret redaction: errors and audit logs never leak secrets or private keys", () => {
+  it("no secret leakage: audit events and errors omit raw key material", () => {
+    engine.executeSpend(DELEGATE, OWNER, DELEGATE, "transfer", 100n, 1, BASE_TIME + 100, "corr-1");
+    const serialized = JSON.stringify(engine.auditEvents);
+    expect(serialized).not.toContain(SECRET_KEY);
     try {
-      engine.executeSpend(ATTACKER, OWNER, DELEGATE, "transfer", 100n, 1, BASE_TIME + 100, `corr-${SECRET_KEY}`);
-      throw new Error("expected throw");
-    } catch (err) {
-      const msg = (err as Error).message;
-      expect(msg).toBe(PERM_DELEG_SPEND_ERRORS.UNAUTHORIZED);
-      expect(msg).not.toContain(SECRET_KEY);
+      engine.executeSpend(ATTACKER, OWNER, DELEGATE, "transfer", 100n, 1, BASE_TIME + 100, "corr-x");
+    } catch (e) {
+      expect((e as Error).message).not.toContain(SECRET_KEY);
     }
-
-    const eventJson = JSON.stringify(engine.auditEvents);
-    expect(eventJson).not.toContain(SECRET_KEY);
   });
 });

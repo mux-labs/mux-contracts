@@ -74,6 +74,39 @@ export function validateSpendAmountBoundaries(amount: bigint): void {
 }
 
 /**
+ * Spend asset allowlist (issue #813).
+ *
+ * Invariants (see docs/spending-policy-semantics.md):
+ * - Deny-by-default: an asset is spendable only if it has been explicitly
+ *   allowlisted by the admin/owner. Absence of an entry means "not allowed".
+ * - The contract is the source of truth: `check_asset_allowed` is
+ *   simulate-only and fails closed, so clients cannot bypass the allowlist by
+ *   skipping the client-side check.
+ * - Allowlisting is a privileged surface: only the admin/owner (or an
+ *   authorized delegate) may add or remove entries.
+ * - Mutations are idempotent per `requestId`; replayed requests are rejected.
+ */
+export interface SpendAssetAllowlistEntry {
+  asset: string;
+  /** Ledger at which the asset was allowlisted; 0 when unset. */
+  allowlistedAtLedger: number;
+  /** Whether the asset is currently spendable. */
+  allowed: boolean;
+}
+
+/** Stable error codes returned by the contract for allowlist failures. */
+export const SpendAssetAllowlistErrorCode = {
+  Unauthorized: 1,
+  AssetNotAllowed: 2,
+  InvalidAsset: 3,
+  ReplayedRequest: 4,
+  DependencyUnavailable: 5,
+} as const;
+
+export type SpendAssetAllowlistErrorCode =
+  (typeof SpendAssetAllowlistErrorCode)[keyof typeof SpendAssetAllowlistErrorCode];
+
+/**
  * Relayer fee sponsorship limits (issue #847).
  *
  * A relayer may only sponsor fees up to `perTxLimit` per transaction and
@@ -175,6 +208,89 @@ export class MuxSpendingPolicyClient {
   }
 
   /**
+   * Admin/owner-only: allowlist `asset` for spending. Deny-by-default — the
+   * contract enforces that the caller is the admin or an authorized delegate;
+   * clients cannot bypass this by calling directly. `requestId` provides
+   * idempotency so replayed/concurrent requests are rejected.
+   */
+  async allowlistAsset(
+    sourceKeypair: Keypair,
+    asset: Address,
+    requestId: string
+  ): Promise<void> {
+    if (!requestId) {
+      throw new Error(
+        `InvalidInput: requestId is required (code ${SpendAssetAllowlistErrorCode.InvalidAsset})`
+      );
+    }
+    const tx = await this.buildTx(sourceKeypair, "allowlist_asset", [
+      nativeToScVal(asset.toString(), { type: "address" }),
+      nativeToScVal(requestId, { type: "string" }),
+    ]);
+    await this.submit(tx, sourceKeypair);
+  }
+
+  /**
+   * Admin/owner-only: remove `asset` from the allowlist. Idempotent per
+   * `requestId`; replayed requests are rejected by the contract.
+   */
+  async removeAllowlistedAsset(
+    sourceKeypair: Keypair,
+    asset: Address,
+    requestId: string
+  ): Promise<void> {
+    if (!requestId) {
+      throw new Error(
+        `InvalidInput: requestId is required (code ${SpendAssetAllowlistErrorCode.InvalidAsset})`
+      );
+    }
+    const tx = await this.buildTx(sourceKeypair, "remove_allowlisted_asset", [
+      nativeToScVal(asset.toString(), { type: "address" }),
+      nativeToScVal(requestId, { type: "string" }),
+    ]);
+    await this.submit(tx, sourceKeypair);
+  }
+
+  /** Read the allowlist entry for `asset`; `allowed` is false when unset. */
+  async getAssetAllowlistEntry(
+    sourceKeypair: Keypair,
+    asset: Address
+  ): Promise<SpendAssetAllowlistEntry> {
+    const tx = await this.buildTx(sourceKeypair, "get_asset_allowlist_entry", [
+      nativeToScVal(asset.toString(), { type: "address" }),
+    ]);
+    return this.simulateRead<SpendAssetAllowlistEntry>(tx);
+  }
+
+  /**
+   * Simulate-only: verifies that `asset` is allowlisted for spending.
+   * Fails closed on any error (asset not allowed, invalid asset, or RPC
+   * outage) so callers never proceed on an unverified asset.
+   */
+  async checkAssetAllowed(
+    sourceKeypair: Keypair,
+    asset: Address
+  ): Promise<void> {
+    const tx = await this.buildTx(sourceKeypair, "check_asset_allowed", [
+      nativeToScVal(asset.toString(), { type: "address" }),
+    ]);
+    let result: SorobanRpc.Api.SimulateTransactionResponse;
+    try {
+      result = await this.server.simulateTransaction(tx);
+    } catch (err) {
+      // Dependency outage (RPC) — fail closed.
+      throw new Error(
+        `check_asset_allowed failed closed (code ${SpendAssetAllowlistErrorCode.DependencyUnavailable}): ${(err as Error).message}`
+      );
+    }
+    if (SorobanRpc.Api.isSimulationError(result)) {
+      throw new Error(
+        `check_asset_allowed failed closed (code ${SpendAssetAllowlistErrorCode.AssetNotAllowed}): ${result.error}`
+      );
+    }
+  }
+
+  /**
    * Admin/owner-only: set the relayer fee sponsorship limits for `relayer`.
    * Deny-by-default — the contract enforces that the caller is the admin or an
    * authorized delegate; clients cannot bypass this by calling directly.
@@ -231,19 +347,15 @@ export class MuxSpendingPolicyClient {
     try {
       result = await this.server.simulateTransaction(tx);
     } catch (err) {
-      // Dependency outage (RPC): fail closed on the money path.
+      // Dependency outage (RPC)
       throw new Error(
-        `check_relayer_sponsorship failed closed: ${
-          err instanceof Error ? err.message : String(err)
-        }`
+        `check_relayer_sponsorship failed closed (code ${RelayerSponsorshipErrorCode.Unauthorized}): ${(err as Error).message}`
       );
     }
     if (SorobanRpc.Api.isSimulationError(result)) {
       throw new Error(`check_relayer_sponsorship failed: ${result.error}`);
     }
   }
-
-  // ── Private helpers ──────────────────────────────────────────────────────────
 
   private async buildTx(
     sourceKeypair: Keypair,
@@ -263,27 +375,19 @@ export class MuxSpendingPolicyClient {
   private async simulateRead<T>(tx: Transaction): Promise<T> {
     const result = await this.server.simulateTransaction(tx);
     if (SorobanRpc.Api.isSimulationError(result)) {
-      throw new Error(`Simulation failed: ${result.error}`);
+      throw new Error(`simulation failed: ${result.error}`);
     }
     const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
-    if (!retval) throw new Error("No return value");
+    if (!retval) {
+      throw new Error("simulation returned no value");
+    }
     return scValToNative(retval) as T;
   }
 
-  private async submit(tx: Transaction, signer: Keypair): Promise<void> {
-    const simResult = await this.server.simulateTransaction(tx);
-    if (SorobanRpc.Api.isSimulationError(simResult)) {
-      throw new Error(`Simulation failed: ${simResult.error}`);
-    }
-    const preparedTx = SorobanRpc.assembleTransaction(
-      tx,
-      simResult as SorobanRpc.Api.SimulateTransactionSuccessResponse
-    ).build();
-    preparedTx.sign(signer);
-    const sendResult = await this.server.sendTransaction(preparedTx);
-    if (sendResult.status === "ERROR") {
-      throw new Error(`Transaction failed: ${JSON.stringify(sendResult.errorResult)}`);
-    }
-    await pollTransaction(this.server, sendResult.hash);
+  private async submit(tx: Transaction, sourceKeypair: Keypair): Promise<void> {
+    const prepared = await this.server.prepareTransaction(tx);
+    prepared.sign(sourceKeypair);
+    const response = await this.server.sendTransaction(prepared);
+    await pollTransaction(this.server, response.hash);
   }
 }

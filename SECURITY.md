@@ -74,6 +74,16 @@ We will not pursue legal action against researchers who follow these guidelines.
 
 See [docs/threat-model.md](docs/threat-model.md) for the current threat model, trust boundaries, and known mitigations.
 
+## Architecture Overview
+
+The current crate set, inter-crate relationships, and the invariants that all
+crates must uphold (contract as source of truth for spends/recovery/admin,
+deny-by-default for privileged surfaces, fail-closed on RPC/DB/Horizon outages
+for writes) are documented in [docs/architecture-overview.md](docs/architecture-overview.md).
+That document is the authoritative reference for the crate set and the
+authorization model (owner/delegate/guardian/API-key/JWT); report issues that
+violate its invariants against it.
+
 ## Partial Crate Rollback
 
 Partial rollback is a privileged, money-path-adjacent surface. It is authorized
@@ -89,6 +99,22 @@ stable error codes, idempotency, and fail-closed requirements are defined in
 [docs/aa-milestone-roadmap.md](docs/aa-milestone-roadmap.md). That document is the
 authoritative exit-criteria reference for AA work; report AA-related issues against
 its invariants.
+
+## Somzilla Status
+
+`Somzilla.md` is a historical status document and is **not** a canonical source of
+truth. Its content has been reconciled with the current repo state and archived; it
+now points to the canonical documentation below. Do not rely on `Somzilla.md` for
+security assumptions, invariants, or exit criteria.
+
+Canonical references:
+
+- [README.md](README.md) — project overview, build/test instructions, and contributor entry points
+- [CONTRIBUTING.md](CONTRIBUTING.md) — contribution workflow and review expectations
+- [CONTRACT_IDS.md](CONTRACT_IDS.md) — deployed contract ids per network
+- [docs/threat-model.md](docs/threat-model.md) — threat model and trust boundaries
+- [docs/aa-milestone-roadmap.md](docs/aa-milestone-roadmap.md) — AA invariants and exit criteria
+- [docs/rollback-guide.md](docs/rollback-guide.md) — rollback invariants, error codes, and kill-switch strategy
 
 ## Audit History
 

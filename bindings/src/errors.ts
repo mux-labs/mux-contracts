@@ -52,6 +52,71 @@ export type CrossNetworkErrorCode =
   (typeof CROSS_NETWORK_ERROR_CODES)[keyof typeof CROSS_NETWORK_ERROR_CODES];
 
 /**
+ * Stable, typed error codes for on-chain batching DoS caps.
+ *
+ * These are emitted by the bindings layer (not the contracts) when a batch
+ * is rejected before submission because it would violate the on-chain
+ * batching caps enforced by the mux-batcher contract. Fail-closed: an
+ * oversized or malformed batch is blocked client-side rather than being
+ * forwarded to the contract.
+ *
+ * Batching cap codes (bindings/src/batcher.ts):
+ *   BatchTooLarge          → 400  batch length exceeds the on-chain max batch size
+ *   BatchAggregateTooLarge → 400  aggregate operation count exceeds the on-chain cap
+ *   BatchEmpty             → 400  batch contains no operations
+ *   BatchCapConfigMissing  → 403  no batching cap configured (deny-by-default)
+ *   BatchCapConfigInvalid  → 400  malformed/unknown batching cap configuration
+ */
+export const BATCHING_CAP_ERROR_CODES = {
+  BatchTooLarge: "BatchTooLarge",
+  BatchAggregateTooLarge: "BatchAggregateTooLarge",
+  BatchEmpty: "BatchEmpty",
+  BatchCapConfigMissing: "BatchCapConfigMissing",
+  BatchCapConfigInvalid: "BatchCapConfigInvalid",
+} as const;
+
+export type BatchingCapErrorCode =
+  (typeof BATCHING_CAP_ERROR_CODES)[keyof typeof BATCHING_CAP_ERROR_CODES];
+
+/**
+ * Typed error thrown when a batch violates the on-chain batching caps.
+ *
+ * Fail-closed by default: a missing/invalid cap configuration blocks the
+ * batch rather than falling through to an unbounded submission.
+ */
+export class BatchingCapError extends Error {
+  readonly code: BatchingCapErrorCode;
+  readonly statusCode: number;
+  readonly batchSize?: number;
+  readonly maxBatchSize?: number;
+  readonly aggregateOps?: number;
+  readonly maxAggregateOps?: number;
+  readonly correlationId?: string;
+
+  constructor(
+    code: BatchingCapErrorCode,
+    message: string,
+    options: {
+      batchSize?: number;
+      maxBatchSize?: number;
+      aggregateOps?: number;
+      maxAggregateOps?: number;
+      correlationId?: string;
+    } = {},
+  ) {
+    super(message);
+    this.name = "BatchingCapError";
+    this.code = code;
+    this.statusCode = ERROR_HTTP_MAP[code] ?? 400;
+    this.batchSize = options.batchSize;
+    this.maxBatchSize = options.maxBatchSize;
+    this.aggregateOps = options.aggregateOps;
+    this.maxAggregateOps = options.maxAggregateOps;
+    this.correlationId = options.correlationId;
+  }
+}
+
+/**
  * Typed error thrown when a cross-network invocation is blocked.
  *
  * Fail-closed by default: unknown/missing network configuration blocks the
@@ -201,6 +266,13 @@ export class CrossNetworkInvokeError extends Error {
  *   InvalidSponsorshipConfig  → 400  malformed sponsorship limit config
  *   DuplicateSponsorship      → 409  replayed/idempotent sponsorship request
  *
+ * Batching DoS caps (bindings/src/batcher.ts):
+ *   BatchTooLarge          → 400  batch length exceeds the on-chain max batch size
+ *   BatchAggregateTooLarge → 400  aggregate operation count exceeds the on-chain cap
+ *   BatchEmpty             → 400  batch contains no operations
+ *   BatchCapConfigMissing  → 403  no batching cap configured (deny-by-default)
+ *   BatchCapConfigInvalid  → 400  malformed/unknown batching cap configuration
+ *
  * Cross-network invoke guard (bindings/src/network.ts):
  *   CrossNetworkInvokeBlocked → 403  target network does not match resolved network
  *   NetworkConfigMissing      → 403  no network configured (deny-by-default)
@@ -212,46 +284,12 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
 
   // Not Found errors → 404
   NotADelegate: 404,           // MuxDelegationError (6001): no grant for (owner, delegate)
-  DelegateNotFound: 404,       // MuxAccountError (4)
-  RoleNotFound: 404,           // MuxPermissionsError (4)
-  AccountNotInRole: 404,       // MuxPermissionsError (5)
-  PermissionNotFound: 404,     // MuxPermissionsError (6)
-  AdminNotFound: 404,          // MuxPermissionsError (9)
-  ContractNotFound: 404,       // MuxRegistryError (4)
-  WalletNotFound: 404,         // WalletRegistryError (4)
-  MetadataNotFound: 404,       // MuxAccountFactoryError (4)
-  LimitNotFound: 404,          // MuxPolicyError (4)
-  PolicyNotFound: 404,         // SpendingPolicyError (4) — alias used in some bindings
-  NoActiveRecovery: 404,       // RecoveryError (5): no recovery request found
-  GuardianNotFound: 404,       // RecoveryError (9): address is not a registered guardian
+  DelegateNotFound: 404,       // MuxAccountError (4): no delegate registered for owner
 
-  // Validation/Constraint errors → 400
-  InvalidAmount: 400,          // MuxAccountError (7), MuxPolicyError (6)
-  InvalidPeriod: 400,          // MuxAccountError (8), MuxPolicyError (7)
-  InvalidInput: 400,           // SpendingPolicyError (6)
-  InvalidAccount: 400,         // MuxAccountFactoryError (2)
-  MetadataTooLarge: 400,       // MuxAccountFactoryError (5)
-  SpendLimitExceeded: 400,     // MuxAccountError (6), SpendingPolicyError (5)
-  LimitExceeded: 400,          // MuxPolicyError (5)
-  DelegateExpired: 400,        // MuxAccountError (5)
-  EmptyBatch: 400,             // MuxBatcherError (1)
-  BatchTooLarge: 400,          // MuxBatcherError (2)
-  TooManyPermissions: 400,     // MuxDelegationError (6002)
-  EmptyPermissions: 400,       // MuxDelegationError (6003)
-  TimelockNotExpired: 400,     // RecoveryError (6): timelock has not yet elapsed
-  MinGuardiansRequired: 400,   // RecoveryError (10): cannot remove last guardian
-  RecoveryExpired: 400,        // RecoveryError (11): execution window elapsed
-
-  // Relayer fee sponsorship limits → 400 (policy/limit violations)
-  RelayerSponsorshipLimit: 400,   // per-relayer sponsorship cap exceeded
-  AccountSponsorshipLimit: 400,   // per-account sponsorship cap exceeded
-  SponsorshipWindowExceeded: 400, // sponsorship window/period cap exceeded
-  InvalidSponsorshipConfig: 400,  // malformed sponsorship limit config
-
-  // Cross-network invoke guard → 400 (malformed config)
-  NetworkConfigInvalid: 400,      // unknown/malformed network configuration
-
-  // State conflict → 409
-  AlreadyInitialized: 409,     // all contract
-
-/* … truncated 1354 chars — edit only what you need near the top … */
+  // Batching DoS cap errors → 400 (deny-by-default config → 403)
+  BatchTooLarge: 400,
+  BatchAggregateTooLarge: 400,
+  BatchEmpty: 400,
+  BatchCapConfigMissing: 403,
+  BatchCapConfigInvalid: 400,
+};

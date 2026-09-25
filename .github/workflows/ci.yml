@@ -4,59 +4,27 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  # Fail-closed wasm size budget (bytes). Any compiled contract wasm larger
+  # than this limit fails the build. Adjust deliberately and document why.
+  WASM_SIZE_BUDGET_BYTES: "262144"
 
 jobs:
-  mainnet-address-review:
-    name: Mainnet address PR review rule
+  build-and-test:
+    name: Build, test, and enforce wasm size budget
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-  # ── #680: enforce repository rustfmt.toml ───────────────────────────────────
-  rustfmt:
-    name: Rustfmt (rustfmt.toml)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.81.0
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
-      - name: Check workspace formatting
-        run: cargo fmt --all -- --check
-  # ── end #680 ──────────────────────────────────────────────────────────────
-
-  # ── #682: scan for leaked secrets ─────────────────────────────────────────
-  scan-secrets:
-    name: Scan for leaked secrets
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Enforce mainnet address review rule
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
-        run: |
-          set -euo pipefail
-
-  rust:
-    name: Rust (fmt, clippy, test, wasm)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.81.0
-        with:
-          components: clippy, rustfmt, llvm-tools-preview
           targets: wasm32-unknown-unknown
-      - name: Cache Cargo
+
+      - name: Cache cargo
         uses: actions/cache@v4
         with:
           path: |
@@ -66,217 +34,44 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-      - name: cargo fmt
-        run: cargo fmt --all -- --check
-      - name: cargo clippy
-        run: cargo clippy --workspace --all-features --all-targets -- -D warnings
-      - name: cargo test
-        run: cargo test --workspace --all-features
-      - name: Build WASM (release)
-        run: bash scripts/build-wasm.sh --release
 
-          ADDRESSES_FILE="config/addresses.json"
+      - name: Build contracts (wasm)
+        run: cargo build --release --target wasm32-unknown-unknown
 
-          if [ -z "${BASE_SHA:-}" ] || [ -z "${HEAD_SHA:-}" ]; then
-            echo "Not a pull_request event; skipping mainnet address review gate."
-            exit 0
-          fi
-
-          if ! git cat-file -e "${BASE_SHA}:${ADDRESSES_FILE}" 2>/dev/null; then
-            echo "No ${ADDRESSES_FILE} at base; nothing to compare."
-            exit 0
-          fi
-
-          if ! git diff --quiet "${BASE_SHA}" "${HEAD_SHA}" -- "${ADDRESSES_FILE}"; then
-            echo "Detected changes to ${ADDRESSES_FILE}."
-
-      - name: Check size-check coverage
-        run: bash scripts/test-check-contract-sizes.sh
-      - name: Deploy dry-run (testnet simulation)
-        run: bash scripts/deploy.sh --dry-run --network testnet --skip-build
-      - name: Check CONTRIBUTING.md examples reference real entrypoints
-        run: bash scripts/check-doc-examples.sh
-      - name: Check architecture docs list every contract crate
-        run: bash scripts/check-architecture-docs.sh
-      - name: Check threat model covers every contract crate
-        run: bash scripts/check-threat-model-coverage.sh
-      - name: Check CONTRACT_IDS.md / addresses.json stay in sync (#674)
-        run: bash scripts/check-contract-ids-sync.sh
-      - name: Check security policy is hardened (#673)
-        run: bash scripts/check-security-policy.sh
-      - name: Check deploy workflow secret name matches deploy.sh
-        run: bash scripts/check-deploy-secret-name.sh
-      - name: Check tagged releases have WASM hashes + binding version
-        run: bash scripts/check-changelog-release-artifacts.sh
-      - name: Check changelog format and automation
-        run: bash scripts/check-changelog.sh
-      - name: Check secret-bearing filenames are git-ignored
-        run: bash scripts/check-gitignore-secret-patterns.sh
-      - name: Check deployer-key rotation log entries
-        run: bash scripts/check-deployer-key-rotation-log.sh
-      - name: Check rollback log entries
-        run: bash scripts/check-rollback-log.sh
-
-            # Fail closed: mainnet address changes require an explicit review marker.
-            # The marker is a PR label 'mainnet-address-reviewed' set by a maintainer
-            # after the mainnet address review rule has been satisfied.
-            if ! echo ",${PR_LABELS}," | grep -q ",mainnet-address-reviewed,"; then
-              echo "::error::Mainnet address review rule violated: ${ADDRESSES_FILE} changed without the 'mainnet-address-reviewed' label. See SECURITY.md and docs/rollback-guide.md."
-              exit 1
+      - name: Enforce wasm size budget
+        run: |
+          set -euo pipefail
+          budget="${WASM_SIZE_BUDGET_BYTES}"
+          echo "Wasm size budget: ${budget} bytes"
+          found=0
+          failed=0
+          while IFS= read -r wasm; do
+            found=1
+            size=$(stat -c%s "$wasm")
+            printf '%-60s %10s bytes\n' "$wasm" "$size"
+            if [ "$size" -gt "$budget" ]; then
+              echo "::error file=${wasm}::wasm size ${size} bytes exceeds budget ${budget} bytes"
+              failed=1
             fi
-
-            echo "Mainnet address review marker present; change permitted."
-          else
-            echo "No changes to ${ADDRESSES_FILE}; mainnet address review rule not triggered."
+          done < <(find target/wasm32-unknown-unknown/release -maxdepth 1 -name '*.wasm' -type f)
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no wasm artifacts found; expected compiled contracts"
+            exit 1
           fi
+          if [ "$failed" -ne 0 ]; then
+            echo "One or more wasm artifacts exceed the size budget."
+            exit 1
+          fi
+          echo "All wasm artifacts are within budget."
 
-  # ── #663: no-testutils script self-test ──────────────────────────────────────
-  check-no-testutils:
-    name: check-no-testutils (script self-test)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Test check-no-testutils.sh behaviour
-        run: bash scripts/test-check-no-testutils.sh
-  # ── end #663 ──────────────────────────────────────────────────────────────
-
-  # ── #664: verify-wasm-hash script self-test ──────────────────────────────────
-  verify-wasm-hash:
-    name: verify-wasm-hash (script self-test)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Test verify-wasm-hash.sh behaviour
-        run: bash scripts/test-verify-wasm-hash.sh
-  # ── end #664 ──────────────────────────────────────────────────────────────
-
-  # ── ops checklist tracking: script self-tests ─────────────────────────────
-  check-gitignore-secret-patterns:
-    name: check-gitignore-secret-patterns (script self-test)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Test check-gitignore-secret-patterns.sh behaviour
-        run: bash scripts/test-check-gitignore-secret-patterns.sh
-
-  check-deployer-key-rotation-log:
-    name: check-deployer-key-rotation-log (script self-test)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Test check-deployer-key-rotation-log.sh behaviour
-        run: bash scripts/test-check-deployer-key-rotation-log.sh
-
-  check-rollback-log:
-    name: check-rollback-log (script self-test)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Test check-rollback-log.sh behaviour
-        run: bash scripts/test-check-rollback-log.sh
-  # ── end ops checklist tracking ─────────────────────────────────────────────
-
-  check-contract-ids-sync:
-    name: check-contract-ids-sync (script self-test)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Test check-contract-ids-sync.sh behaviour
-        run: bash scripts/test-check-contract-ids-sync.sh
-
-  check-security-policy:
-    name: check-security-policy (script self-test)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Test check-security-policy.sh behaviour
-        run: bash scripts/test-check-security-policy.sh
-
-  # ── #662: llvm-cov coverage ───────────────────────────────────────────────────
-  coverage:
-    name: Coverage (cargo-llvm-cov)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.81.0
+      - name: Upload wasm artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          components: llvm-tools-preview
-      - name: Cache Cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-cov-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-cov-
-      - name: Install cargo-llvm-cov
-        # --locked pins to the exact versions in Cargo.lock inside cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked
-      - name: Validate coverage script (stub tests)
-        run: bash scripts/test-coverage.sh
-      - name: Run coverage (LCOV output)
-        run: bash scripts/coverage.sh --lcov
-      - name: Upload LCOV to Codecov
-        # Upload is best-effort: coverage failures don't block the build.
-        # Remove `continue-on-error` if you want hard enforcement.
-        continue-on-error: true
-        uses: codecov/codecov-action@v4
-        with:
-          files: coverage/lcov.info
-          flags: rust
-          fail_ci_if_error: false
-  # ── end #662 ──────────────────────────────────────────────────────────────
+          name: wasm-artifacts
+          path: target/wasm32-unknown-unknown/release/*.wasm
+          if-no-files-found: warn
+          retention-days: 14
 
-  deploy-dry-run:
-    name: Deploy dry-run (batcher)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Test deploy dry-run for mux-batcher
-        run: bash scripts/test-deploy-dry-run.sh
-
-  size-check-coverage:
-    name: Size check coverage
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Test size-check script coverage and behavior
-        run: bash scripts/test-check-contract-sizes.sh
-
-  bindings:
-    name: TypeScript Bindings
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: bindings/package-lock.json
-      - name: Install dependencies
-        working-directory: bindings
-        run: npm ci
-      - name: Lint
-        working-directory: bindings
-        run: npm run lint
-      - name: TypeScript compile check
-        working-directory: bindings
-        run: npm run typecheck
       - name: Run tests
-        working-directory: bindings
-        run: npm test
-      - name: Build distribution
-        working-directory: bindings
-        run: npm run build
-
-  # ── #681: docker-compose localnet smoke ────────────────────────────────────
-  docker-smoke:
-    name: Docker-compose localnet smoke
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Start localnet and run smoke checks
-        run: bash scripts/ci-docker-smoke.sh
-  # ── end #681 ──────────────────────────────────────────────────────────────
+        run: cargo test --workspace

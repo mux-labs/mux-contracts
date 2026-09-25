@@ -1,124 +1,146 @@
-/**
- * Unit tests for MuxBatcherClient binding shape and batcher-specific error mapping.
- */
+import { describe, it, expect } from "vitest";
+import {
+  BatcherError,
+  BatcherErrorCode,
+  MAX_BATCH_SIZE,
+  MAX_AGGREGATE_OPS,
+  validateBatch,
+  encodeBatch,
+  decodeBatch,
+  type BatchRequest,
+} from "../src/batcher";
 
-import { MuxBatcherClient } from "../src/generated/mux-batcher";
-import { contractErrorToHttp, ERROR_HTTP_MAP } from "../src/errors";
-import { muxBatcherErrorMessage } from "../src/types";
+function makeRequest(overrides: Partial<BatchRequest> = {}): BatchRequest {
+  return {
+    correlationId: "corr-1",
+    operations: [{ kind: "transfer", amount: 1n }],
+    ...overrides,
+  };
+}
 
-describe("MuxBatcherClient shape", () => {
-  it("exposes executeBatch as a function", () => {
-    expect(typeof MuxBatcherClient.prototype.executeBatch).toBe("function");
+describe("batching DoS caps", () => {
+  it("accepts a batch at the max size boundary", () => {
+    const operations = Array.from({ length: MAX_BATCH_SIZE }, () => ({
+      kind: "transfer" as const,
+      amount: 1n,
+    }));
+    const result = validateBatch(makeRequest({ operations }));
+    expect(result.ok).toBe(true);
   });
 
-  it("exposes simulateBatch as a function", () => {
-    expect(typeof MuxBatcherClient.prototype.simulateBatch).toBe("function");
+  it("rejects an oversized batch fail-closed with a stable error code", () => {
+    const operations = Array.from({ length: MAX_BATCH_SIZE + 1 }, () => ({
+      kind: "transfer" as const,
+      amount: 1n,
+    }));
+    const result = validateBatch(makeRequest({ operations }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe(BatcherErrorCode.BatchTooLarge);
+      expect(result.error.correlationId).toBe("corr-1");
+    }
   });
 
-  it("exposes maxBatchSize as a function", () => {
-    expect(typeof MuxBatcherClient.prototype.maxBatchSize).toBe("function");
-  });
-
-  it("exposes submitBatch as a function", () => {
-    expect(typeof MuxBatcherClient.prototype.submitBatch).toBe("function");
-  });
-
-  it("exposes setRegistryMetadata as a function", () => {
-    expect(typeof MuxBatcherClient.prototype.setRegistryMetadata).toBe("function");
-  });
-
-  it("exposes getRegistryMetadata as a function", () => {
-    expect(typeof MuxBatcherClient.prototype.getRegistryMetadata).toBe("function");
-  });
-});
-
-describe("Batcher error HTTP mapping", () => {
-  it("maps BatchTooLarge to 400", () => {
-    expect(ERROR_HTTP_MAP.BatchTooLarge).toBe(400);
-  });
-
-  it("maps EmptyBatch to 400", () => {
-    expect(ERROR_HTTP_MAP.EmptyBatch).toBe(400);
-  });
-
-  it("maps RequiredOperationFailed to 500", () => {
-    expect(ERROR_HTTP_MAP.RequiredOperationFailed).toBe(500);
-  });
-
-  it("maps Unauthorized to 401", () => {
-    expect(ERROR_HTTP_MAP.Unauthorized).toBe(401);
-  });
-
-  it("maps ReentrancyDetected to 409", () => {
-    expect(ERROR_HTTP_MAP.ReentrancyDetected).toBe(409);
-  });
-
-  it("maps MetadataAlreadySet to 409", () => {
-    expect(ERROR_HTTP_MAP.MetadataAlreadySet).toBe(409);
-  });
-
-  it("contractErrorToHttp returns correct shape for batcher errors", () => {
-    const r = contractErrorToHttp("BatchTooLarge");
-    expect(r.statusCode).toBe(400);
-    expect(r.errorType).toBe("BatchTooLarge");
-    expect(r.message).toBe("BatchTooLarge");
-  });
-
-  it("contractErrorToHttp returns 409 for MetadataAlreadySet", () => {
-    const r = contractErrorToHttp("MetadataAlreadySet");
-    expect(r.statusCode).toBe(409);
-    expect(r.errorType).toBe("MetadataAlreadySet");
-  });
-});
-
-describe("muxBatcherErrorMessage", () => {
-  it("returns a description for EmptyBatch by name", () => {
-    expect(muxBatcherErrorMessage("EmptyBatch")).toBe("batch contains no operations");
-  });
-
-  it("returns a description for BatchTooLarge by name", () => {
-    expect(muxBatcherErrorMessage("BatchTooLarge")).toBe(
-      "batch exceeds the maximum operation count"
+  it("rejects a batch exceeding the aggregate operation cap", () => {
+    const operations = Array.from({ length: MAX_BATCH_SIZE }, () => ({
+      kind: "transfer" as const,
+      amount: 1n,
+    }));
+    const result = validateBatch(
+      makeRequest({ operations, aggregateOps: MAX_AGGREGATE_OPS + 1 }),
     );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe(BatcherErrorCode.AggregateLimitExceeded);
+    }
   });
 
-  it("returns a description for RequiredOperationFailed by name", () => {
-    expect(muxBatcherErrorMessage("RequiredOperationFailed")).toBe(
-      "a required operation failed; the batch was aborted"
+  it("rejects an empty batch", () => {
+    const result = validateBatch(makeRequest({ operations: [] }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe(BatcherErrorCode.EmptyBatch);
+    }
+  });
+
+  it("denies privileged batch surfaces by default without an authorized role", () => {
+    const result = validateBatch(
+      makeRequest({ privileged: true, role: undefined }),
     );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe(BatcherErrorCode.Unauthorized);
+    }
   });
 
-  it("returns a description for Unauthorized by name", () => {
-    expect(muxBatcherErrorMessage("Unauthorized")).toBe("caller is not authorized");
-  });
-
-  it("returns a description for ReentrancyDetected by name", () => {
-    expect(muxBatcherErrorMessage("ReentrancyDetected")).toBe(
-      "reentrant call into the batcher detected"
+  it("rejects a revoked delegate", () => {
+    const result = validateBatch(
+      makeRequest({ privileged: true, role: "delegate", revoked: true }),
     );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe(BatcherErrorCode.DelegateRevoked);
+    }
   });
 
-  it("returns a description for MetadataAlreadySet by name", () => {
-    expect(muxBatcherErrorMessage("MetadataAlreadySet")).toBe(
-      "metadata has already been set for this batcher instance"
+  it("rejects an expired authorization", () => {
+    const result = validateBatch(
+      makeRequest({ privileged: true, role: "guardian", expired: true }),
     );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe(BatcherErrorCode.AuthExpired);
+    }
   });
 
-  it("resolves error code 6 to MetadataAlreadySet description", () => {
-    expect(muxBatcherErrorMessage(6)).toBe(
-      "metadata has already been set for this batcher instance"
+  it("fails closed on dependency outage for writes", () => {
+    const result = validateBatch(
+      makeRequest({ dependencyAvailable: false, isWrite: true }),
     );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe(BatcherErrorCode.DependencyUnavailable);
+    }
   });
 
-  it("resolves error code 1 to EmptyBatch description", () => {
-    expect(muxBatcherErrorMessage(1)).toBe("batch contains no operations");
+  it("rejects a replayed batch via idempotency key", () => {
+    const seen = new Set<string>();
+    const first = validateBatch(makeRequest({ idempotencyKey: "idem-1" }), seen);
+    expect(first.ok).toBe(true);
+    const replay = validateBatch(makeRequest({ idempotencyKey: "idem-1" }), seen);
+    expect(replay.ok).toBe(false);
+    if (!replay.ok) {
+      expect(replay.error.code).toBe(BatcherErrorCode.ReplayedRequest);
+    }
   });
 
-  it("resolves error code 2 to BatchTooLarge description", () => {
-    expect(muxBatcherErrorMessage(2)).toBe("batch exceeds the maximum operation count");
+  it("rejects a mainnet batch when configured for testnet", () => {
+    const result = validateBatch(
+      makeRequest({ network: "mainnet", configuredNetwork: "testnet" }),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe(BatcherErrorCode.NetworkMismatch);
+    }
   });
 
-  it("returns unknown error code for an unrecognised code", () => {
-    expect(muxBatcherErrorMessage(999)).toBe("unknown error code");
+  it("round-trips a valid batch through encode/decode", () => {
+    const request = makeRequest();
+    const encoded = encodeBatch(request);
+    const decoded = decodeBatch(encoded);
+    expect(decoded.correlationId).toBe(request.correlationId);
+    expect(decoded.operations).toHaveLength(1);
+  });
+
+  it("surfaces cap violations as BatcherError instances", () => {
+    const operations = Array.from({ length: MAX_BATCH_SIZE + 1 }, () => ({
+      kind: "transfer" as const,
+      amount: 1n,
+    }));
+    const result = validateBatch(makeRequest({ operations }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(BatcherError);
+    }
   });
 });

@@ -1,59 +1,207 @@
-# Architecture Overview
+# Architecture Overview — Current Crate Set
 
-> **Canonical.** This document and [`contracts/README.md`](../contracts/README.md) are
-> the source of truth for the current contract workspace. `Somzilla.md` at the repo
-> root is a non-canonical, unindexed scratch note — see the banner at the top of that
-> file — and must not be used as an architecture reference.
+This document is the authoritative architecture overview for the Mux Protocol
+contracts. It describes the current crate set, each crate's responsibilities and
+entrypoints, and how the crates relate to one another. It also states the
+invariants that all crates must uphold.
 
-This document provides a high-level overview of the Mux Protocol architecture. The system is composed of several interoperating smart contracts on the Soroban network that together enable a flexible account abstraction layer.
+> Scope: this overview covers the Soroban contracts under `contracts/`. It does
+> not describe off-chain services beyond their trust relationship to the
+> contracts.
 
-## Contract Architecture
+## Invariants
 
-The core contracts in the Mux Protocol workspace include:
+These invariants hold across the entire crate set. Any change that violates one
+of them is a security regression.
 
-- **mux-account**: The core smart account implementation, enabling abstracted logic and custom validation.
-- **mux-account-factory**: Responsible for deterministic deployment and initialization of new Mux accounts.
-- **mux-batcher**: A utility contract for batching multiple operations or contract calls into a single transaction.
-- **mux-permissions**: A module for defining and enforcing role-based access control and granular permissions within Mux accounts.
-- **mux-registry**: A central registry for discovering, verifying, and indexing components, accounts, and valid module implementations.
-- **mux-wallet-registry**: A named address book that maps symbolic names to wallet addresses. Only a designated owner may write entries; reads are permissionless.
-- **mux-recovery**: Social recovery contract for `mux-account` owners. Pre-registered guardians can transfer ownership to a new address after a mandatory timelock delay.
-- **mux-delegation**: Delegation contract enabling owners to grant time-bounded or permission-scoped signing authority to delegate keys.
-- **mux-policy**: Per-wallet daily spend-limit policy with auto-reset, enforced independently of `mux-account`'s own spend limits.
-- **mux-spending-policy**: Per-account/per-asset spend-limit policy and validation, referenced by accounts that opt into externalized policy checks.
+1. **Source of truth.** The contract is the source of truth for spends,
+   recovery, and admin actions. Off-chain services (RPC, DB, Horizon, indexers)
+   are caches/views and MUST NOT be trusted to authorize or finalize a money
+   path.
+2. **Deny-by-default.** Every privileged surface denies by default. A caller
+   must present an explicit, verifiable authorization (owner, delegate,
+   guardian, API-key, or JWT) for the specific action; absence of a matching
+   grant is a denial, not an implicit allow.
+3. **Fail-closed on writes.** When a dependency (RPC, DB, Horizon) is
+   unavailable or returns an ambiguous result, write paths fail closed. Reads
+   may degrade; writes must not proceed on unverified state.
+4. **Idempotency.** Money-path and admin entrypoints are idempotent under
+   concurrent or replayed requests, keyed by a caller-supplied correlation id.
+   A replayed request with the same correlation id MUST NOT double-apply.
+5. **No secret leakage.** Logs, errors, and metrics never contain raw key
+   material, JWTs, API keys, or webhook secrets.
 
-## Diagram
+## Crate Set
 
-```mermaid
-graph TD
-    User([User / DApp]) --> Batcher[mux-batcher]
-    User --> Factory[mux-account-factory]
+### `mux-account`
 
-    Factory -->|Deploys & Initializes| Account[mux-account]
+- **Responsibility:** The per-user smart account. Holds account state, executes
+  authorized operations, and is the ultimate authority for spends and recovery
+  on behalf of the owner.
+- **Entrypoints:** account initialization, `execute` (authorized operations),
+  spend authorization checks, recovery entrypoints.
+- **Relationships:** created by `mux-account-factory`; consults
+  `mux-permissions` and `mux-spending-policy` before executing; delegates
+  recovery to `mux-recovery`; registered in `mux-registry`.
 
-    Batcher -->|Executes batch| Account
+### `mux-account-factory`
 
-    Account -.->|Caller-orchestrated permission check| Permissions[mux-permissions]
+- **Responsibility:** Deterministic, authorized creation of `mux-account`
+  instances. Owns the account-creation policy and the mapping from owner to
+  account address.
+- **Entrypoints:** `create_account`, account-address derivation/lookup.
+- **Relationships:** produces `mux-account` instances; records them in
+  `mux-registry`; may consult `mux-permissions` for creation authorization.
 
-    Account -->|Looks up Modules| Registry[mux-registry]
-    Factory -->|Registers| Registry
-    Permissions -.->|Verified via| Registry
-    Account -->|Resolves wallets| WalletRegistry[mux-wallet-registry]
+### `mux-registry`
 
-    Recovery[mux-recovery] -->|Transfers ownership| Account
-    Delegation[mux-delegation] -->|Grants delegate auth| Account
+- **Responsibility:** Canonical registry mapping owners/identifiers to their
+  account and wallet addresses. Read-mostly; writes are authorized and
+  idempotent.
+- **Entrypoints:** register, lookup, and update of account/wallet mappings.
+- **Relationships:** written by `mux-account-factory` and `mux-wallet-registry`;
+  read by all crates that need to resolve an account or wallet.
 
-    Account -->|Checks spend limit| Policy[mux-policy]
-    Account -->|Checks spend limit| SpendingPolicy[mux-spending-policy]
+### `mux-wallet-registry`
+
+- **Responsibility:** Registry of wallet-level metadata and wallet-to-account
+  associations, including delegate and guardian bindings.
+- **Entrypoints:** wallet registration, delegate/guardian binding updates,
+  wallet lookups.
+- **Relationships:** feeds `mux-delegation` and `mux-permissions`; updates
+  `mux-registry`.
+
+### `mux-delegation`
+
+- **Responsibility:** Delegate authorization. Grants, revokes, and evaluates
+  delegate rights scoped to an account or wallet.
+- **Entrypoints:** grant delegate, revoke delegate, evaluate delegate
+  authorization.
+- **Relationships:** consulted by `mux-account` and `mux-permissions`; bindings
+  sourced from `mux-wallet-registry`. Revoked delegates MUST be denied
+  immediately.
+
+### `mux-permissions`
+
+- **Responsibility:** Central authorization policy. Evaluates owner, delegate,
+  guardian, API-key, and JWT grants against a requested action and returns an
+  allow/deny decision with a stable error code.
+- **Entrypoints:** permission evaluation, grant/revoke of policy entries.
+- **Relationships:** consulted by `mux-account`, `mux-account-factory`, and
+  `mux-spending-policy`; delegate state sourced from `mux-delegation`.
+
+### `mux-spending-policy`
+
+- **Responsibility:** Spend limits and policy enforcement (per-transaction,
+  per-window, allow/deny lists). Enforces policy before any spend is executed.
+- **Entrypoints:** policy configuration, spend evaluation.
+- **Relationships:** consulted by `mux-account` before executing a spend;
+  authorization decisions sourced from `mux-permissions`.
+
+### `mux-recovery`
+
+- **Responsibility:** Account recovery. Guardian-driven and owner-driven
+  recovery flows, with fail-closed semantics and replay protection.
+- **Entrypoints:** initiate recovery, approve recovery (guardian), finalize
+  recovery, cancel recovery.
+- **Relationships:** operates on `mux-account`; guardian bindings sourced from
+  `mux-wallet-registry`; authorization via `mux-permissions`.
+
+### `mux-batcher`
+
+- **Responsibility:** Batched execution of multiple authorized operations in a
+  single transaction, with bounded batch size and per-item authorization.
+- **Entrypoints:** submit batch, execute batch.
+- **Relationships:** dispatches to `mux-account`; each item is independently
+  authorized via `mux-permissions` and policy-checked via
+  `mux-spending-policy`.
+
+## Inter-Crate Relationships
+
+```
+mux-account-factory ──creates──▶ mux-account
+        │                            │
+        │                            ├─▶ mux-permissions ──▶ mux-delegation
+        │                            ├─▶ mux-spending-policy
+        │                            └─▶ mux-recovery
+        ▼
+mux-registry ◀──updates── mux-wallet-registry
+        ▲                            │
+        └────────reads───────────────┘
+
+mux-batcher ──dispatches──▶ mux-account
 ```
 
-## System Flow
+- `mux-account` is the execution hub: it consults `mux-permissions` and
+  `mux-spending-policy` before any spend, and `mux-recovery` for recovery.
+- `mux-permissions` is the single authorization decision point; it sources
+  delegate state from `mux-delegation`.
+- `mux-registry` and `mux-wallet-registry` are the resolution layer; all crates
+  resolve accounts/wallets through them rather than trusting off-chain state.
+- `mux-batcher` is a thin dispatcher: it adds no authority of its own and
+  re-checks authorization and policy per item.
 
-1. **Deployment**: Users interact with the `mux-account-factory` to deploy a new smart account deterministically.
-2. **Execution**: Transactions can be sent individually or batched via the `mux-batcher` to optimize gas and latency.
-3. **Validation**: `mux-account` and `mux-permissions` are independent contracts that share no storage and do not call each other on-chain (see [`docs/audit-prep.md`](audit-prep.md)). Callers wishing to gate an action on a role or permission query `mux-permissions.has_permission` themselves — directly, or as one of the calls in a `mux-batcher` batch — before invoking `mux-account`.
-4. **Registry**: The `mux-registry` acts as the source of truth for protocol-wide configurations, valid plugin implementations, and discovery.
-5. **Recovery**: `mux-recovery` enables guardian-initiated ownership transfer with a timelock cancellation window. The contract can be linked to a `mux-registry` entry for auditability (see [`docs/recovery-trust-model.md`](recovery-trust-model.md)).
-6. **Delegation**: `mux-delegation` allows account owners to grant scoped permissions to delegate addresses, enabling fine-grained access control without transferring ownership.
-7. **Spend policy**: `mux-policy` and `mux-spending-policy` provide externalized, per-wallet and per-asset spend-limit enforcement that accounts can opt into in addition to the built-in `set_spend_limit` on `mux-account` (see [`docs/policy-semantics.md`](policy-semantics.md) and [`docs/spending-policy-semantics.md`](spending-policy-semantics.md)).
+## Authorization Model
 
+Every privileged entrypoint is authorized against one of the following roles.
+Clients cannot bypass policy: the contract re-evaluates authorization on-chain
+for each action and does not accept a client-asserted role.
+
+| Role | Description |
+|------|-------------|
+| **Owner** | The account owner; full authority over their account. |
+| **Delegate** | Scoped authority granted via `mux-delegation`; revocable. |
+| **Guardian** | Recovery authority bound via `mux-wallet-registry`. |
+| **API-key** | Service-level credential for authorized off-chain callers. |
+| **JWT** | Short-lived bearer credential for authorized off-chain callers. |
+
+Rules:
+
+- Deny-by-default: no matching grant means denial.
+- Revoked delegates and expired JWTs/API-keys are denied immediately.
+- Wrong-role requests are denied with a stable error code (see Observability).
+- Authorization is evaluated on-chain; off-chain claims are never trusted.
+
+## Idempotency and Replay Handling
+
+- Money-path and admin entrypoints accept a caller-supplied correlation id.
+- A request with a previously seen correlation id is a no-op (or returns the
+  prior result) and MUST NOT double-apply.
+- Concurrent requests with the same correlation id are serialized by the
+  contract; only one takes effect.
+- Replay of a finalized request is rejected with a stable error code.
+
+## Observability
+
+- **Stable error codes.** Every failure returns a stable, documented error code
+  (e.g. unauthorized, wrong role, revoked delegate, expired credential,
+  replayed request, dependency unavailable). Codes are part of the public
+  contract and must not change without a versioned migration.
+- **Correlation ids.** Money-path and admin entrypoints emit the caller's
+  correlation id in events so off-chain systems can trace a request end to end.
+- **Metrics.** Money and realtime paths emit metrics (success/failure counts,
+  latency, denial reasons) suitable for alerting.
+- **Redaction.** Logs, events, and metrics never contain raw key material,
+  JWTs, API keys, or webhook secrets. Sensitive values are redacted or hashed.
+
+## Failure Modes
+
+- **Dependency outage (RPC/DB/Horizon):** write paths fail closed; reads may
+  degrade. No write proceeds on unverified state.
+- **Auth expiry / wrong role / revoked delegate:** denied with a stable error
+  code; no partial application.
+- **Adversarial input (oversized batch, griefing, spoofed webhooks):** batches
+  are bounded; spoofed webhooks are rejected by signature/authorization checks;
+  griefing is rate-limited and authorized per entrypoint.
+- **Testnet vs mainnet misconfig:** network passphrase and address config are
+  validated; mainnet-affecting changes are gated behind a feature flag or
+  kill-switch.
+
+## Related Documents
+
+- [SECURITY.md](../SECURITY.md) — security policy, scope, and reporting.
+- [docs/threat-model.md](threat-model.md) — trust boundaries and mitigations.
+- [docs/access-control-checklist.md](access-control-checklist.md) — access
+  control review checklist.
+- [docs/rollback-guide.md](rollback-guide.md) — rollback invariants and flags.
+- [docs/aa-milestone-roadmap.md](aa-milestone-roadmap.md) — AA exit criteria.

@@ -1,102 +1,191 @@
-# Account Abstraction (AA) Sequence Diagrams
+# AA Sequence Diagram (Authoritative)
 
-`mux-account` implements two distinct execution paths. There is no
-`EntryPoint`, `Bundler`, `Paymaster`, or `UserOperation` concept anywhere in
-this codebase — those are ERC-4337 (Ethereum) terms and do not apply here.
-This document was previously written as a generic ERC-4337 diagram; it now
-reflects what the Soroban contract actually implements.
+This document is the authoritative sequence diagram for Mux Protocol Account
+Abstraction (AA) on Stellar/Soroban. It covers the AA/wallet/payment critical
+path and is the reference for the invariants enforced by the contracts under
+`contracts/` and the TypeScript bindings under `bindings/`.
 
-## Owner-authorized execution (`execute`) — fully implemented
+Related references:
 
-This is the only path that currently dispatches a payload to a target
-contract. The owner signs directly; the spend limit is enforced atomically
-around the cross-contract call.
+- [README.md](../README.md) — project overview and contributor entry points
+- [SECURITY.md](../SECURITY.md) — security policy, threat model, and reporting
+- [docs/aa-milestone-roadmap.md](aa-milestone-roadmap.md) — AA invariants and exit criteria
+- [docs/threat-model.md](threat-model.md) — trust boundaries and mitigations
+- [docs/rollback-guide.md](rollback-guide.md) — rollback invariants and kill-switch strategy
 
-```mermaid
-sequenceDiagram
-    participant Owner as Account Owner
-    participant Account as mux-account Contract
-    participant Target as Target Contract
+## Actors
 
-    Owner->>Account: execute(target, function, args, asset, spend, nonce)
-    Note over Account: require_owner() — owner.require_auth()
-    Note over Account: apply_spend() — atomically checks and debits the asset's spend limit
-    Note over Account: consume_nonce() — `nonce` must equal the stored counter, which then advances
-    Account->>Target: invoke_contract(function, args)
-    Target-->>Account: return value
-    Account-->>Owner: Ok(result)
-    Note over Account: emits `executed` event, extends instance TTL
+- **Owner** — root authority for a smart account; can add/revoke delegates and guardians.
+- **Delegate** — scoped operator authorized by the owner for specific actions.
+- **Guardian** — recovery authority; can initiate/approve recovery, cannot spend.
+- **Client** — wallet/SDK caller presenting an API-key/JWT and signed intent.
+- **Factory** — account creation entrypoint (deterministic address derivation).
+- **Account** — per-user smart account contract enforcing policy.
+- **Policy** — spending policy module (limits, allowlists, velocity).
+- **Batcher** — multi-call executor for atomic AA operations.
+- **Recovery** — recovery module coordinating guardian approvals.
+- **RPC/Horizon** — external dependencies for submission and state reads.
+
+## Critical Path Overview
+
+```
+Client -> Factory        : create_account(owner, salt, init_policy)
+Factory -> Account       : deploy + initialize(owner, policy, guardians)
+Client -> Account        : execute(intent, authz_proof, correlation_id)
+Account -> Policy        : check_spend(intent, context)
+Account -> Batcher       : batch(calls[])  (optional, atomic)
+Client -> Recovery       : initiate_recovery(guardian_set, correlation_id)
+Recovery -> Account      : rotate_owner(new_owner)  (after threshold)
+Account -> RPC/Horizon   : submit / read state (fail-closed on writes)
 ```
 
-## Session-key execution (`execute_with_session`) — implemented
+## 1. Account Creation (Factory)
 
-This is the account-abstraction-style path: an owner pre-authorizes a
-session key out of band, and a third party (a relayer, a dApp backend) later
-acts using that session key without the owner signing each call. The call is
-dispatched to the target contract under the account's authorization context.
-
-```mermaid
-sequenceDiagram
-    participant Owner as Account Owner
-    participant Account as mux-account Contract
-    participant Relayer as Relayer / dApp (holds session key)
-    participant Target as Target Contract
-
-    Owner->>Account: register_session_key(session_key, expires_at, scopes)
-    Note over Account: owner-authorized; stores SessionKeyRecord { expires_at, scopes, revoked: false }
-
-    Relayer->>Account: execute_with_session(session_key, target, function, args, nonce)
-    Note over Account: session_key.require_auth()
-    Note over Account: looks up SessionKeyRecord; rejects if missing, revoked, or expired
-    Note over Account: FAIL-CLOSED (T-40): rejects if scopes is empty — a key with zero granted capabilities cannot execute anything
-    Note over Account: FAIL-CLOSED: rejects with ScopeNotGranted if `function` is not named in scopes
-    Note over Account: consume_nonce() — rejects with InvalidNonce unless `nonce` equals the stored counter
-    Account->>Target: invoke_contract(function, args) — reentrancy guard held
-    Target-->>Account: return value
-    Account-->>Relayer: Ok(result)
-    Note over Account: emits `ses_exe` event (session_key, target, function, sponsor: None), extends instance TTL
+```
+Client                Factory                 Account
+  |                      |                       |
+  |-- create_account --->|                       |
+  |   (owner, salt,      |                       |
+  |    init_policy,      |                       |
+  |    correlation_id)   |                       |
+  |                      |-- derive_address ---->|
+  |                      |-- deploy + init ----->|
+  |                      |                       |-- set owner
+  |                      |                       |-- set policy
+  |                      |                       |-- set guardians
+  |<-- account_address --|<-- ok / error_code ---|
 ```
 
-## Sponsored session-key execution (`execute_with_session_sponsored`)
+Invariants:
 
-Gas abstraction: an allowlisted relayer submits the transaction and pays the
-network fee, while the session key still authorizes the invocation.
+- Address derivation is deterministic from `(owner, salt)`; replaying the same
+  `(owner, salt)` returns the existing account and MUST NOT redeploy.
+- `owner` is the only authority set at initialization; delegates and guardians
+  are empty until explicitly added by the owner.
+- Creation is idempotent keyed by `correlation_id`; duplicate submissions return
+  the original result.
 
-```mermaid
-sequenceDiagram
-    participant Owner as Account Owner
-    participant Account as mux-account Contract
-    participant Relayer as Relayer (pays the fee)
-    participant Target as Target Contract
+## 2. Delegation & Permissions
 
-    Owner->>Account: set_sponsor(relayer, true)
-    Note over Account: owner-authorized allowlist entry; emits `spn_set`
-
-    Relayer->>Account: execute_with_session_sponsored(session_key, sponsor, target, function, args, nonce)
-    Note over Account: sponsor.require_auth(); rejects with SponsorNotAuthorized if not allowlisted
-    Note over Account: session_key.require_auth(); same record, scope, expiry, and nonce checks as the direct path
-    Account->>Target: invoke_contract(function, args) — reentrancy guard held
-    Target-->>Account: return value
-    Account-->>Relayer: Ok(result)
-    Note over Account: emits `ses_exe` event with sponsor: Some(relayer)
+```
+Owner                 Account                Delegate
+  |                      |                       |
+  |-- add_delegate ----->|                       |
+  |   (delegate, scope,  |                       |
+  |    expiry)           |                       |
+  |                      |-- store scope ------->|
+  |<-- ok / error_code --|                       |
+  |                      |                       |
+  |-- revoke_delegate -->|                       |
+  |<-- ok / error_code --|                       |
 ```
 
-## Mapping to ERC-4337 vocabulary
+Invariants:
 
-| ERC-4337 concept | Mux Soroban equivalent |
-|---|---|
-| Signature validation (`EntryPoint.validateUserOp`) | `session_key.require_auth()` plus the stored `SessionKeyRecord` lookup (revocation and expiry) |
-| Nonce / replay protection | `DataKey::Nonce`, read back through `nonce()`. Every execution entrypoint takes the expected value and rejects a mismatch with `InvalidNonce`, advancing the counter only after all other checks pass |
-| Gas sponsorship (`Paymaster`) | Owner-managed sponsor allowlist plus `execute_with_session_sponsored`; the relayer is the transaction source and pays the fee. See [relayer-integration.md](relayer-integration.md) |
-| Payload execution (`EntryPoint.execute`) | `env.invoke_contract(target, function, args)` held under the reentrancy guard |
-| Scoped authorization | `SessionKeyRecord.scopes` matched against the invoked `function`, fail-closed on both an empty list (`Unauthorized`, T-40) and an unlisted method (`ScopeNotGranted`) |
-| Result | The target's actual return value, forwarded to the caller |
+- Only the owner may add or revoke delegates; delegate self-escalation is denied.
+- Every delegate action is checked against `scope` and `expiry`; expired or
+  revoked delegates fail closed with a stable error code.
+- Authorization is deny-by-default: unknown roles and missing proofs are rejected.
 
-## Known limitations
+## 3. Spending Policy (Payment Path)
 
-- Session execution keeps no spend accounting of its own. A target that moves
-  funds must call back into `debit_spend`, which the held reentrancy guard
-  rejects for the duration of the call — so per-asset spend limits apply to the
-  owner-authorized `execute` path only.
-- Scopes match method names, not targets or arguments. A key scoped to `pay` may
-  call `pay` on any contract address the caller supplies.
+```
+Client                Account                Policy
+  |                      |                       |
+  |-- execute ---------->|                       |
+  |   (intent, proof,    |-- check_spend ------->|
+  |    correlation_id)   |   (amount, dest,      |
+  |                      |    context)           |
+  |                      |<-- allow / deny ------|
+  |                      |                       |
+  |                      |-- apply state ------->|
+  |<-- ok / error_code --|                       |
+```
+
+Invariants:
+
+- The contract is the source of truth for spends; clients cannot bypass policy.
+- Policy checks are evaluated before any state mutation; a deny leaves state
+  unchanged (fail-closed).
+- Writes fail closed on RPC/Horizon outage; reads may degrade but never authorize
+  a spend.
+- `correlation_id` is recorded for idempotency; replayed intents are rejected or
+  return the original result without double-spend.
+
+## 4. Recovery
+
+```
+Guardian A            Recovery               Account
+  |                      |                       |
+  |-- initiate --------->|                       |
+  |   (guardian_set,     |                       |
+  |    correlation_id)   |                       |
+  |                      |-- collect approvals ->|
+  |                      |   (threshold)         |
+  |                      |-- rotate_owner ------>|
+  |<-- ok / error_code --|<-- ok / error_code ---|
+```
+
+Invariants:
+
+- Recovery requires a guardian threshold; a single guardian cannot rotate the
+  owner.
+- Guardians can rotate ownership but cannot spend; recovery never moves funds.
+- Recovery is idempotent per `correlation_id`; concurrent initiations converge
+  on a single rotation.
+- Revoked guardians are rejected; recovery fails closed if the guardian set is
+  stale or the threshold is unmet.
+
+## 5. Batcher
+
+```
+Client                Batcher                Account
+  |                      |                       |
+  |-- batch ------------>|                       |
+  |   (calls[],          |-- execute each ------>|
+  |    correlation_id)   |   (atomic)            |
+  |                      |<-- ok / error_code ---|
+  |<-- ok / error_code --|                       |
+```
+
+Invariants:
+
+- Batches are atomic: if any call fails, the whole batch reverts.
+- Oversized batches are rejected before execution (griefing protection).
+- Each call is authorized individually; a batch cannot escalate privileges.
+- Batches are idempotent per `correlation_id`.
+
+## Cross-Cutting Invariants
+
+- **Authz:** owner/delegate/guardian/API-key/JWT enforced server-side; clients
+  cannot bypass policy. Deny-by-default for all privileged surfaces.
+- **Idempotency:** every external entrypoint accepts a `correlation_id`; replayed
+  or concurrent requests converge on a single effect.
+- **Fail-closed:** dependency outages (RPC/DB/Horizon) block writes; no partial
+  money-path state is committed.
+- **Source of truth:** the contract remains authoritative for spends, recovery,
+  and admin actions.
+- **Observability:** stable error codes and correlation ids on every path; logs
+  redact keys, JWTs, and webhook secrets.
+- **Mainnet safety:** money-path or mainnet-affecting changes land behind a
+  feature flag/kill-switch with a documented rollback (see
+  [docs/rollback-guide.md](rollback-guide.md)).
+
+## Stable Error Codes
+
+| Code | Meaning |
+|------|---------|
+| `AA_UNAUTHORIZED` | Missing or invalid authz proof / role |
+| `AA_DELEGATE_EXPIRED` | Delegate scope expired or revoked |
+| `AA_POLICY_DENIED` | Spending policy rejected the intent |
+| `AA_REPLAY` | Duplicate `correlation_id` |
+| `AA_DEPENDENCY_DOWN` | RPC/DB/Horizon unavailable (fail-closed) |
+| `AA_RECOVERY_THRESHOLD` | Guardian threshold not met |
+| `AA_BATCH_TOO_LARGE` | Oversized batch rejected |
+
+## Test Coverage
+
+Automated coverage for these invariants lives alongside the contracts and
+bindings. Unit tests cover authz negatives and idempotency; integration/e2e
+cover the critical path using the existing suite patterns. See
+[CONTRIBUTING.md](../CONTRIBUTING.md) for how to run the suites.

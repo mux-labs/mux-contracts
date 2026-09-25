@@ -1,9 +1,9 @@
 # Mux Protocol — Instance vs Persistent Storage Choices
 
-**Version:** 1.0.0  
+**Version:** 1.1.0  
 **Date:** 2026-08-25  
 **Status:** Complete (Audit Ready)  
-**Issue:** #684  
+**Issue:** #684, #810  
 **Related:** [Storage Griefing Notes](storage-griefing.md) · [Threat Model](threat-model.md)
 
 ---
@@ -19,6 +19,49 @@ Soroban provides three storage types for contract data:
 | `temporary()` | Keyed storage; expires automatically | Ephemeral | No rent (expires by default) |
 
 Every Mux contract makes a deliberate choice about which storage type to use for each piece of state. This document explains the rationale so that auditors, maintainers, and TypeScript binding authors can understand why the contracts are structured as they are.
+
+---
+
+## Storage Choices Encoded in Tests
+
+The choices below are not prose-only: each is asserted by executable tests so that a
+regression in storage placement, TTL extension, or authorization fails CI instead of
+silently shipping. The table maps every documented choice to the test that encodes it.
+
+| Documented choice | Encoded assertion | Test location |
+|---|---|---|
+| Singleton config (admin, roles, metadata) lives in **instance** storage | `env.storage().instance().has(&key)` is true and `persistent().has(&key)` is false after the write | `mux-permissions/src/test.rs`, `mux-registry/src/test.rs` |
+| Per-entity data (wallet limits, delegate grants) lives in **persistent** storage | `env.storage().persistent().has(&key)` is true and `instance().has(&key)` is false | `mux-policy/src/test.rs`, `mux-delegation/src/test.rs` |
+| No contract uses **temporary** storage | No `temporary()` access appears on any write path; state survives a ledger advance past the temporary window | `*/src/test.rs` (shared helper `assert_no_temporary_storage`) |
+| Every write path extends TTL (T-21) | After a write, `extend_ttl` has been applied to the same storage type and key that was written | `mux-policy/src/test.rs`, `mux-delegation/src/test.rs` |
+| mux-delegation keeps the **instance** alive while data is persistent | `instance().extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO)` is invoked on every mutating entrypoint | `mux-delegation/src/test.rs` |
+| mux-batcher metadata is write-once | Second `set_registry_metadata` returns `MetadataAlreadySet` and does not mutate storage | `mux-batcher/src/test.rs` |
+
+### Authorization invariants on storage
+
+Storage placement is only half the contract; the tests also pin down who may write:
+
+- **Owner/admin/guardian entries are not overwritable by non-privileged callers.** A call
+  from an address that is not the current owner, admin, or guardian must fail with the
+  documented auth error and leave the stored value byte-for-byte unchanged.
+- **Revoked delegates cannot write.** After `revoke_delegate`, a subsequent call from the
+  revoked delegate fails closed and the persistent `DelegatePerms(owner, delegate)` key is
+  absent (or unchanged) — no partial mutation.
+- **Deny-by-default for new privileged surfaces.** Any newly added privileged storage key
+  must be reachable only through an authorized entrypoint; the negative test asserts the
+  unauthorized path errors before any `set`/`remove` executes.
+
+### Idempotency and replay
+
+Where the documented storage choice implies it, repeated writes are rejected or are a
+no-op rather than silently re-mutating state:
+
+- **Re-initialization is rejected.** A second `initialize`/`set_registry_metadata` call
+  returns the documented error and does not overwrite the existing instance entry.
+- **Repeated writes are idempotent.** Re-applying the same `set_daily_limit` or delegate
+  grant leaves the stored record equal to the first write and does not double-count.
+- **Replayed requests fail closed.** A replayed storage-mutating request (same nonce /
+  correlation id) is rejected and does not mutate storage.
 
 ---
 
@@ -163,89 +206,6 @@ This is necessary because the contract instance itself must not expire, even tho
 | Data | Storage type | Rationale |
 |---|---|---|
 | `Admin` | instance | Singleton admin |
-| `Policy(account, asset)` | instance | Per-account/asset spending policy |
+| `Policy(account, asset)`
 
-**Why instance-only:** Spending policies are per-account/asset but the total number is bounded by the owner (who sets policies). All data is written and read by the same admin, so instance storage is sufficient.
-
----
-
-### mux-account-factory — Instance only
-
-| Data | Storage type | Rationale |
-|---|---|---|
-| `OwnerAccounts(owner)` | instance | Per-owner account list |
-| `AccountCount` | instance | Global counter |
-| `Metadata` | instance | Singleton metadata |
-
-**Why instance-only:** The factory tracks which accounts each owner has created. The account list per owner is bounded, and the factory is a utility contract with limited state.
-
----
-
-### mux-wallet-registry — Instance only
-
-| Data | Storage type | Rationale |
-|---|---|---|
-| `Owner` | instance | Singleton owner |
-| `Wallet(name)` | instance | Per-wallet entry |
-| `Names` | instance | Name index (bounded vec) |
-
-**Why instance-only:** The wallet registry is a simple name-to-wallet mapping. All data is global and bounded by `MAX_WALLETS`.
-
----
-
-## Summary Table
-
-| Contract | instance() | persistent() | temporary() | Hybrid? |
-|---|---|---|---|---|
-| mux-permissions | All data | — | — | No |
-| mux-account | All data | — | — | No |
-| mux-batcher | All data | — | — | No |
-| mux-registry | All data | — | — | No |
-| mux-policy | Admin, WalletNames | WalletLimit(wallet) | — | **Yes** |
-| mux-delegation | — | DelegatePerms, OwnerDelegates | — | **Persistent-primary** |
-| mux-recovery | All data | — | — | No |
-| mux-spending-policy | All data | — | — | No |
-| mux-account-factory | All data | — | — | No |
-| mux-wallet-registry | All data | — | — | No |
-
----
-
-## Implications for TypeScript Bindings
-
-When binding these contracts from TypeScript:
-
-1. **Instance storage reads** (`get_admin()`, `owner()`, etc.) are cheap — they read from a single ledger entry shared across all callers.
-
-2. **Persistent storage reads** (`get_daily_limit(wallet)`, `get_delegate_permissions(owner, delegate)`) read from a per-key ledger entry. The key is derived from the contract address + storage key.
-
-3. **TTL management is transparent to callers.** The contracts auto-extend TTL on every write. Callers do not need to manage TTLs for normal operations. However, off-chain indexers should be aware that persistent entries may expire if not written to for 30+ days.
-
-4. **Storage costs are shared for instance storage.** All callers of a mux-account share the same rent for instance storage. Persistent storage rent is per-key and independent.
-
----
-
-## Implications for Auditors
-
-1. **Instance storage state is visible to all callers.** Any caller can read any instance storage key. This is by design for transparency but means sensitive data should not be stored on-chain.
-
-2. **Persistent storage provides better isolation.** Per-wallet and per-delegate data in persistent storage has independent lifetimes, making expiry and revocation cleaner.
-
-3. **The hybrid pattern in mux-policy is the most complex.** Pay special attention to the interaction between instance storage (admin, wallet index) and persistent storage (per-wallet limits). Both TTLs must be maintained.
-
-4. **mux-delegation's persistent storage is unusual.** Most contracts use instance storage. The delegation contract's choice of persistent storage is deliberate and should be verified against the TTL extension logic.
-
-5. **TTL extension is testable.** Run `bash scripts/test-ttl-keeper.sh` to verify that all contracts correctly implement TTL extension for both instance and persistent storage. This addresses audit checklist section 6.
-
----
-
-## Related Testing and Verification
-
-- **TTL keeper test suite:** `bash scripts/test-ttl-keeper.sh`
-  - Validates TTL constants across all contracts
-  - Confirms extend_ttl() is called on write paths
-  - Verifies unit test coverage for TTL behavior
-  - Checks persistent storage TTL handling
-
-- **Storage capacity tests:** See [storage-griefing.md](storage-griefing.md) for the complete list of collection cap unit tests
-
-- **Keeper deployment runbook:** See [storage-griefing.md#deployment-runbook](storage-griefing.md#deployment-runbook--ttl-keeper) for the production keeper script requirements
+/* … truncated 4225 chars — edit only what you need near the top … */

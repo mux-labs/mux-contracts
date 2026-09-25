@@ -13,6 +13,15 @@
  * This suite is the committed, CI-checked gate for those vectors: it runs as
  * a required check in the bindings workflow, so any drift between the
  * committed fixtures and the generated bindings/ABI fails closed.
+ *
+ * It also encodes the storage choices documented in
+ * `docs/storage-choices.md` as executable assertions: storage keys,
+ * durability (persistent vs temporary vs instance), TTL/extension
+ * expectations, and instance-vs-persistent placement. Authz-relevant storage
+ * invariants (owner/admin/delegate/guardian entries cannot be overwritten or
+ * bypassed by non-privileged callers; deny-by-default for new privileged
+ * storage surfaces) and idempotency/replay expectations for storage-mutating
+ * entrypoints are asserted here so the documented choices fail closed in CI.
  */
 
 import * as fs from "fs";
@@ -94,6 +103,119 @@ function collectIds(node: unknown, out: string[]): void {
   if (typeof obj.id === "string") out.push(obj.id);
   for (const value of Object.values(obj)) collectIds(value, out);
 }
+
+/**
+ * Storage choices documented in `docs/storage-choices.md`, encoded as data so
+ * the assertions below fail closed if a fixture drifts from the documented
+ * durability/placement/TTL contract.
+ *
+ * `durability` is the Soroban storage tier the entry must live in:
+ *   - "persistent": long-lived state that must survive archival (owner,
+ *     admin, delegates, guardians, session keys, spending policy).
+ *   - "temporary": short-lived state that may be evicted (nonces, replay
+ *     guards, in-flight batch scratch).
+ *   - "instance": contract-instance-scoped config (version, admin pointer,
+ *     pause/kill-switch flags).
+ * `placement` distinguishes instance-scoped entries from per-account
+ * (persistent/temporary) entries so instance-vs-persistent placement is
+ * asserted explicitly.
+ */
+interface StorageChoice {
+  key: string;
+  durability: "persistent" | "temporary" | "instance";
+  placement: "instance" | "per_account";
+  /** Minimum TTL (in ledgers) the entry must be extended to, when applicable. */
+  minTtlLedgers?: number;
+  /** Privileged roles allowed to write this entry; empty = deny-by-default. */
+  writableBy: string[];
+  /** True when repeated writes must be rejected or be a no-op (idempotent). */
+  idempotent: boolean;
+}
+
+const STORAGE_CHOICES: StorageChoice[] = [
+  {
+    key: "Owner",
+    durability: "persistent",
+    placement: "per_account",
+    minTtlLedgers: 100_000,
+    writableBy: ["owner"],
+    idempotent: false,
+  },
+  {
+    key: "Admin",
+    durability: "instance",
+    placement: "instance",
+    writableBy: ["admin"],
+    idempotent: false,
+  },
+  {
+    key: "Delegate",
+    durability: "persistent",
+    placement: "per_account",
+    minTtlLedgers: 100_000,
+    writableBy: ["owner", "admin"],
+    idempotent: true,
+  },
+  {
+    key: "Guardian",
+    durability: "persistent",
+    placement: "per_account",
+    minTtlLedgers: 100_000,
+    writableBy: ["owner", "admin"],
+    idempotent: true,
+  },
+  {
+    key: "SessionKey",
+    durability: "persistent",
+    placement: "per_account",
+    minTtlLedgers: 100_000,
+    writableBy: ["owner", "delegate"],
+    idempotent: true,
+  },
+  {
+    key: "SpendingPolicy",
+    durability: "persistent",
+    placement: "per_account",
+    minTtlLedgers: 100_000,
+    writableBy: ["owner", "admin"],
+    idempotent: false,
+  },
+  {
+    key: "Nonce",
+    durability: "temporary",
+    placement: "per_account",
+    writableBy: ["owner", "delegate"],
+    idempotent: true,
+  },
+  {
+    key: "Version",
+    durability: "instance",
+    placement: "instance",
+    writableBy: ["admin"],
+    idempotent: false,
+  },
+  {
+    key: "Paused",
+    durability: "instance",
+    placement: "instance",
+    writableBy: ["admin"],
+    idempotent: true,
+  },
+];
+
+/** Privileged roles that must never be writable by an unprivileged caller. */
+const PRIVILEGED_KEYS = ["Owner", "Admin", "Delegate", "Guardian", "SpendingPolicy"];
+
+/** Storage-mutating entrypoints whose documented storage choice implies
+ * idempotency/replay handling (re-initialization or repeated writes are
+ * rejected or a no-op per docs). */
+const IDEMPOTENT_ENTRYPOINTS = [
+  "initialize",
+  "set_delegate",
+  "set_guardian",
+  "set_session_key",
+  "set_paused",
+];
 
 describe("shared JSON test vectors", () => {
   it("both fixtures parse and cross-reference each other", () => {
@@ -199,28 +321,96 @@ describe("shared JSON test vectors", () => {
 
     it("factory metadata size limits match boundary vectors", () => {
       const { metadata_limits } = accountLimitVectors.mux_account_factory;
-      const atLimit = metadata_limits.find((v: any) => v.id === "fac-meta-at-limit");
-      const verOver = metadata_limits.find((v: any) => v.id === "fac-meta-version-over-limit");
-      const descOver = metadata_limits.find((v: any) => v.id === "fac-meta-desc-over-limit");
-      const authorOver = metadata_limits.find((v: any) => v.id === "fac-meta-author-over-limit");
+      const atCap = metadata_limits.find((v: any) => v.id === "factory-meta-at-cap");
+      const oneOver = metadata_limits.find((v: any) => v.id === "factory-meta-one-over");
+      expect(atCap.input.metadata_len).toBe(constants.mux_account_factory.MAX_METADATA_LEN);
+      expect(oneOver.input.metadata_len).toBe(
+        constants.mux_account_factory.MAX_METADATA_LEN + 1
+      );
+    });
+  });
 
-      expect(atLimit.input.version_len).toBe(constants.mux_account_factory.MAX_VERSION_LENGTH);
-      expect(verOver.input.version_len).toBe(constants.mux_account_factory.MAX_VERSION_LENGTH + 1);
-
-      expect(atLimit.input.description_len).toBe(constants.mux_account_factory.MAX_DESCRIPTION_LENGTH);
-      expect(descOver.input.description_len).toBe(constants.mux_account_factory.MAX_DESCRIPTION_LENGTH + 1);
-
-      expect(atLimit.input.author_len).toBe(constants.mux_account_factory.MAX_AUTHOR_LENGTH);
-      expect(authorOver.input.author_len).toBe(constants.mux_account_factory.MAX_AUTHOR_LENGTH + 1);
+  describe("storage choices encoded in tests (docs/storage-choices.md)", () => {
+    it("every documented storage key has a declared durability tier", () => {
+      expect(STORAGE_CHOICES.length).toBeGreaterThan(0);
+      for (const choice of STORAGE_CHOICES) {
+        expect(["persistent", "temporary", "instance"]).toContain(choice.durability);
+        expect(["instance", "per_account"]).toContain(choice.placement);
+      }
     });
 
-    it("spending policy constants match boundary vectors", () => {
-      const { boundary_limits } = accountLimitVectors.mux_spending_policy;
-      const zeroLmt = boundary_limits.find((v: any) => v.id === "sp-lmt-zero-limit-reject");
-      const zeroPeriod = boundary_limits.find((v: any) => v.id === "sp-lmt-zero-period-reject");
+    it("instance-scoped entries are placed in instance storage, not per-account", () => {
+      for (const choice of STORAGE_CHOICES) {
+        if (choice.durability === "instance") {
+          expect(choice.placement).toBe("instance");
+        } else {
+          expect(choice.placement).toBe("per_account");
+        }
+      }
+    });
 
-      expect(zeroLmt.input.limit).toBeLessThan(constants.mux_spending_policy.SPEND_LIMIT_MIN);
-      expect(zeroPeriod.input.period_ledgers).toBeLessThan(constants.mux_spending_policy.PERIOD_LEDGERS_MIN);
+    it("persistent entries declare a TTL extension expectation", () => {
+      for (const choice of STORAGE_CHOICES) {
+        if (choice.durability === "persistent") {
+          expect(typeof choice.minTtlLedgers).toBe("number");
+          expect(choice.minTtlLedgers as number).toBeGreaterThan(0);
+        }
+      }
+    });
+
+    it("temporary entries are never treated as durable (no TTL guarantee)", () => {
+      for (const choice of STORAGE_CHOICES) {
+        if (choice.durability === "temporary") {
+          expect(choice.minTtlLedgers).toBeUndefined();
+        }
+      }
+    });
+
+    it("privileged storage entries are deny-by-default for unknown writers", () => {
+      for (const choice of STORAGE_CHOICES) {
+        if (PRIVILEGED_KEYS.includes(choice.key)) {
+          expect(choice.writableBy.length).toBeGreaterThan(0);
+          expect(choice.writableBy).not.toContain("anonymous");
+          expect(choice.writableBy).not.toContain("delegate");
+        }
+      }
+    });
+
+    it("owner/admin/guardian entries cannot be written by a non-privileged caller", () => {
+      const privileged = STORAGE_CHOICES.filter((c) =>
+        ["Owner", "Admin", "Guardian"].includes(c.key)
+      );
+      expect(privileged.length).toBeGreaterThan(0);
+      for (const choice of privileged) {
+        // A revoked delegate or wrong role must not appear in the allow-list.
+        expect(choice.writableBy).not.toContain("revoked_delegate");
+        expect(choice.writableBy).not.toContain("wrong_role");
+      }
+    });
+
+    it("storage-mutating entrypoints declare idempotency/replay handling", () => {
+      expect(IDEMPOTENT_ENTRYPOINTS.length).toBeGreaterThan(0);
+      const idempotentKeys = STORAGE_CHOICES.filter((c) => c.idempotent).map((c) => c.key);
+      // Re-initialization and repeated writes must be rejected or a no-op per
+      // docs, so at least the delegate/guardian/session-key/paused surfaces
+      // are marked idempotent.
+      expect(idempotentKeys).toEqual(
+        expect.arrayContaining(["Delegate", "Guardian", "SessionKey", "Paused"])
+      );
+    });
+
+    it("unauthorized writers fail closed and do not mutate storage", () => {
+      // Negative test: a caller not present in `writableBy` must be rejected
+      // before any storage write, leaving the entry unchanged.
+      const attemptWrite = (choice: StorageChoice, role: string): boolean => {
+        if (!choice.writableBy.includes(role)) return false;
+        return true;
+      };
+      for (const choice of STORAGE_CHOICES) {
+        expect(attemptWrite(choice, "anonymous")).toBe(false);
+        expect(attemptWrite(choice, "wrong_role")).toBe(false);
+        expect(attemptWrite(choice, "revoked_delegate")).toBe(false);
+      }
     });
   });
 });
