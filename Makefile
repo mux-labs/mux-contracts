@@ -1,5 +1,6 @@
-.PHONY: all build test clean fmt lint clippy wasm check-sizes size-check \
-        coverage coverage-ci \
+.PHONY: all build test test-unit test-all clean fmt fmt-fix lint clippy wasm check-sizes size-check \
+        bindings generate-bindings \
+        coverage coverage-ci test-coverage \
         deny \
         check-no-testutils \
         verify-wasm-hashes \
@@ -10,19 +11,33 @@ all: fmt lint build test
 build:
 	cargo build --workspace --all-targets
 
+# Run the complete test suite with all features enabled (matches CONTRIBUTING.md)
 test:
-	cargo test --workspace
+	cargo test --workspace --all-features
+
+# Unit tests only (matches CONTRIBUTING.md)
+test-unit:
+	cargo test --lib
+
+# Alias for full workspace test suite
+test-all: test
 
 clean:
 	cargo clean
 
+# Check formatting without modifying files (matches CONTRIBUTING.md checklist)
 fmt:
 	cargo fmt --all -- --check
 
+# Apply formatting fixes across all workspace crates (matches CONTRIBUTING.md code style)
+fmt-fix:
+	cargo fmt --all
+
 lint: clippy
 
+# Run Clippy across all targets and features with warnings denied (matches CONTRIBUTING.md)
 clippy:
-	cargo clippy --workspace --all-targets -- -D warnings
+	cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 wasm:
 	bash scripts/build-wasm.sh --release
@@ -32,6 +47,12 @@ check-sizes: wasm
 
 # Alias so both spellings work: `make check-size` and `make check-sizes`
 size-check: check-sizes
+
+# Generate TypeScript bindings from compiled contracts (matches CONTRIBUTING.md)
+bindings:
+	bash scripts/generate-bindings.sh
+
+generate-bindings: bindings
 
 # Supply-chain license and advisory check. deny.toml controls policy. (#661)
 # Requires: cargo install cargo-deny
@@ -58,6 +79,10 @@ coverage:
 # Fails if cargo-llvm-cov is not installed (install it in the CI job first).
 coverage-ci:
 	bash scripts/coverage.sh --lcov
+
+# Validate coverage report stub behavior (matches CONTRIBUTING.md)
+test-coverage:
+	bash scripts/test-coverage.sh
 
 # Simulate a full deployment without submitting any on-chain transactions.
 # No secret keys or live network access required. Useful for local validation. (#449)

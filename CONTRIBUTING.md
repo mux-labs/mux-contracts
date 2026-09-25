@@ -172,24 +172,25 @@ pushing. The CI also runs `cargo test --workspace --all-features`.
 Before requesting review on a contract PR:
 
 - [ ] `#![no_std]` — no `std` imports
-- [ ] `cargo build --target wasm32-unknown-unknown --release -p <crate>` succeeds
+- [ ] `cargo build --target wasm32-unknown-unknown --release -p <crate>` succeeds (or `make wasm` for all contracts)
 - [ ] Error enum follows the convention (single `#[contracterror]`, `#[repr(u32)]`, codes start at 1)
 - [ ] `docs/error_codes.md` updated for new or changed error variants
-- [ ] TypeScript bindings regenerated (`bash scripts/generate-bindings.sh`)
+- [ ] TypeScript bindings regenerated (`make bindings` or `bash scripts/generate-bindings.sh`)
 - [ ] `bindings/src/types.ts` union type and error-message map updated
 - [ ] `bindings/src/errors.ts` HTTP map updated for new variants
 - [ ] All collection storage has a cap (`MAX_*` constant + `TooMany*` error)
 - [ ] Persistent storage entries call `extend_ttl` on write
 - [ ] Unit tests cover happy path, each error variant, and edge cases
-- [ ] `cargo clippy --workspace --all-features` is clean
-- [ ] `cargo fmt --check` passes
+- [ ] `cargo clippy --workspace --all-features` is clean (or `make lint`)
+- [ ] `cargo fmt --check` passes (or `make fmt`, format via `make fmt-fix`)
+- [ ] Workspace test suite passes: `cargo test --workspace --all-features` (or `make test`)
 
 ## Code Style
 
 ### Rust
 
-- **Format** — Run `cargo fmt` before committing
-- **Lint** — Run `cargo clippy` and fix warnings
+- **Format** — Run `cargo fmt` before committing (or `make fmt-fix`)
+- **Lint** — Run `cargo clippy` and fix warnings (or `make lint`)
 - **Comments** — Add doc comments (`///`) to public functions and types
 - **Tests** — All new public functionality must have unit tests
 - **Error Handling** — Use Result types; avoid unwrap() in library code
@@ -201,15 +202,33 @@ Before requesting review on a contract PR:
 - **Public APIs** — Document with examples in doc comments
 - **Architecture** — Document design decisions in `docs/` directory
 
-## Testing
+## Testing & Makefile Reference
 
-- **Unit Tests** — Run `cargo test --lib`
-- **All Tests** — Run `cargo test --workspace --all-features`
+The root `Makefile` provides standardized targets mirroring the CI checks:
+
+| Target | Command | Description |
+|---|---|---|
+| `make all` | `fmt`, `lint`, `build`, `test` | Run all standard pre-push checks |
+| `make build` | `cargo build --workspace --all-targets` | Compile all workspace targets |
+| `make test` | `cargo test --workspace --all-features` | Run complete test suite with all features enabled |
+| `make test-unit` | `cargo test --lib` | Run unit tests across workspace libraries |
+| `make fmt` | `cargo fmt --all -- --check` | Verify code formatting |
+| `make fmt-fix` | `cargo fmt --all` | Automatically format code |
+| `make lint` / `make clippy` | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | Run Clippy linter with strict warning denial |
+| `make wasm` | `bash scripts/build-wasm.sh --release` | Build release WASM artifacts |
+| `make check-sizes` | `bash scripts/check-contract-sizes.sh` | Verify contract sizes against budget |
+| `make bindings` | `bash scripts/generate-bindings.sh` | Generate TypeScript contract bindings |
+| `make deny` | `cargo deny check` | Supply-chain advisory and license check |
+| `make coverage` | `bash scripts/coverage.sh` | Measure LLVM source coverage |
+| `make test-coverage` | `bash scripts/test-coverage.sh` | Validate coverage script stub behavior |
+
+- **Unit Tests** — Run `make test-unit` or `cargo test --lib`
+- **All Tests** — Run `make test` or `cargo test --workspace --all-features`
 - **Integration Tests** — Require localnet setup (see README.md)
 - **Coverage** — Aim for >90% coverage on new code. Generate a report with
   `make coverage` or `bash scripts/coverage.sh` (add `--html` / `--lcov` as needed).
   If `llvm-tools-preview` is not installed, the script prints a **coverage report stub**
-  listing workspace crates; validate the stub with `bash scripts/test-coverage.sh`.
+  listing workspace crates; validate the stub with `make test-coverage` or `bash scripts/test-coverage.sh`.
 
 ## Cargo.lock Policy
 
