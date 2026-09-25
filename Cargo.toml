@@ -24,6 +24,7 @@ repository = "https://github.com/mux-labs/mux-contracts"
 [workspace.dependencies]
 # Initialize Soroban Rust workspace dependencies
 # Pin exact SDK so transitive ed25519-dalek stays on 2.x (3.x breaks CryptoRng with env-host 21).
+# See docs/sdk-bump-playbook.md for mandatory upgrade process and invariants (#852).
 soroban-sdk = { version = "=21.7.7" }
 
 [workspace.lints.rust]

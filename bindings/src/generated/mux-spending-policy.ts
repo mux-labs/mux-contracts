@@ -73,6 +73,38 @@ export function validateSpendAmountBoundaries(amount: bigint): void {
   }
 }
 
+/**
+ * Relayer fee sponsorship limits (issue #847).
+ *
+ * A relayer may only sponsor fees up to `perTxLimit` per transaction and
+ * `perWindowLimit` within `windowLedgers`. The contract is the source of
+ * truth: `check_sponsorship` is simulate-only and fails closed, so callers
+ * cannot bypass policy by skipping the client-side check.
+ */
+export interface RelayerSponsorshipLimit {
+  relayer: string;
+  perTxLimit: bigint;
+  perWindowLimit: bigint;
+  windowLedgers: number;
+  /** Ledger at which the current window started; 0 when unset. */
+  windowStartLedger: number;
+  /** Amount already sponsored in the current window. */
+  windowSpent: bigint;
+}
+
+/** Stable error codes returned by the contract for sponsorship failures. */
+export const RelayerSponsorshipErrorCode = {
+  Unauthorized: 1,
+  RelayerNotRegistered: 2,
+  PerTxLimitExceeded: 3,
+  WindowLimitExceeded: 4,
+  InvalidLimit: 5,
+  ReplayedRequest: 6,
+} as const;
+
+export type RelayerSponsorshipErrorCode =
+  (typeof RelayerSponsorshipErrorCode)[keyof typeof RelayerSponsorshipErrorCode];
+
 export class MuxSpendingPolicyClient {
   private contract: Contract;
   private server: SorobanRpc.Server;
@@ -139,6 +171,75 @@ export class MuxSpendingPolicyClient {
     const result = await this.server.simulateTransaction(tx);
     if (SorobanRpc.Api.isSimulationError(result)) {
       throw new Error(`check_spend failed: ${result.error}`);
+    }
+  }
+
+  /**
+   * Admin/owner-only: set the relayer fee sponsorship limits for `relayer`.
+   * Deny-by-default — the contract enforces that the caller is the admin or an
+   * authorized delegate; clients cannot bypass this by calling directly.
+   */
+  async setRelayerSponsorshipLimit(
+    sourceKeypair: Keypair,
+    relayer: Address,
+    perTxLimit: bigint,
+    perWindowLimit: bigint,
+    windowLedgers: number
+  ): Promise<void> {
+    if (perTxLimit < 0n || perWindowLimit < 0n || windowLedgers <= 0) {
+      throw new Error(
+        `Invalid sponsorship limit (code ${RelayerSponsorshipErrorCode.InvalidLimit})`
+      );
+    }
+    const tx = await this.buildTx(sourceKeypair, "set_relayer_sponsorship_limit", [
+      nativeToScVal(relayer.toString(), { type: "address" }),
+      nativeToScVal(perTxLimit, { type: "i128" }),
+      nativeToScVal(perWindowLimit, { type: "i128" }),
+      nativeToScVal(windowLedgers, { type: "u32" }),
+    ]);
+    await this.submit(tx, sourceKeypair);
+  }
+
+  /** Read the current sponsorship limits and window usage for `relayer`. */
+  async getRelayerSponsorshipLimit(
+    sourceKeypair: Keypair,
+    relayer: Address
+  ): Promise<RelayerSponsorshipLimit> {
+    const tx = await this.buildTx(sourceKeypair, "get_relayer_sponsorship_limit", [
+      nativeToScVal(relayer.toString(), { type: "address" }),
+    ]);
+    return this.simulateRead<RelayerSponsorshipLimit>(tx);
+  }
+
+  /**
+   * Simulate-only: verifies that `relayer` may sponsor `fee` for `requestId`.
+   * Fails closed on any error (limit exceeded, unregistered relayer, replay,
+   * or RPC outage) so callers never proceed on an unverified sponsorship.
+   */
+  async checkRelayerSponsorship(
+    sourceKeypair: Keypair,
+    relayer: Address,
+    fee: bigint,
+    requestId: string
+  ): Promise<void> {
+    const tx = await this.buildTx(sourceKeypair, "check_relayer_sponsorship", [
+      nativeToScVal(relayer.toString(), { type: "address" }),
+      nativeToScVal(fee, { type: "i128" }),
+      nativeToScVal(requestId, { type: "string" }),
+    ]);
+    let result: SorobanRpc.Api.SimulateTransactionResponse;
+    try {
+      result = await this.server.simulateTransaction(tx);
+    } catch (err) {
+      // Dependency outage (RPC): fail closed on the money path.
+      throw new Error(
+        `check_relayer_sponsorship failed closed: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+    if (SorobanRpc.Api.isSimulationError(result)) {
+      throw new Error(`check_relayer_sponsorship failed: ${result.error}`);
     }
   }
 

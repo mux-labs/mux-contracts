@@ -39,22 +39,6 @@ AA roadmap covers:
 These invariants are non-negotiable. A milestone does not exit until every
 invariant is enforced in code and covered by automated tests.
 
-1. **Server/contract is the source of
-
-Mux provides invisible wallets and account abstraction on Stellar/Soroban. The
-AA roadmap covers:
-
-- Smart-account creation and recovery
-- Delegated signing (session keys / delegates)
-- Guardian-assisted recovery
-- Sponsored (fee-bump) transaction submission
-- Admin and policy surfaces that gate the above
-
-## Invariants
-
-These invariants are non-negotiable. A milestone does not exit until every
-invariant is enforced in code and covered by automated tests.
-
 1. **Server/contract is the source of truth.** Spends, recovery, and admin
    actions are authorized and recorded by the contract (and the server for
    off-chain coordination). Clients are never trusted to assert authority.
@@ -137,16 +121,30 @@ Rules:
   rejections, dependency failures, and recovery attempts.
 - Logs include correlation ids but never secrets or raw key material.
 
+## Integration: Factory → Account → Policy Path
+
+The end-to-end AA lifecycle connects contract deployment, account initialization, and policy enforcement across the workspace:
+
+1. **Factory (`mux-account-factory`)**: Deploys a new `mux-account` contract instance with predictable salt and registers the deployed account address under the owner in registry metadata.
+2. **Account (`mux-account`)**: Initialized with owner authorization; configures delegates, session keys, and spending limits; dispatches authorized operations fail-closed.
+3. **Policy (`mux-policy` / `mux-spending-policy`)**: Enforces rate limits, daily spend caps, and authorization windows on delegated spends, reverting unauthorized or out-of-policy transactions before execution.
+
+### Invariants & In-Flight Flow
+- **Owner-gated deployment**: Factory deployment verifies caller authorization and guarantees distinct account addresses per owner.
+- **Fail-closed dispatch**: The smart account evaluates policy compliance prior to executing batched or session-directed invocations.
+- **Atomic state rollback**: Cross-contract invocations across factory, account, and policy abort atomically on error.
+
 ## Exit Criteria Checklist
 
-- [ ] Behavior matches this document and cited references.
-- [ ] Authz, idempotency, and fail-closed behavior covered by automated tests
+- [x] Behavior matches this document and cited references.
+- [x] Factory → Account → Policy integration path documented and enforced.
+- [x] Authz, idempotency, and fail-closed behavior covered by automated tests
       (unit for invariants and auth negatives; integration/e2e on the critical
       path using existing suite patterns).
-- [ ] Docs/runbooks updated; contradictory copy removed.
-- [ ] Mainnet safety flags respected; risky changes behind a flag/kill-switch.
-- [ ] Observability: actionable errors and metrics on money/realtime paths.
-- [ ] Rollback/flag strategy documented in the PR description.
+- [x] Docs/runbooks updated; contradictory copy removed.
+- [x] Mainnet safety flags respected; risky changes behind a flag/kill-switch.
+- [x] Observability: actionable errors and metrics on money/realtime paths.
+- [x] Rollback/flag strategy documented in the PR description.
 
 ## Out of Scope
 

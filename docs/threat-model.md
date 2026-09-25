@@ -111,6 +111,7 @@ The `soroban-test-helpers` crate is a test utility (`rlib` only, no WASM) and is
 | T-08 | Gas griefing via oversized batch | Denial of Service | Medium | Medium | `MAX_BATCH_SIZE = 50` hard cap enforced before execution |
 | T-09 | Required-op failure ignored | Tampering | Low | High | `require_success` flag panics the transaction, rolling back all operations |
 | T-10 | Cross-contract call to malicious contract | Tampering | Medium | High | Caller is authenticated; target contracts are user-supplied — document that callers must vet targets |
+| T-50 | Simulate vs execute parity drift / event spam | Tampering | Low | Medium | `simulate_batch` strictly mirrors `execute_batch` size and validation gates (`EmptyBatch`, `BatchTooLarge`) and enforces `caller.require_auth()` without state mutation; emits distinct `sim_done` |
 
 ### 4.4 Permission Registry (`mux-permissions`)
 
@@ -181,6 +182,7 @@ All contracts use **instance storage** (and, for `mux-policy` / `mux-delegation`
 | T-27 | Stale / unrevoked grants | Tampering | Low | Medium | `revoke_delegate` removes the full permission set; grants are permission-scoped `Symbol`s vetted by the application layer |
 | T-28 | `link_contract_id` identity spoofing | Spoofing | Low | Medium | Caller-supplied `admin` must authorize itself (`admin.require_auth()`), and the link is **write-once** (`ContractIdAlreadySet`); documented as self-gated, not a stored-admin gate — see [delegation-upgrade.md](delegation-upgrade.md) |
 | T-29 | `mux-delegation` upgrade hijack | Elevation of Privilege | Low | Critical | `upgrade()` requires stored `DataKey::Admin` auth; `NotInitialized` (fail-closed) if `initialize` was never called |
+| T-51 | Delegation wildcard permission escalation | Elevation of Privilege | Low | High | Deny-by-default permission checks: only explicit permission symbols are recognized; wildcard/blanket grants are strictly forbidden unless documented |
 
 ### 4.9 Daily Spend Policy (`mux-policy`)
 
@@ -195,7 +197,7 @@ All contracts use **instance storage** (and, for `mux-policy` / `mux-delegation`
 | # | Threat | STRIDE | Likelihood | Impact | Mitigation |
 |---|--------|--------|------------|--------|------------|
 | T-33 | Quorum bypass | Elevation of Privilege | Low | Critical | `execute_recovery` requires `approvals.len() >= quorum_threshold`; `DuplicateApproval` rejects double-votes; threshold validated at init (`1 <= t <= guardians.len()`) |
-| T-34 | Timelock bypass | Tampering | Low | Critical | `execute_recovery` checks `executable_at` (`initiated_at + RECOVERY_TIMELOCK`); owner can `cancel_recovery()` during the window |
+| T-34 | Timelock bypass / illicit shortening | Tampering | Low | Critical | `execute_recovery` strictly checks `executable_at` (`initiated_at + RECOVERY_TIMELOCK`); timelock cannot be shortened illicitly; owner can `cancel_recovery()` during the window |
 | T-35 | Admin/owner+guardian bypass | Elevation of Privilege | Low | Critical | `approve_recovery_admin` requires **both** `owner.require_auth()` and a registered co-guardian (`co_guardian.require_auth()` + membership check) |
 | T-36 | Expired recovery request | Denial of Service | Low | Medium | `RECOVERY_EXPIRY` (120,960 ledgers ≈ 7d) bounds the window; stale `Pending` requests are overwritten by the next `initiate_recovery` |
 
@@ -218,6 +220,14 @@ All contracts use **instance storage** (and, for `mux-policy` / `mux-delegation`
 |---|--------|--------|------------|--------|------------|
 | T-41 | Name squatting / wallet hijack | Spoofing | Low | Medium | `register_wallet*` requires `owner.require_auth()`; `MAX_WALLETS = 128` cap; existing names are overwritten only by the owner |
 
+### 4.14 Emergency Pause and Freeze (`mux-account`)
+
+| # | Threat | STRIDE | Likelihood | Impact | Mitigation |
+|---|--------|--------|------------|--------|------------|
+| T-50 | Ongoing unauthorized spending after session or delegate key leak | Elevation of Privilege | Medium | Critical | Account owner invokes `pause()` (`owner.require_auth()`); all state-mutating execution paths (`execute`, `execute_with_session`, `debit_spend`, `set_delegate`) immediately fail closed with `Unauthorized` |
+| T-51 | Protocol admin key compromise resulting in global freeze of all user wallets | Elevation of Privilege | Low | Critical | **Deliberate rejection of global freeze backdoor:** Mux Protocol does NOT implement a protocol-wide freeze backdoor over user accounts. Each smart account is self-custodial and independently controlled; compromise of a protocol admin key cannot freeze user accounts. See [pause-freeze-decision.md](pause-freeze-decision.md) |
+| T-52 | Malicious actor attempts to freeze victim's account (DoS) | Denial of Service | Low | Critical | `pause()` and `unpause()` strictly enforce `owner.require_auth()`. Delegates, guardians, session keys, and unauthenticated third parties cannot trigger or clear the pause flag |
+
 ---
 
 ## 5. Security Controls
@@ -233,6 +243,7 @@ All contracts use **instance storage** (and, for `mux-policy` / `mux-delegation`
 | Delegate `expires_at` timestamp | `mux-account` |
 | Spend limit period reset via ledger sequence | `mux-account`, `mux-policy`, `mux-spending-policy` |
 | **Fail-closed session-scope enforcement** | `mux-account::execute_with_session` (T-40) |
+| **Owner-controlled circuit breaker (`pause` / `unpause`)** | `mux-account::pause`, `mux-account::unpause` (T-50..T-52) |
 | M-of-N guardian quorum + timelock | `mux-recovery` |
 | Admin-only registry / policy / role writes | `mux-permissions`, `mux-registry`, `mux-policy`, `mux-spending-policy`, `mux-wallet-registry`, `mux-account-factory` (upgrade), `mux-delegation` (upgrade) |
 | Wallet-only spend recording | `mux-policy::record_spend` |
@@ -249,6 +260,7 @@ All contracts use **instance storage** (and, for `mux-policy` / `mux-delegation`
 - **RPC node trust** — users should use multiple RPC endpoints or run their own node.
 - **Frontend key management** — private keys in browser localStorage are a known risk; hardware wallets are recommended.
 - **Upgrade authority** — `mux-account` is immutable by design (no `upgrade()` will be added; see [account-upgrade-migration.md](account-upgrade-migration.md)); the other contracts gate `upgrade()` behind a stored admin/owner, but a compromised admin key is still catastrophic. Consider time-lock or DAO governance for admin keys on mainnet.
+- **Pause / freeze architecture decision** — `mux-account` implements a per-account, self-custodial circuit breaker (`pause` / `unpause`). A global protocol admin freeze backdoor across user accounts is deliberately rejected to preserve non-custodial ownership and eliminate central honeypot attack vectors; see [docs/pause-freeze-decision.md](pause-freeze-decision.md).
 - **Session scopes match methods, not targets** — `execute_with_session` dispatches to the caller-supplied `target` after matching `function` against the session key's `scopes`. A key scoped to `pay` may therefore call `pay` on any contract address the caller supplies; target-scoped sessions remain future work (see [aa_sequence_diagram.md](aa_sequence_diagram.md)).
 - **Session execution has no spend accounting** — per-asset spend limits are enforced on the owner-authorized `execute` path only. A target invoked through a session key must call back into `debit_spend`, which the held reentrancy guard rejects for the duration of the call.
 - **Sponsor allowlist is owner-managed** — an owner that allowlists a malicious relayer gains no protection from the contract beyond the session key's own scopes; the relayer still cannot exceed them (see [relayer-integration.md](relayer-integration.md)).
@@ -266,3 +278,4 @@ All contracts use **instance storage** (and, for `mux-policy` / `mux-delegation`
 | 2026-05-30 | 0.1.1 | Storage griefing: added T-21 TTL expiry threat; added `extend_ttl` mitigation in all contracts; added `docs/storage-griefing.md` |
 | 2026-05-30 | 0.1.2 | Added `docs/audit-prep.md` — scope, entry points, known limitations, auditor checklist |
 | 2026-08-26 | 0.2.0 | **Expanded to all ten production contracts** — previously covered only `mux-account`, `mux-batcher`, `mux-permissions`. Added §4.7 (factory), §4.8 (delegation), §4.9 (policy), §4.10 (recovery), §4.11 (registry), §4.12 (spending policy), §4.13 (wallet registry); added storage-griefing rows T-45…T-49; added T-40 fail-closed session-scope enforcement (`execute_with_session` rejects empty-scope keys) and its unit test; added threat-model coverage guard (`tests/threat_model_coverage.rs`) |
+| 2026-09-24 | 0.2.1 | Added §4.14 Emergency Pause and Freeze threats (T-50…T-52); documented architectural decision rejecting global freeze backdoor in favor of per-account self-custodial circuit breaker; cross-referenced `docs/pause-freeze-decision.md` (#845) |

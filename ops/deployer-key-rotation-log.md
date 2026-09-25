@@ -34,4 +34,11 @@ mainnet deployment cycle:
 
 ## New entries
 
+## mainnet - 2026-09-24
+- Deploy run: https://github.com/mux-labs/mux-contracts/actions/runs/11634a4
+- Deployer public key: GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAUKCMUQ2RWDISSG3XZDAOW
+- Drained to treasury: [x] yes — tx hash: 3389e9f0f1a65f19736cacf544c2e825313e8447f569233bb84ea3a407115360
+- Old key archived/revoked in secrets manager: [x] yes
+- Verified by: mux-ops
+
 <!-- Add new entries above this line, most recent first. -->

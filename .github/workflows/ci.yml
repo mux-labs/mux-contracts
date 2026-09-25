@@ -108,6 +108,8 @@ jobs:
         run: bash scripts/check-deploy-secret-name.sh
       - name: Check tagged releases have WASM hashes + binding version
         run: bash scripts/check-changelog-release-artifacts.sh
+      - name: Check changelog format and automation
+        run: bash scripts/check-changelog.sh
       - name: Check secret-bearing filenames are git-ignored
         run: bash scripts/check-gitignore-secret-patterns.sh
       - name: Check deployer-key rotation log entries
@@ -261,7 +263,7 @@ jobs:
         run: npm run lint
       - name: TypeScript compile check
         working-directory: bindings
-        run: npx tsc --noEmit
+        run: npm run typecheck
       - name: Run tests
         working-directory: bindings
         run: npm test

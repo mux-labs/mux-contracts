@@ -9,6 +9,10 @@
  * fixture and a binding could silently drift apart with no test failure to
  * catch it. `tests/fixture_vectors.rs` closes the same gap on the Rust side
  * by actually driving the contracts with these vectors.
+ *
+ * This suite is the committed, CI-checked gate for those vectors: it runs as
+ * a required check in the bindings workflow, so any drift between the
+ * committed fixtures and the generated bindings/ABI fails closed.
  */
 
 import * as fs from "fs";
@@ -77,6 +81,20 @@ function collectErrorVectors(
   }
 }
 
+/** Recursively collects every vector that carries an `id`, regardless of
+ * whether it asserts an error, so we can enforce determinism (unique ids)
+ * across the committed fixtures. */
+function collectIds(node: unknown, out: string[]): void {
+  if (Array.isArray(node)) {
+    for (const item of node) collectIds(item, out);
+    return;
+  }
+  if (node === null || typeof node !== "object") return;
+  const obj = node as Record<string, unknown>;
+  if (typeof obj.id === "string") out.push(obj.id);
+  for (const value of Object.values(obj)) collectIds(value, out);
+}
+
 describe("shared JSON test vectors", () => {
   it("both fixtures parse and cross-reference each other", () => {
     expect(typeof testVectors.description).toBe("string");
@@ -84,6 +102,16 @@ describe("shared JSON test vectors", () => {
     expect(testVectors._see_also.account_limit_vectors).toBe(
       "tests/fixtures/account_limit_vectors.json"
     );
+  });
+
+  it("committed vectors are deterministic (unique ids, no duplicates)", () => {
+    const ids: string[] = [];
+    collectIds(testVectors, ids);
+    collectIds(accountLimitVectors, ids);
+    expect(ids.length).toBeGreaterThan(0);
+    const seen = new Set<string>();
+    const duplicates = ids.filter((id) => (seen.has(id) ? true : (seen.add(id), false)));
+    expect(duplicates).toEqual([]);
   });
 
   describe("test_vectors.json error vectors match TS error-message helpers", () => {

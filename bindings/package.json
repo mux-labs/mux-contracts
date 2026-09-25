@@ -1,29 +1,32 @@
 {
-  "name": "@mux-protocol/contracts",
+  "name": "@mux/bindings",
   "version": "0.1.0",
-  "description": "TypeScript bindings for Mux Protocol Soroban smart contracts",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "description": "Typed bindings for Mux Protocol Soroban contracts",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "require": "./dist/index.js",
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./generated/*": {
+      "types": "./dist/generated/*.d.ts",
+      "import": "./dist/generated/*.js"
     }
   },
-  "sideEffects": false,
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/mux-labs/mux-contracts.git",
-    "directory": "bindings"
-  },
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "scripts": {
-    "build": "tsc",
-    "lint": "eslint src --ext .ts",
-    "test": "jest --passWithNoTests",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:vectors": "vitest run __tests__/test-vectors.test.ts",
+    "test:watch": "vitest",
+    "lint": "eslint src __tests__",
+    "lint:fix": "eslint src __tests__ --fix",
     "local-invoke": "npx ts-node src/local-invoke.ts",
     "generate": "bash ../scripts/generate-bindings.sh",
     "generate:bindings": "npx ts-node ../scripts/generate-bindings.ts",
@@ -40,22 +43,15 @@
     "@stellar/stellar-sdk": "^12.0.0"
   },
   "devDependencies": {
-    "@types/jest": "^29.5.0",
-    "@types/js-yaml": "^4.0.9",
-    "@types/node": "^20.0.0",
-    "@typescript-eslint/eslint-plugin": "^7.0.0",
-    "@typescript-eslint/parser": "^7.0.0",
-    "eslint": "^8.0.0",
-    "jest": "^29.5.0",
-    "js-yaml": "^5.4.1",
-    "ts-jest": "^29.1.0",
-    "typescript": "^5.4.0"
+    "@types/node": "^20.11.0",
+    "eslint": "^8.57.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
   },
-  "jest": {
-    "preset": "ts-jest",
-    "testEnvironment": "node",
-    "testMatch": [
-      "**/__tests__/**/*.test.ts"
-    ]
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

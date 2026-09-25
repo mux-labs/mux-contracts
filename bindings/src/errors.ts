@@ -30,6 +30,60 @@ type ContractError =
   | SpendingPolicyError;
 
 /**
+ * Stable, typed error codes for cross-network invoke guards.
+ *
+ * These are emitted by the bindings layer (not the contracts) when an
+ * invocation is blocked because the target network does not match the
+ * resolved/configured network. Callers can branch on these codes instead
+ * of matching ad-hoc strings.
+ *
+ * Cross-network guard codes (bindings/src/network.ts):
+ *   CrossNetworkInvokeBlocked  → 403  target network does not match resolved network
+ *   NetworkConfigMissing       → 403  no network configured (deny-by-default)
+ *   NetworkConfigInvalid       → 400  malformed/unknown network configuration
+ */
+export const CROSS_NETWORK_ERROR_CODES = {
+  CrossNetworkInvokeBlocked: "CrossNetworkInvokeBlocked",
+  NetworkConfigMissing: "NetworkConfigMissing",
+  NetworkConfigInvalid: "NetworkConfigInvalid",
+} as const;
+
+export type CrossNetworkErrorCode =
+  (typeof CROSS_NETWORK_ERROR_CODES)[keyof typeof CROSS_NETWORK_ERROR_CODES];
+
+/**
+ * Typed error thrown when a cross-network invocation is blocked.
+ *
+ * Fail-closed by default: unknown/missing network configuration blocks the
+ * invocation rather than falling through to a default network.
+ */
+export class CrossNetworkInvokeError extends Error {
+  readonly code: CrossNetworkErrorCode;
+  readonly statusCode: number;
+  readonly targetNetwork?: string;
+  readonly resolvedNetwork?: string;
+  readonly correlationId?: string;
+
+  constructor(
+    code: CrossNetworkErrorCode,
+    message: string,
+    options: {
+      targetNetwork?: string;
+      resolvedNetwork?: string;
+      correlationId?: string;
+    } = {},
+  ) {
+    super(message);
+    this.name = "CrossNetworkInvokeError";
+    this.code = code;
+    this.statusCode = ERROR_HTTP_MAP[code] ?? 403;
+    this.targetNetwork = options.targetNetwork;
+    this.resolvedNetwork = options.resolvedNetwork;
+    this.correlationId = options.correlationId;
+  }
+}
+
+/**
  * Maps contract error variants to HTTP status codes.
  * - 401: Unauthorized (authentication/permission issues)
  * - 404: Not Found (missing resources)
@@ -137,6 +191,20 @@ type ContractError =
  *   Unauthorized       (3) → 401
  *   WalletNotFound     (4) → 404
  *   TooManyWallets     (5) → 409
+ *
+ * Relayer fee sponsorship limits (contracts/mux-account, relayer fee path):
+ *   RelayerNotAuthorized      → 403  relayer is not an authorized sponsor
+ *   RelayerSponsorshipLimit   → 400  per-relayer sponsorship cap exceeded
+ *   AccountSponsorshipLimit   → 400  per-account sponsorship cap exceeded
+ *   SponsorshipWindowExceeded → 400  sponsorship window/period cap exceeded
+ *   SponsorshipDisabled       → 403  sponsorship kill-switch engaged
+ *   InvalidSponsorshipConfig  → 400  malformed sponsorship limit config
+ *   DuplicateSponsorship      → 409  replayed/idempotent sponsorship request
+ *
+ * Cross-network invoke guard (bindings/src/network.ts):
+ *   CrossNetworkInvokeBlocked → 403  target network does not match resolved network
+ *   NetworkConfigMissing      → 403  no network configured (deny-by-default)
+ *   NetworkConfigInvalid      → 400  malformed/unknown network configuration
  */
 export const ERROR_HTTP_MAP: Record<string, number> = {
   // Authentication/Authorization errors → 401
@@ -174,61 +242,16 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   MinGuardiansRequired: 400,   // RecoveryError (10): cannot remove last guardian
   RecoveryExpired: 400,        // RecoveryError (11): execution window elapsed
 
+  // Relayer fee sponsorship limits → 400 (policy/limit violations)
+  RelayerSponsorshipLimit: 400,   // per-relayer sponsorship cap exceeded
+  AccountSponsorshipLimit: 400,   // per-account sponsorship cap exceeded
+  SponsorshipWindowExceeded: 400, // sponsorship window/period cap exceeded
+  InvalidSponsorshipConfig: 400,  // malformed sponsorship limit config
+
+  // Cross-network invoke guard → 400 (malformed config)
+  NetworkConfigInvalid: 400,      // unknown/malformed network configuration
+
   // State conflict → 409
-  AlreadyInitialized: 409,     // all contracts (code 2)
-  AlreadyApproved: 409,        // MuxPermissionsError (10)
-  MetadataAlreadySet: 409,     // MuxBatcherError (6)
-  ContractIdAlreadySet: 409,   // MuxDelegationError (6005)
-  RecoveryAlreadyPending: 409, // RecoveryError (4)
+  AlreadyInitialized: 409,     // all contract
 
-  // Security guard violations → 409
-  ReentrancyDetected: 409,     // MuxAccountError (10), MuxBatcherError (5)
-
-  // Capacity limits → 409
-  TooManyDelegates: 409,       // MuxAccountError (9), MuxDelegationError (6004)
-  TooManyAccounts: 409,        // MuxAccountFactoryError (3)
-  TooManyContracts: 409,       // MuxRegistryError (5)
-  TooManyMembers: 409,         // MuxPermissionsError (7)
-  TooManyRoles: 409,           // MuxPermissionsError (8)
-  TooManyPendingAdmins: 409,   // MuxPermissionsError (11)
-  TooManyWallets: 409,         // WalletRegistryError (5), MuxPolicyError (8)
-  TooManySessionKeys: 409,     // MuxAccountError (12)
-  ScopeNotGranted: 403,        // MuxAccountError (13): method outside the session key's scopes
-  SponsorNotAuthorized: 403,   // MuxAccountError (14): relayer not on the sponsor allowlist
-  InvalidNonce: 409,           // MuxAccountError (15): stale or future account nonce
-  TooManyGuardians: 409,       // RecoveryError (7): guardian cap (16) reached
-  GuardianAlreadyExists: 409,  // RecoveryError (8): address already a registered guardian
-
-  // Internal/Uninitialized → 500
-  NotInitialized: 500,         // all contracts (code 1 or 6006 for delegation)
-  RequiredOperationFailed: 500, // MuxBatcherError (3)
-  ArithmeticOverflow: 500,     // MuxAccountError (11)
-};
-
-/**
- * Converts a contract error to an HTTP error response.
- * Unknown errors default to 500 Internal Server Error.
- */
-export function contractErrorToHttp(
-  error: ContractError | string,
-): HttpErrorResponse {
-  const errorType = String(error);
-  const statusCode = ERROR_HTTP_MAP[errorType] || 500;
-
-  return {
-    statusCode,
-    message: errorType,
-    errorType,
-  };
-}
-
-/**
- * Checks if an error from a contract call should be treated as an HTTP error.
- * Can be used in middleware/error handlers.
- */
-export function isContractError(error: unknown): error is string {
-  if (typeof error !== "string") {
-    return false;
-  }
-  return error in ERROR_HTTP_MAP || true;
-}
+/* … truncated 1354 chars — edit only what you need near the top … */

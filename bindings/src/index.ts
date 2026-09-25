@@ -28,6 +28,7 @@ export * from "./recovery-events";
 export * from "./policy-events";
 export * from "./registry-events";
 export * from "./batcher-events";
+export * from "./test-vectors";
 export * as examples from "./examples/frontend-usage";
 export * as accountExamples from "./examples/account-invoke";
 export * as batcher from "./batcher";
