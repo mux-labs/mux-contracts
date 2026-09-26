@@ -134,7 +134,9 @@ export type MuxBatcherError =
   | "RequiredOperationFailed"
   | "Unauthorized"
   | "ReentrancyDetected"
-  | "MetadataAlreadySet";
+  | "MetadataAlreadySet"
+  | "NotInitialized"
+  | "AlreadyInitialized";
 
 /**
  * Contract-level metadata stored once at deployment for registry discovery.
@@ -168,6 +170,8 @@ export function muxBatcherErrorMessage(error: MuxBatcherError | number): string 
     4: "caller is not authorized",
     5: "reentrant call into the batcher detected",
     6: "metadata has already been set for this batcher instance",
+    7: "upgrade called before initialize; no admin to authorise it",
+    8: "initialize called more than once",
   };
 
   const nameMap: Record<MuxBatcherError, number> = {
@@ -177,6 +181,8 @@ export function muxBatcherErrorMessage(error: MuxBatcherError | number): string 
     Unauthorized: 4,
     ReentrancyDetected: 5,
     MetadataAlreadySet: 6,
+    NotInitialized: 7,
+    AlreadyInitialized: 8,
   };
 
   const code = typeof error === "number" ? error : nameMap[error] ?? -1;
@@ -248,7 +254,8 @@ export type MuxPermissionsError =
   | "TooManyMembers"
   | "TooManyRoles"
   | "AdminNotFound"
-  | "AlreadyApproved";
+  | "AlreadyApproved"
+  | "TooManyPendingAdmins";
 
 /**
  * Maps a `MuxPermissionsError` variant or its raw `u32` contract error code to
@@ -278,6 +285,7 @@ export function muxPermissionsErrorMessage(
     8: "account holds too many roles",
     9: "pending admin not found",
     10: "approver has already approved this candidate",
+    11: "too many pending admin approvals",
   };
 
   const nameMap: Record<MuxPermissionsError, number> = {
@@ -291,6 +299,7 @@ export function muxPermissionsErrorMessage(
     TooManyRoles: 8,
     AdminNotFound: 9,
     AlreadyApproved: 10,
+    TooManyPendingAdmins: 11,
   };
 
   const code = typeof error === "number" ? error : (nameMap[error] ?? -1);

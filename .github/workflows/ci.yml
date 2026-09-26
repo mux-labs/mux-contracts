@@ -150,3 +150,32 @@ jobs:
             --root-doc CONTRACT_IDS.md \
             --detail-doc docs/contract-ids.md
           bash scripts/check-dependency-graph.sh
+
+      - name: Assert all expected contracts are generated in bindings
+        # Fail-closed: every contract listed in generate-bindings.sh must have
+        # a corresponding directory in bindings/src/generated/ so that silent
+        # WASM skipping in the generate step is caught before publish.
+        run: |
+          set -euo pipefail
+          EXPECTED_CONTRACTS=(
+            "mux-account"
+            "mux-account-factory"
+            "mux-batcher"
+            "mux-permissions"
+            "mux-policy"
+            "mux-registry"
+          )
+          GENERATED_DIR="bindings/src/generated"
+          failed=0
+          for contract in "${EXPECTED_CONTRACTS[@]}"; do
+            if [ ! -d "${GENERATED_DIR}/${contract}" ]; then
+              echo "::error::Expected generated contracts directory not found: ${GENERATED_DIR}/${contract}"
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo "One or more expected generated-contracts directories are missing."
+            echo "Run: bash scripts/generate-bindings.sh"
+            exit 1
+          fi
+          echo "All expected generated contracts directories are present."

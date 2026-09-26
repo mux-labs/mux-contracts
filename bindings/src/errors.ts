@@ -279,19 +279,98 @@ export class CrossNetworkInvokeError extends Error {
  *   NetworkConfigInvalid      → 400  malformed/unknown network configuration
  */
 export const ERROR_HTTP_MAP: Record<string, number> = {
-  // Authentication/Authorization errors → 401
-  Unauthorized: 401,
+  // ── Shared / multi-contract names ───────────────────────────────────────────
+  NotInitialized: 500,        // contract not yet initialized
+  AlreadyInitialized: 409,    // initialize called more than once
+  Unauthorized: 401,          // caller is not authorized
 
-  // Not Found errors → 404
-  NotADelegate: 404,           // MuxDelegationError (6001): no grant for (owner, delegate)
-  DelegateNotFound: 404,       // MuxAccountError (4): no delegate registered for owner
+  // ── MuxAccount ──────────────────────────────────────────────────────────────
+  DelegateNotFound: 404,      // (4)  no delegate registered for owner
+  DelegateExpired: 400,       // (5)  delegate timestamp has elapsed
+  SpendLimitExceeded: 400,    // (6)  spend would exceed configured per-asset limit
+  InvalidAmount: 400,         // (7)  amount is zero or negative
+  InvalidPeriod: 400,         // (8)  period is zero
+  TooManyDelegates: 409,      // (9)  delegate map at MAX_DELEGATES (64)
+  ReentrancyDetected: 409,    // (10) reentrant call detected
+  ArithmeticOverflow: 500,    // (11) arithmetic overflow in spend tracking
+  TooManySessionKeys: 409,    // (12) session key map at capacity
+  ScopeNotGranted: 403,       // (13) method not in session key scopes list
+  SponsorNotAuthorized: 403,  // (14) relayer not on sponsor allowlist
+  InvalidNonce: 409,          // (15) nonce mismatch
 
-  // Batching DoS cap errors → 400 (deny-by-default config → 403)
-  BatchTooLarge: 400,
-  BatchAggregateTooLarge: 400,
-  BatchEmpty: 400,
-  BatchCapConfigMissing: 403,
-  BatchCapConfigInvalid: 400,
+  // ── MuxAccountFactory ───────────────────────────────────────────────────────
+  InvalidAccount: 400,        // (2)  account_address must differ from owner
+  TooManyAccounts: 409,       // (3)  per-owner 64-account cap reached
+  MetadataNotFound: 404,      // (4)  no metadata stored for the account
+  MetadataTooLarge: 400,      // (5)  metadata field exceeds size limit
+
+  // ── MuxBatcher ──────────────────────────────────────────────────────────────
+  EmptyBatch: 400,            // (1)  batch contains no operations
+  BatchTooLarge: 400,         // (2)  batch exceeds 50-operation cap
+  RequiredOperationFailed: 500, // (3) required operation failed; batch aborted
+  MetadataAlreadySet: 409,    // (6)  metadata already set for this batcher
+
+  // ── MuxDelegation ───────────────────────────────────────────────────────────
+  NotADelegate: 404,          // (6001) no grant for (owner, delegate) pair
+  TooManyPermissions: 400,    // (6002) permission list exceeds 64-entry cap
+  EmptyPermissions: 400,      // (6003) empty permission list provided
+  ContractIdAlreadySet: 409,  // (6005) link_contract_id is write-once
+
+  // ── MuxPermissions ──────────────────────────────────────────────────────────
+  RoleNotFound: 404,          // (4)  role does not exist
+  AccountNotInRole: 404,      // (5)  account is not a member of the role
+  PermissionNotFound: 404,    // (6)  permission does not exist
+  TooManyMembers: 409,        // (7)  role at MAX_ROLE_MEMBERS (256)
+  TooManyRoles: 409,          // (8)  account at MAX_ROLES_PER_ACCOUNT (32)
+  AdminNotFound: 404,         // (9)  pending admin not found
+  AlreadyApproved: 409,       // (10) approver already approved this candidate
+  TooManyPendingAdmins: 409,  // (11) too many pending admin approvals
+
+  // ── MuxPolicy ───────────────────────────────────────────────────────────────
+  LimitNotFound: 404,         // (4)  no daily limit configured for the wallet
+  LimitExceeded: 400,         // (5)  spend would exceed the daily limit
+  TooManyWallets: 409,        // (8)  wallet cap (256) reached
+
+  // ── MuxRecovery ─────────────────────────────────────────────────────────────
+  RecoveryAlreadyPending: 409, // (4)  recovery request already pending
+  NoActiveRecovery: 404,       // (5)  no recovery request found
+  TimelockNotExpired: 400,     // (6)  recovery timelock has not elapsed
+  TooManyGuardians: 409,       // (7)  guardian cap (16) reached
+  GuardianAlreadyExists: 409,  // (8)  address already a registered guardian
+  GuardianNotFound: 404,       // (9)  address is not a registered guardian
+  MinGuardiansRequired: 400,   // (10) cannot remove the last guardian
+  RecoveryExpired: 400,        // (11) recovery execution window has elapsed
+
+  // ── MuxRegistry ─────────────────────────────────────────────────────────────
+  ContractNotFound: 404,      // (4)  no contract registered under the given name
+  TooManyContracts: 409,      // (5)  registry cap (128) reached
+
+  // ── SpendingPolicy ──────────────────────────────────────────────────────────
+  PolicyNotFound: 404,        // (4)  no spend policy for the account/asset pair
+  InvalidInput: 400,          // (6)  limit not positive or spend amount negative
+
+  // ── MuxWalletRegistry ───────────────────────────────────────────────────────
+  WalletNotFound: 404,        // (4)  no wallet registered under the given name
+
+  // ── Batching DoS caps (bindings/src/batcher.ts) ─────────────────────────────
+  BatchAggregateTooLarge: 400,  // aggregate operation count exceeds on-chain cap
+  BatchEmpty: 400,              // batch contains no operations (client-side guard)
+  BatchCapConfigMissing: 403,   // no batching cap configured (deny-by-default)
+  BatchCapConfigInvalid: 400,   // malformed batching cap configuration
+
+  // ── Cross-network invoke guard (bindings/src/network.ts) ────────────────────
+  CrossNetworkInvokeBlocked: 403, // target network does not match resolved network
+  NetworkConfigMissing: 403,      // no network configured (deny-by-default)
+  NetworkConfigInvalid: 400,      // malformed/unknown network configuration
+
+  // ── Relayer fee sponsorship limits ──────────────────────────────────────────
+  RelayerNotAuthorized: 403,       // relayer is not an authorized sponsor
+  RelayerSponsorshipLimit: 400,    // per-relayer sponsorship cap exceeded
+  AccountSponsorshipLimit: 400,    // per-account sponsorship cap exceeded
+  SponsorshipWindowExceeded: 400,  // sponsorship window/period cap exceeded
+  SponsorshipDisabled: 403,        // sponsorship kill-switch engaged
+  InvalidSponsorshipConfig: 400,   // malformed sponsorship limit config
+  DuplicateSponsorship: 409,       // replayed/idempotent sponsorship request
 };
 
 export const MuxErrorCode = {
