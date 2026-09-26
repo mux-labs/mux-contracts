@@ -478,6 +478,9 @@ Use this checklist for pre-audit and pre-mainnet verification:
 - [deployer-key.md](deployer-key.md) — Basic deployer key setup walkthrough
 - [deployer-key-requirements.md](deployer-key-requirements.md) — Quick-reference minimum requirements
 - [MAINNET_DEPLOY_CHECKLIST.md](MAINNET_DEPLOY_CHECKLIST.md) — Pre-deploy verification steps
+- [ops/deployer-key-rotation-log.md](../ops/deployer-key-rotation-log.md) — Append-only rotation log for mainnet deployment cycles
+- [scripts/check-deployer-key-rotation-log.sh](../scripts/check-deployer-key-rotation-log.sh) — CI gate for rotation log integrity
+- [scripts/check-deploy-secret-name.sh](../scripts/check-deploy-secret-name.sh) — CI secret name alignment gate
 - [SECURITY.md](../SECURITY.md) — Vulnerability disclosure policy
 
 ---

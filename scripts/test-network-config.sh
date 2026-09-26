@@ -26,6 +26,8 @@ assert_eq "testnet rpc_url"    "https://soroban-testnet.stellar.org"            
 
 load_network_config mainnet
 assert_eq "mainnet passphrase" "Public Global Stellar Network ; September 2015" "$NETWORK_PASSPHRASE"
+assert_eq "mainnet rpc_url"    "https://rpc-mainnet.stellar.org"                 "$NETWORK_RPC_URL"
+assert_eq "mainnet friendbot"  ""                                                "$NETWORK_FRIENDBOT_URL"
 
 load_network_config futurenet
 assert_eq "futurenet passphrase" "Test SDF Future Network ; October 2022"       "$NETWORK_PASSPHRASE"
