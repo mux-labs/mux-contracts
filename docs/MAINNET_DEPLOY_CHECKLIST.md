@@ -187,9 +187,15 @@ All three sign-offs are required before the deployment window begins.
 
 ## Related
 
+- [Contract Upgrade Pattern](contract-upgrade-pattern.md) — Technical upgrade implementation
+- [Upgrade Auth Requirements](upgrade-auth-requirements.md) — Authorization requirements for upgrades
+- [Rollback Deploy Notes](rollback-deploy.md) — Rollback strategies and procedures
+- [Rollback Log Discipline](../ops/rollback-log.md) — Operational logging for rollback
+- [Security Policy](../SECURITY.md) — Security guidelines and rollback security
 - [Funded deployer key setup](funded-deployer-key.md)
 - [Deploy dry-run flag](../scripts/deploy.sh) — `--dry-run` usage
 - [WASM hash verification](../scripts/verify-wasm-hash.sh) — post-deploy hash check
+- [Upgrade verification](../scripts/verify-upgrade.sh) — Pre-upgrade authorization checks
 - [Audit prep](audit-prep.md) — pre-audit requirements
 - [Access Control Checklist](access-control-checklist.md)
 - [Architecture Overview](architecture-overview.md)
