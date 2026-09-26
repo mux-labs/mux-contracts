@@ -290,9 +290,56 @@ async function handleContractCall(req, res) {
 docker compose up -d
 ```
 
+ feat/771-upgrade-auth-requirements
+Supported options:
+- `--network <network>` — `localnet|testnet|mainnet` (default: `localnet`)
+- `--contract-id <id>` or `--contract-name <name>` — contract to call
+- `--function <name>` — contract function to invoke
+- `--secret-key <secret>` — signer secret key for the transaction
+- `--arg <value>` — argument values; repeatable
+- `--simulate-only` — simulate without submitting
+
+If dependencies are not installed, run:
+
+```bash
+cd bindings && npm ci
+```
+
+**Deploying Contracts to Localnet:**
+
+After starting the localnet, build and deploy contracts:
+```bash
+# Build contracts
+cargo build --target wasm32-unknown-unknown --release --workspace
+
+# Use Stellar CLI to deploy (requires `stellar` CLI installed)
+stellar contract deploy --wasm target/wasm32-unknown-unknown/release/mux_account.wasm
+# ... repeat for other contracts and save the contract IDs to .env.localnet
+```
+
+## Documentation
+
+- [Contract IDs](CONTRACT_IDS.md) — Per-network program addresses, update process, and upgrade authority
+
+## Documentation (Extended)
+
+- [Architecture Overview](docs/architecture-overview.md) — High-level diagram and system components
+- [Policy Semantics](docs/policy-semantics.md) — Per-wallet daily spend limit design, reset logic, and error codes
+- [Account Abstraction Design](docs/account-abstraction.md) — Goals, architecture, session key design, and transaction flows
+- [Backend Orchestrator Integration](docs/aa-backend-orchestrator.md) — Scope and architecture for relayer integration
+- [Threat Model](docs/threat-model.md) — assets, trust boundaries, and mitigations
+- [Access Control Review Checklist](docs/access-control-checklist.md) — pre-deployment and pre-audit checklist
+- [Storage Griefing Notes](docs/storage-griefing.md) — collection caps, TTL management, keeper runbook
+- [External Audit Prep](docs/audit-prep.md) — scope, entry points, known limitations, auditor checklist
+- [Contract Upgrade Pattern](docs/contract-upgrade-pattern.md) — Technical upgrade implementation
+- [Upgrade Auth Requirements](docs/upgrade-auth-requirements.md) — Authorization requirements for upgrade operations
+- [Rollback Deploy Notes](docs/rollback-deploy.md) — Rollback strategies and operational procedures
+- [Security Policy](SECURITY.md) — Overall security guidelines, rollback security, and incident response
+
 This exposes:
 - Soroban RPC on `http://localhost:8000`
 - Horizon on `http://localhost:8001`
+main
 
 Stop the stack with `docker compose down`.
 
