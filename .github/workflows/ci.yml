@@ -208,7 +208,7 @@ jobs:
           echo "✓ Upgrade verification dry-run passes"
       - name: Test upgrade verification disabled on mainnet
         run: |
-          local valid_hash="a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+          local valid_hash="a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
           if ENABLE_CONTRACT_UPGRADE=false bash scripts/verify-upgrade.sh --network mainnet --contract mux-account --new-wasm-hash "$valid_hash" --dry-run 2>&1 | grep -q "Upgrade operations are disabled"; then
             echo "✓ Upgrade correctly disabled on mainnet by default"
           else
@@ -237,3 +237,96 @@ jobs:
             exit 1
           fi
           echo "✓ Documentation has upgrade auth cross-links"
+
+  migration-discipline:
+    name: Account Migration Discipline Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check account-upgrade-migration.md exists
+        run: |
+          if [ ! -f "docs/account-upgrade-migration.md" ]; then
+            echo "Error: docs/account-upgrade-migration.md not found"
+            exit 1
+          fi
+          echo "✓ docs/account-upgrade-migration.md exists"
+      - name: Check verify-migration.sh exists and is executable
+        run: |
+          if [ ! -f "scripts/verify-migration.sh" ]; then
+            echo "Error: scripts/verify-migration.sh not found"
+            exit 1
+          fi
+          chmod +x scripts/verify-migration.sh
+          echo "✓ verify-migration.sh exists and is executable"
+      - name: Check migrate-account.sh exists and is executable
+        run: |
+          if [ ! -f "scripts/migrate-account.sh" ]; then
+            echo "Error: scripts/migrate-account.sh not found"
+            exit 1
+          fi
+          chmod +x scripts/migrate-account.sh
+          echo "✓ migrate-account.sh exists and is executable"
+      - name: Check test-migration-verification.sh exists and is executable
+        run: |
+          if [ ! -f "scripts/test-migration-verification.sh" ]; then
+            echo "Error: scripts/test-migration-verification.sh not found"
+            exit 1
+          fi
+          chmod +x scripts/test-migration-verification.sh
+          echo "✓ test-migration-verification.sh exists and is executable"
+      - name: Test migration feature flag check
+        run: |
+          # Test disabled flag (should fail)
+          if bash scripts/check-feature-flags.sh ENABLE_ACCOUNT_MIGRATION 2>/dev/null; then
+            echo "Error: Feature flag check should fail when flag is not set"
+            exit 1
+          fi
+          echo "✓ Migration feature flag check correctly fails when flag is not set"
+          
+          # Test enabled flag (should pass)
+          if ! ENABLE_ACCOUNT_MIGRATION=true bash scripts/check-feature-flags.sh ENABLE_ACCOUNT_MIGRATION; then
+            echo "Error: Feature flag check should pass when flag is set to true"
+            exit 1
+          fi
+          echo "✓ Migration feature flag check correctly passes when flag is set to true"
+      - name: Test migration verification (dry-run)
+        run: |
+          if ! bash scripts/verify-migration.sh --network testnet --account-id CABCD... --from-version 1.0 --to-version 1.1 --strategy additive --dry-run; then
+            echo "Error: Migration verification dry-run failed"
+            exit 1
+          fi
+          echo "✓ Migration verification dry-run passes"
+      - name: Test migration verification disabled on mainnet
+        run: |
+          if ENABLE_ACCOUNT_MIGRATION=false bash scripts/verify-migration.sh --network mainnet --account-id CABCD... --from-version 1.0 --to-version 1.1 --strategy additive --dry-run 2>&1 | grep -q "Migration operations are disabled"; then
+            echo "✓ Migration correctly disabled on mainnet by default"
+          else
+            echo "Error: Migration should be disabled on mainnet by default"
+            exit 1
+          fi
+      - name: Run migration verification tests
+        run: |
+          if ! bash scripts/test-migration-verification.sh; then
+            echo "Error: Migration verification tests failed"
+            exit 1
+          fi
+          echo "✓ Migration verification tests pass"
+      - name: Check docs have migration cross-links
+        run: |
+          if ! grep -q "account-upgrade-migration.md" docs/account-abstraction.md; then
+            echo "Error: docs/account-abstraction.md missing link to account-upgrade-migration.md"
+            exit 1
+          fi
+          if ! grep -q "account-upgrade-migration.md" docs/contract-upgrade-pattern.md; then
+            echo "Error: docs/contract-upgrade-pattern.md missing link to account-upgrade-migration.md"
+            exit 1
+          fi
+          if ! grep -q "account-upgrade-migration.md" docs/upgrade-auth-requirements.md; then
+            echo "Error: docs/upgrade-auth-requirements.md missing link to account-upgrade-migration.md"
+            exit 1
+          fi
+          if ! grep -q "account-upgrade-migration.md" README.md; then
+            echo "Error: README.md missing link to account-upgrade-migration.md"
+            exit 1
+          fi
+          echo "✓ Documentation has migration cross-links"

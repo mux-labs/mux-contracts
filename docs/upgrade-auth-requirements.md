@@ -423,6 +423,7 @@ E2E tests must verify:
 
 ## Related Documents
 
+- [Account Upgrade Migration Path](account-upgrade-migration.md) — Storage migration procedures for account upgrades
 - [Contract Upgrade Pattern](contract-upgrade-pattern.md) — Technical upgrade implementation
 - [Rollback Deploy Notes](rollback-deploy.md) — Rollback strategies and procedures
 - [Rollback Log Discipline](../ops/rollback-log.md) — Operational logging discipline
@@ -430,6 +431,8 @@ E2E tests must verify:
 - [Mainnet Deploy Checklist](MAINNET_DEPLOY_CHECKLIST.md) — Pre-deployment requirements
 - [scripts/verify-upgrade.sh](../scripts/verify-upgrade.sh) — Upgrade verification script
 - [scripts/upgrade.sh](../scripts/upgrade.sh) — Upgrade execution script
+- [scripts/verify-migration.sh](../scripts/verify-migration.sh) — Migration verification script
+- [scripts/migrate-account.sh](../scripts/migrate-account.sh) — Migration execution script
 
 ---
 

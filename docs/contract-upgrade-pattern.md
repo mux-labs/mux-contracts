@@ -163,6 +163,7 @@ mod upgrade_tests {
 
 ## References
 
+- [Account Upgrade Migration Path](account-upgrade-migration.md) — Storage migration procedures for account upgrades
 - [Upgrade Auth Requirements](upgrade-auth-requirements.md) — Authorization requirements for upgrade operations
 - [Rollback Deploy Notes](rollback-deploy.md) — Rollback strategies and procedures
 - [Rollback Log Discipline](../ops/rollback-log.md) — Operational logging discipline
@@ -173,3 +174,5 @@ mod upgrade_tests {
 - Mux WASM hash verification: `scripts/verify-wasm-hash.sh` (see #113)
 - Mux upgrade verification: `scripts/verify-upgrade.sh` — Pre-upgrade authorization checks
 - Mux upgrade execution: `scripts/upgrade.sh` — Upgrade execution with logging
+- Mux migration verification: `scripts/verify-migration.sh` — Pre-migration authorization checks
+- Mux migration execution: `scripts/migrate-account.sh` — Migration execution with logging
