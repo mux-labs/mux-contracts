@@ -146,10 +146,13 @@ The best rollback is one you never need:
 
 ## Related Documents
 
+- [Rollback Log Discipline](../ops/rollback-log.md) — Operational logging discipline for rollback operations
+- [Security Policy](../SECURITY.md) — Overall security guidelines and rollback security
 - [Mainnet Deploy Checklist](mainnet-deploy-checklist.md)
 - [Deployer Key Setup](deployer-key.md)
 - [BREAKING_CHANGES](BREAKING_CHANGES.md)
-- [scripts/deploy.sh](../scripts/deploy.sh) — deployment script with `--dry-run`
+- [scripts/deploy.sh](../scripts/deploy.sh) — deployment script with `--dry-run` and rollback support
+- [scripts/verify-rollback.sh](../scripts/verify-rollback.sh) — rollback authorization verification
 - [.github/workflows/deploy.yml](../.github/workflows/deploy.yml) — GitHub Actions deploy workflow
 - [ops/rollback-log.md](../ops/rollback-log.md) — completion record for the checklists above
 - [scripts/check-rollback-log.sh](../scripts/check-rollback-log.sh) — CI enforcement for the rollback log
