@@ -1,6 +1,6 @@
 # mux-recovery — Recovery Trust Model
 
-**Version:** 0.1.0
+**Version:** 0.2.0
 **Status:** Living document — update whenever the recovery contract changes.
 
 ---
@@ -15,7 +15,7 @@
 
 | Role | Who | Trust Level | Capabilities |
 |---|---|---|---|
-| **Owner** | Account holder | Highest | Cancel any pending recovery; normal account operations |
+| **Owner** | Account holder | Highest | Cancel any pending recovery; call `set_registry`; rotate the guardian set; normal account operations |
 | **Guardian** | Trusted contacts set by owner at init | High | Initiate and execute recovery |
 | **Stranger** | Any other address | None | No recovery operations |
 
@@ -77,6 +77,21 @@ The timelock is the primary defence against a compromised guardian set. Even if 
 
 **Assumption:** The owner monitors their account (or has an automated watcher) at least once every 24 hours.
 
+The `rec_init` event payload carries `initiated_at`, `executable_at`, and `expires_at` so that off-chain watchers can surface deadlines without a follow-up storage read.
+
+**TypeScript binding constants** (exported from `bindings/src/types.ts`):
+
+```ts
+import { RECOVERY_TIMELOCK_LEDGERS, RECOVERY_EXPIRY_LEDGERS } from "@mux-protocol/contracts";
+
+// Compute deadlines from the rec_init event without an RPC call:
+const executableAt = initiatedAt + RECOVERY_TIMELOCK_LEDGERS; // ~24 h
+const expiresAt    = initiatedAt + RECOVERY_EXPIRY_LEDGERS;   // ~7 days
+```
+
+These mirror the on-chain `RECOVERY_TIMELOCK` and `RECOVERY_EXPIRY` constants
+and are **stable ABI** — changing them is a breaking change for off-chain tooling.
+
 ### 4.2 Single active request
 
 Only one `Pending` request may exist at a time. A second `initiate_recovery` call while a request is `Pending` returns `RecoveryAlreadyPending`. This prevents guardians from flooding the contract with requests to confuse the owner.
@@ -91,42 +106,74 @@ Only one `Pending` request may exist at a time. A second `initiate_recovery` cal
 
 ### 4.5 Audit events
 
-Every state mutation emits a structured event:
+Every state mutation emits a structured event under the `mux_recv` contract tag. The topics and data payload for each entrypoint are:
 
-| Entrypoint | Event topic | Data |
+| Entrypoint | Action topic | Data payload |
 |---|---|---|
 | `initialize` | `init` | `owner: Address` |
-| `initiate_recovery` | `rec_init` | `(guardian, new_owner, executable_at)` |
-| `execute_recovery` | `rec_exec` | `new_owner: Address` |
-| `cancel_recovery` | `rec_cncl` | `owner: Address` |
+| `initiate_recovery` | `rec_init` | `(guardian: Address, new_owner: Address, initiated_at: u32, executable_at: u32, expires_at: u32)` |
+| `approve_recovery` | `rec_appr` | `(guardian: Address, approval_count: u32)` |
+| `execute_recovery` | `rec_exec` | `(guardian: Address, new_owner: Address)` |
+| `approve_recovery_admin` | `rec_adm` | `new_owner: Address` |
+| `cancel_recovery` | `rec_cncl` | `()` |
+| `add_guardian` | `grd_add` | `guardian: Address` |
+| `remove_guardian` | `grd_rm` | `guardian: Address` |
+| `set_quorum_threshold` | `qrm_set` | `threshold: u32` |
+| `set_registry` | `reg_link` | `registry_id: Address` |
+| `recovery_request` | _(read-only)_ | Returns the full `RecoveryRequest` struct, no event emitted |
 
-Off-chain watchers should subscribe to `rec_init` events and alert the owner immediately.
+> **Note:** The `rec_init` payload carries the full timelock window as a
+> five-tuple. `initiated_at` is the ledger sequence at initiation, and
+> `executable_at`/`expires_at` are the same deadlines stored in the request
+> struct (`initiated_at + RECOVERY_TIMELOCK` / `initiated_at + RECOVERY_EXPIRY`).
+> Indexers surface deadlines directly from the event data without a
+> follow-up storage read.
 
----
+All events follow the two-topic convention defined in [`docs/event-topic-conventions.md`](event-topic-conventions.md):
 
-## 5. Threat Scenarios
+```text
+topics[0]  "mux_recv"   — contract tag (Symbol)
+topics[1]  <action>     — action name (Symbol, ≤ 8 chars)
+data       <payload>    — action-specific value
+```
 
-| Threat | Mitigation |
-|---|---|
-| Attacker compromises one guardian | Single guardian can initiate but owner has 24h to cancel |
-| All guardians collude | Owner has 24h cancellation window; monitor `rec_init` events |
-| Owner loses key, no guardians | Recovery impossible — owner must set guardians at init |
-| Attacker spams recovery requests | Only one Pending request allowed; each requires guardian auth |
-| Replay of old recovery request | Each request stores `initiated_at`; executed/cancelled requests cannot be re-executed |
-| Owner tries to remove guardians | Guardian set is immutable after `initialize` |
+Off-chain watchers should subscribe to `rec_init` events and alert the owner immediately when a recovery is initiated.
 
----
+### 4.6 Registry link
 
-## 6. Limitations and Future Work
+An optional registry contract address (`registry_id`) can be associated with the recovery contract after initialization via `set_registry(owner, registry_id)`.
 
-- **No quorum threshold.** Currently any single guardian can initiate and execute recovery. A future version should require M-of-N guardian signatures.
-- **Immutable guardian set.** Guardians cannot be rotated without redeploying the contract. A guardian rotation mechanism with its own timelock is planned.
-- **No guardian liveness check.** If all guardians lose their keys, recovery is impossible.
+- The field is stored under `DataKey::RegistryId` in instance storage.
+- Reading `registry_id()` returns `Option<Address>` — `None` if not set.
+- Setting the registry requires the current **owner's authorization**: the
+  caller-supplied `owner` argument must equal the stored owner (a mismatch is
+  rejected with `Unauthorized`), and `owner.require_auth()` is called before
+  the storage write.
+- A `reg_link` audit event is emitted each time the registry address is written, providing a full on-chain audit trail of any registry re-links.
+- The stored address is informational: the contract does **not** call the registry at link time. Off-chain tooling should cross-check that the registry contract at that address contains the expected metadata for this recovery deployment.
+- TypeScript binding methods: `setRegistry(sourceKeypair, owner, registryId)` and `getRegistryId(sourceKeypair)`.
 
----
+### 4.7 Recovery request struct query
 
-## 7. Related Documents
+The `recovery_request()` entrypoint returns the full `RecoveryRequest` struct (not just the status), which includes:
 
-- [`docs/threat-model.md`](threat-model.md) — overall Mux Protocol threat model
-- [`docs/audit-events.md`](audit-events.md) — event schema reference
-- [`contracts/mux-recovery/src/lib.rs`](../contracts/mux-recovery/src/lib.rs) — contract source
+| Field | Type | Description |
+|---|---|---|
+| `new_owner` | `Address` | The proposed new owner address |
+| `initiated_at` | `u32` | Ledger sequence when recovery was initiated |
+| `executable_at` | `u32` | Earliest ledger for `execute_recovery` (`initiated_at + RECOVERY_TIMELOCK`) |
+| `expires_at` | `u32` | Latest ledger; auto-expires after this (`initiated_at + RECOVERY_EXPIRY`) |
+| `status` | `RecoveryStatus` | Current lifecycle state |
+
+This entrypoint is read-only (no event emitted) and is designed primarily for off-chain indexers and TypeScript bindings that need the complete struct.
+
+- TypeScript binding method: `recoveryRequest(sourceKeypair)` returns `Promise<RecoveryRequest | null>`.
+- The on-chain `RecoveryRequest` struct is serialised via `#[contracttype]` and directly deserialisable in the TypeScript client.
+
+### 4.8 Guardian N-of-M threshold (quorum)
+
+Recovery requires an **M-of-N guardian quorum**: `M` distinct guardians must
+approve a pending request before it can be executed, out of the `N` guardians
+registered at `initialize` time. This
+
+/* … truncated 3844 chars — edit only what you need near the top … */

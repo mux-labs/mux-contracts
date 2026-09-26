@@ -1,0 +1,47 @@
+name: Verify funded deployer key
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "bindings/package.json"
+      - "bindings/package-lock.json"
+      - "bindings/scripts/check-funded-deployer.mjs"
+      - "scripts/test-funded-deployer-check.sh"
+      - ".github/workflows/deployer-key.yml"
+  workflow_dispatch:
+    inputs:
+      horizon_url:
+        description: Horizon endpoint to verify
+        required: false
+        default: https://horizon-testnet.stellar.org
+      minimum_balance_xlm:
+        description: Minimum native XLM balance required
+        required: false
+        default: "2"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify deployer is funded
+    runs-on: ubuntu-latest
+    environment: testnet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: bindings/package-lock.json
+      - name: Install bindings dependencies
+        working-directory: bindings
+        run: npm ci
+      - name: Verify native balance through Horizon
+        working-directory: bindings
+        env:
+          DEPLOYER_PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
+          HORIZON_URL: ${{ inputs.horizon_url || vars.HORIZON_URL || 'https://horizon-testnet.stellar.org' }}
+          MIN_DEPLOYER_BALANCE_XLM: ${{ inputs.minimum_balance_xlm || vars.MIN_DEPLOYER_BALANCE_XLM || '2' }}
+        run: node scripts/check-funded-deployer.mjs

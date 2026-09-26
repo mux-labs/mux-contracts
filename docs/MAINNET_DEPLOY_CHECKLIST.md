@@ -9,9 +9,11 @@ Step-by-step checklist for safe Mux Protocol contract deployments to Stellar Mai
 ### Audit & Review
 
 - [ ] Security audit complete and all critical/high findings resolved
+  - Audit report: `_________________________`
 - [ ] Audit report reviewed and sign-off obtained from lead engineer
 - [ ] All contract changes since last audit reviewed for new risk surface
-- [ ] Dependency versions pinned in `Cargo.lock` and reviewed for known CVEs (`cargo deny check`)
+- [ ] Dependency versions pinned in `Cargo.lock` and reviewed for known CVEs  
+      (`cargo deny check` via `make deny` or the `deny` CI job — must pass before deploy)
 
 ### Testnet Verification
 
@@ -20,16 +22,44 @@ Step-by-step checklist for safe Mux Protocol contract deployments to Stellar Mai
 - [ ] All user-facing flows tested end-to-end on testnet
 - [ ] Upgrade path tested on testnet (if this deploy includes an upgrade)
 - [ ] Testnet contract addresses recorded in `addresses.json` or equivalent
+- [ ] TypeScript bindings regenerated against testnet deployment and tests pass
+- [ ] Integration smoke tests pass against testnet contracts
+
+### WASM Hash Verification
+
+- [ ] Final WASM hashes match the audited source commit:
+  - `mux-account`          : `________________________________`
+  - `mux-account-factory`  : `________________________________`
+  - `mux-batcher`          : `________________________________`
+  - `mux-permissions`      : `________________________________`
+  - `mux-recovery`         : `________________________________`
+  - `mux-policy`           : `________________________________`
+  - `mux-registry`         : `________________________________`
+  - `mux-wallet-registry`  : `________________________________`
+  - `mux-spending-policy`  : `________________________________`
+  - `mux-delegation`       : `________________________________`
 
 ### Deployer Key & Funding
 
 - [ ] Dedicated deployer key generated (not shared with admin or personal keys)
+  - Deployer public key: `_________________________`
+- [ ] Account exists on mainnet (Horizon returns HTTP 200, not 404)
 - [ ] Deployer account funded with sufficient XLM (≥ 10 XLM per contract + 5 XLM buffer)
 - [ ] Deployer balance verified: `stellar account balance --network mainnet`
 - [ ] Deployer key stored in secrets manager (not in local files or shell history)
+- [ ] Deployer key has not been used for any other on-chain activity since last rotation
 - [ ] `DEPLOYER_PRIVATE_KEY` and `ADMIN_ADDRESS` set in deploy environment
 
 See [funded-deployer-key.md](funded-deployer-key.md) for key setup details.
+
+### Admin/Owner Addresses Confirmed
+
+- [ ] Initial `admin` address for each contract is confirmed with the team lead
+  - Admin address: `_________________________`
+- [ ] Address is a **multisig** or **governance contract** — not a single EOA
+- [ ] Address has been verified on-chain (account exists and has expected signers)
+- [ ] Admin transfer plan is documented (deployer → multisig) and scheduled immediately after deploy
+- [ ] Emergency pause / upgrade key holders are identified and reachable
 
 ### Multisig & Admin Configuration (if applicable)
 
@@ -143,6 +173,18 @@ If a critical issue is discovered post-deploy:
 
 ---
 
+## Sign-Off
+
+| Role | Name | Date | Signature |
+|------|------|------|-----------|
+| Lead Engineer | | | |
+| Security Reviewer | | | |
+| Protocol Lead | | | |
+
+All three sign-offs are required before the deployment window begins.
+
+---
+
 ## Related
 
 - [Contract Upgrade Pattern](contract-upgrade-pattern.md) — Technical upgrade implementation
@@ -155,3 +197,5 @@ If a critical issue is discovered post-deploy:
 - [WASM hash verification](../scripts/verify-wasm-hash.sh) — post-deploy hash check
 - [Upgrade verification](../scripts/verify-upgrade.sh) — Pre-upgrade authorization checks
 - [Audit prep](audit-prep.md) — pre-audit requirements
+- [Access Control Checklist](access-control-checklist.md)
+- [Architecture Overview](architecture-overview.md)

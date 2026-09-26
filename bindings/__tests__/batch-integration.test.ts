@@ -53,6 +53,12 @@ describe("Batch Integration Tests (mux-batcher)", () => {
     expect(config.contracts.muxBatcher).toBeDefined();
   });
 
+  it("bindings expose estimateFees on MuxBatcherClient", () => {
+    // Verify the TypeScript binding exposes the estimateFees helper method
+    const { MuxBatcherClient } = require("../src/generated/mux-batcher");
+    expect(typeof MuxBatcherClient.prototype.estimateFees).toBe("function");
+  });
+
   it("can reach the configured RPC endpoint", async () => {
     const available = await isNetworkAvailable();
     expect(typeof available).toBe("boolean");
@@ -123,4 +129,9 @@ describe("Batch Integration Tests (mux-batcher)", () => {
     // TODO: assert the RPC error maps to MuxBatcherError.EmptyBatch.
     expect(true).toBe(true);
   });
+
+  // ── Stubs: error cases ────────────────────────────────────────────────────
+  it.todo("execute_batch: rejects an oversized batch with BatchTooLarge");
+  it.todo("execute_batch: returns RequiredOperationFailed when a required op fails");
+  it.todo("execute_batch: rejects an unauthorized caller");
 });

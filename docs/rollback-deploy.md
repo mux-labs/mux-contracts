@@ -50,7 +50,7 @@ If the previous contract ID is no longer usable (e.g. a factory pattern deployed
 
 3. Run a dry-run to verify the plan:
    ```bash
-   DEPLOYER_SECRET_KEY=S... bash scripts/deploy.sh \
+   DEPLOYER_PRIVATE_KEY=S... bash scripts/deploy.sh \
      --network mainnet \
      --dry-run \
      --contract <CONTRACT_NAME>
@@ -58,7 +58,7 @@ If the previous contract ID is no longer usable (e.g. a factory pattern deployed
 
 4. Deploy after confirming dry-run output:
    ```bash
-   DEPLOYER_SECRET_KEY=S... bash scripts/deploy.sh \
+   DEPLOYER_PRIVATE_KEY=S... bash scripts/deploy.sh \
      --network mainnet \
      --contract <CONTRACT_NAME>
    ```
@@ -79,7 +79,7 @@ If users have already transacted with the new contract and their state must not 
      --id <BROKEN_CONTRACT_ID> \
      --network mainnet \
      --source <ADMIN_SECRET_KEY> \
-     -- set_active --active false
+     -- pause
    ```
 
 2. Deploy the fixed version and migrate any required state via admin migration functions.
@@ -118,6 +118,20 @@ After the rollback is live:
 
 ---
 
+## Tracking Completion
+
+The checklists above are templates — completing them from memory during an
+incident leaves no record that they were actually followed. After a
+rollback is verified complete (see
+[rollback-guide.md §4](rollback-guide.md#4-verify-the-rollback-succeeded)),
+append an entry to [`ops/rollback-log.md`](../ops/rollback-log.md) using the
+template there. `scripts/check-rollback-log.sh` runs in CI on every PR and
+fails if an entry is missing a required field or has an unchecked
+checklist confirmation, so a rollback can't be recorded as "done" without
+actually completing both checklists.
+
+---
+
 ## Preventing the Need for Rollback
 
 The best rollback is one you never need:
@@ -140,3 +154,5 @@ The best rollback is one you never need:
 - [scripts/deploy.sh](../scripts/deploy.sh) — deployment script with `--dry-run` and rollback support
 - [scripts/verify-rollback.sh](../scripts/verify-rollback.sh) — rollback authorization verification
 - [.github/workflows/deploy.yml](../.github/workflows/deploy.yml) — GitHub Actions deploy workflow
+- [ops/rollback-log.md](../ops/rollback-log.md) — completion record for the checklists above
+- [scripts/check-rollback-log.sh](../scripts/check-rollback-log.sh) — CI enforcement for the rollback log
