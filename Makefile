@@ -5,7 +5,8 @@
         check-no-testutils \
         check-release-profile \
         verify-wasm-hashes \
-        deploy-dry-run deploy-ci
+        deploy-dry-run deploy-ci \
+        check-mainnet-checklist check-deployer-key scan-secrets
 
 all: fmt lint build test
 
@@ -102,3 +103,18 @@ deploy-dry-run:
 # Intended for CI pipelines that cache build outputs between jobs. (#450)
 deploy-ci:
 	bash scripts/deploy.sh --skip-build
+
+# Validate automated checklist verification before mainnet deploy (#769)
+check-mainnet-checklist:
+	bash scripts/check-mainnet-deploy-checklist.sh --skip-git-clean
+
+# Run operational deployer key security validations (#768)
+check-deployer-key:
+	bash scripts/check-deployer-key-rotation-log.sh
+	bash scripts/check-deploy-secret-name.sh
+	bash scripts/check-gitignore-secret-patterns.sh
+
+# Scan git repository history for leaked secrets (#768)
+scan-secrets:
+	bash scripts/scan-git-secrets.sh
+

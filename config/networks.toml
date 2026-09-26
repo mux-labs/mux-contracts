@@ -45,7 +45,7 @@ native_asset_issuer = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
 [mainnet]
 # Production Stellar public network — use with extreme care
 passphrase          = "Public Global Stellar Network ; September 2015"
-rpc_url             = "https://mainnet.stellar.validationcloud.io/v1/xycl7T9PGtSJBu8K7pPL9F47SxHgGPJG"
+rpc_url             = "https://rpc-mainnet.stellar.org"
 horizon_url         = "https://horizon.stellar.org"
 friendbot_url       = ""
 native_asset_issuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"

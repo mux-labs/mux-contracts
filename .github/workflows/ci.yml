@@ -26,6 +26,26 @@ jobs:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
           set -euo pipefail
+          bash scripts/test-check-mainnet-address-review.sh
+          bash scripts/check-mainnet-address-review.sh
+
+      - name: Verify network configuration and mainnet safety
+        run: |
+          bash scripts/test-network-config.sh
+          bash scripts/network-config.sh mainnet
+
+      - name: Verify mainnet deploy checklist script
+        run: |
+          bash scripts/test-check-mainnet-deploy-checklist.sh
+
+      - name: Operationalize deployer key security checks
+        run: |
+          bash scripts/check-gitignore-secret-patterns.sh
+          bash scripts/test-check-deploy-secret-name.sh
+          bash scripts/check-deploy-secret-name.sh
+          bash scripts/test-check-deployer-key-rotation-log.sh
+          bash scripts/check-deployer-key-rotation-log.sh
+          bash scripts/scan-git-secrets.sh --depth 100
 
       - name: Validate deploy env examples are secret-free
         run: bash scripts/validate-deploy-env.sh

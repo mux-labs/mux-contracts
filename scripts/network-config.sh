@@ -47,9 +47,9 @@ load_network_config() {
     return 1
   }
 
-  NETWORK_PASSPHRASE=$(_parse_toml_section         "$NETWORKS_TOML" "$network" "passphrase")
-  NETWORK_RPC_URL=$(_parse_toml_section             "$NETWORKS_TOML" "$network" "rpc_url")
-  NETWORK_HORIZON_URL=$(_parse_toml_section         "$NETWORKS_TOML" "$network" "horizon_url")
+  NETWORK_PASSPHRASE="${STELLAR_NETWORK_PASSPHRASE:-$(_parse_toml_section "$NETWORKS_TOML" "$network" "passphrase")}"
+  NETWORK_RPC_URL="${STELLAR_RPC_URL:-$(_parse_toml_section "$NETWORKS_TOML" "$network" "rpc_url")}"
+  NETWORK_HORIZON_URL="${STELLAR_HORIZON_URL:-$(_parse_toml_section "$NETWORKS_TOML" "$network" "horizon_url")}"
   NETWORK_FRIENDBOT_URL=$(_parse_toml_section       "$NETWORKS_TOML" "$network" "friendbot_url")
   NETWORK_NATIVE_ASSET_ISSUER=$(_parse_toml_section "$NETWORKS_TOML" "$network" "native_asset_issuer")
 
@@ -57,6 +57,18 @@ load_network_config() {
     echo "ERROR: passphrase not found for network '$network' in $NETWORKS_TOML" >&2
     return 1
   }
+
+  # Mainnet safety invariants (fail-closed)
+  if [ "$network" = "mainnet" ]; then
+    if [ "$NETWORK_PASSPHRASE" != "Public Global Stellar Network ; September 2015" ]; then
+      echo "ERROR: Invalid mainnet passphrase: $NETWORK_PASSPHRASE" >&2
+      return 1
+    fi
+    if [ -n "$NETWORK_FRIENDBOT_URL" ]; then
+      echo "ERROR: Friendbot must be disabled on mainnet" >&2
+      return 1
+    fi
+  fi
 
   export NETWORK_PASSPHRASE NETWORK_RPC_URL NETWORK_HORIZON_URL \
          NETWORK_FRIENDBOT_URL NETWORK_NATIVE_ASSET_ISSUER

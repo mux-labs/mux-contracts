@@ -324,6 +324,26 @@ preflight_checks() {
     [[ -z "${ADMIN_ADDRESS:-}" ]]        && log_warn "ADMIN_ADDRESS not set (required for real deploy)"
   fi
 
+  # Mainnet fail-closed safety gate (issue #769)
+  if [[ "$NETWORK" == "mainnet" ]]; then
+    if [[ "$DRY_RUN" == "false" ]]; then
+      if [[ "${MUX_MAINNET_DEPLOY_FLAG:-}" != "I_ACKNOWLEDGE_MAINNET_DEPLOY" ]]; then
+        log_error "Mainnet deploy requires MUX_MAINNET_DEPLOY_FLAG=I_ACKNOWLEDGE_MAINNET_DEPLOY"
+        exit 2
+      fi
+      log_info "Verifying mainnet deploy checklist fail-closed..."
+      bash "${REPO_ROOT}/scripts/check-mainnet-deploy-checklist.sh" --enforce-flag || {
+        log_error "Mainnet deploy checklist verification failed"
+        exit 1
+      }
+    else
+      log_dry "Preflight: verifying mainnet deploy checklist (dry-run mode)..."
+      bash "${REPO_ROOT}/scripts/check-mainnet-deploy-checklist.sh" --skip-git-clean || {
+        log_warn "Mainnet deploy checklist check reported issues (tolerated in dry-run)"
+      }
+    fi
+  fi
+
   log_success "Preflight checks complete"
 }
 

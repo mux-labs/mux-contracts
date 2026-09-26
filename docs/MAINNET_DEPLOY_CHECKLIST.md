@@ -75,8 +75,12 @@ See [funded-deployer-key.md](funded-deployer-key.md) for key setup details.
 - [ ] `Cargo.lock` committed and up to date
 - [ ] Deploy script version pinned — confirm `git log scripts/deploy.sh` matches expected commit
 
-### Dry-Run Passed
+### Automated Checklist & Dry-Run Passed
 
+- [ ] Automated fail-closed checklist verification passes:
+  ```bash
+  bash scripts/check-mainnet-deploy-checklist.sh
+  ```
 - [ ] Dry-run executed successfully with production config:
   ```bash
   DEPLOYER_PRIVATE_KEY=$DEPLOYER_PRIVATE_KEY \
@@ -92,14 +96,16 @@ See [funded-deployer-key.md](funded-deployer-key.md) for key setup details.
 ### Final Checks at Deploy Time
 
 - [ ] `SOROBAN_NETWORK` confirmed as `mainnet` (not testnet/localnet)
+- [ ] Immutable mainnet deploy flag set: `export MUX_MAINNET_DEPLOY_FLAG=I_ACKNOWLEDGE_MAINNET_DEPLOY`
 - [ ] No unrelated staged changes in the working tree (`git status` clean)
 - [ ] Team notified that mainnet deploy is beginning (Slack/Discord/etc.)
 - [ ] Rollback plan reviewed — prior WASM hashes retained and documented
 
 ### Execute Deploy
 
-- [ ] Run deploy script:
+- [ ] Run deploy script with immutable flag:
   ```bash
+  MUX_MAINNET_DEPLOY_FLAG=I_ACKNOWLEDGE_MAINNET_DEPLOY \
   DEPLOYER_PRIVATE_KEY=S... \
   ADMIN_ADDRESS=G... \
   bash scripts/deploy.sh --network mainnet

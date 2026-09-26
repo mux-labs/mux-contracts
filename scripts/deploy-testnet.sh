@@ -50,7 +50,7 @@ NETWORK_PASSPHRASE="${MUX_NETWORK_PASSPHRASE:-$(resolve_passphrase "$NETWORK")}"
 if [ -z "${MUX_RPC_URL:-}" ]; then
   case "$NETWORK" in
     testnet)   MUX_RPC_URL="https://soroban-testnet.stellar.org" ;;
-    mainnet)   MUX_RPC_URL="https://mainnet.stellar.validationcloud.io/v1/xycl7T9PGtSJBu8K7pPL9F47SxHgGPJG" ;;
+    mainnet)   MUX_RPC_URL="https://rpc-mainnet.stellar.org" ;;
     futurenet) MUX_RPC_URL="https://rpc-futurenet.stellar.org" ;;
     local)     MUX_RPC_URL="http://localhost:8000/soroban/rpc" ;;
   esac
