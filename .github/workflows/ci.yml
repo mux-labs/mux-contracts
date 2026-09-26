@@ -146,3 +146,94 @@ jobs:
             exit 1
           fi
           echo "✓ Documentation has rollback cross-links"
+
+  upgrade-discipline:
+    name: Upgrade Auth Discipline Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check upgrade-auth-requirements.md exists
+        run: |
+          if [ ! -f "docs/upgrade-auth-requirements.md" ]; then
+            echo "Error: docs/upgrade-auth-requirements.md not found"
+            exit 1
+          fi
+          echo "✓ docs/upgrade-auth-requirements.md exists"
+      - name: Check verify-upgrade.sh exists and is executable
+        run: |
+          if [ ! -f "scripts/verify-upgrade.sh" ]; then
+            echo "Error: scripts/verify-upgrade.sh not found"
+            exit 1
+          fi
+          chmod +x scripts/verify-upgrade.sh
+          echo "✓ verify-upgrade.sh exists and is executable"
+      - name: Check upgrade.sh exists and is executable
+        run: |
+          if [ ! -f "scripts/upgrade.sh" ]; then
+            echo "Error: scripts/upgrade.sh not found"
+            exit 1
+          fi
+          chmod +x scripts/upgrade.sh
+          echo "✓ upgrade.sh exists and is executable"
+      - name: Check test-upgrade-verification.sh exists and is executable
+        run: |
+          if [ ! -f "scripts/test-upgrade-verification.sh" ]; then
+            echo "Error: scripts/test-upgrade-verification.sh not found"
+            exit 1
+          fi
+          chmod +x scripts/test-upgrade-verification.sh
+          echo "✓ test-upgrade-verification.sh exists and is executable"
+      - name: Test upgrade feature flag check
+        run: |
+          # Test disabled flag (should fail)
+          if bash scripts/check-feature-flags.sh ENABLE_CONTRACT_UPGRADE 2>/dev/null; then
+            echo "Error: Feature flag check should fail when flag is not set"
+            exit 1
+          fi
+          echo "✓ Upgrade feature flag check correctly fails when flag is not set"
+          
+          # Test enabled flag (should pass)
+          if ! ENABLE_CONTRACT_UPGRADE=true bash scripts/check-feature-flags.sh ENABLE_CONTRACT_UPGRADE; then
+            echo "Error: Feature flag check should pass when flag is set to true"
+            exit 1
+          fi
+          echo "✓ Upgrade feature flag check correctly passes when flag is set to true"
+      - name: Test upgrade verification (dry-run)
+        run: |
+          local valid_hash="a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+          if ! bash scripts/verify-upgrade.sh --network testnet --contract mux-account --new-wasm-hash "$valid_hash" --dry-run; then
+            echo "Error: Upgrade verification dry-run failed"
+            exit 1
+          fi
+          echo "✓ Upgrade verification dry-run passes"
+      - name: Test upgrade verification disabled on mainnet
+        run: |
+          local valid_hash="a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+          if ENABLE_CONTRACT_UPGRADE=false bash scripts/verify-upgrade.sh --network mainnet --contract mux-account --new-wasm-hash "$valid_hash" --dry-run 2>&1 | grep -q "Upgrade operations are disabled"; then
+            echo "✓ Upgrade correctly disabled on mainnet by default"
+          else
+            echo "Error: Upgrade should be disabled on mainnet by default"
+            exit 1
+          fi
+      - name: Run upgrade verification tests
+        run: |
+          if ! bash scripts/test-upgrade-verification.sh; then
+            echo "Error: Upgrade verification tests failed"
+            exit 1
+          fi
+          echo "✓ Upgrade verification tests pass"
+      - name: Check docs have upgrade auth cross-links
+        run: |
+          if ! grep -q "upgrade-auth-requirements.md" docs/contract-upgrade-pattern.md; then
+            echo "Error: docs/contract-upgrade-pattern.md missing link to upgrade-auth-requirements.md"
+            exit 1
+          fi
+          if ! grep -q "upgrade-auth-requirements.md" docs/MAINNET_DEPLOY_CHECKLIST.md; then
+            echo "Error: docs/MAINNET_DEPLOY_CHECKLIST.md missing link to upgrade-auth-requirements.md"
+            exit 1
+          fi
+          if ! grep -q "upgrade-auth-requirements.md" README.md; then
+            echo "Error: README.md missing link to upgrade-auth-requirements.md"
+            exit 1
+          fi
+          echo "✓ Documentation has upgrade auth cross-links"
