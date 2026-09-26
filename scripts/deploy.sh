@@ -13,6 +13,8 @@
 #   --dry-run            Simulate all deployment steps without executing on-chain transactions
 #   --skip-build         Skip the WASM build step (assumes artifacts already exist)
 #   --rpc-url <url>      Override the RPC URL
+#   --rollback           Enable rollback mode with correlation ID logging
+#   --rollback-strategy <strategy> Rollback strategy (address-repoint|deploy-wasm|admin-pause)
 #   --help               Show this help message
 #
 # Environment variables:
@@ -20,11 +22,18 @@
 #   ADMIN_ADDRESS         Contract admin public key (required unless --dry-run)
 #   SOROBAN_NETWORK       Override network (alternative to --network flag)
 #   RPC_URL               Override RPC URL (alternative to --rpc-url flag)
+#   CORRELATION_ID        Correlation ID for rollback operations (auto-generated if not set)
+#   ENABLE_ROLLBACK       Enable rollback operations (default: false for mainnet)
 #
 # Dry-run mode:
 #   When --dry-run is set, the script simulates every deployment step and logs
 #   what would be executed. No on-chain transactions are submitted.
 #   Missing environment variables are tolerated in dry-run mode.
+#
+# Rollback mode:
+#   When --rollback is set, the script generates a correlation ID and logs all
+#   operations to ops/logs/rollback-*.log following the rollback-log discipline.
+#   Secrets are redacted before logging. See ops/rollback-log.md for details.
 #
 # Examples:
 #   # Simulate a full deploy (no keys required)
@@ -36,10 +45,15 @@
 #   # Real deploy to testnet
 #   DEPLOYER_PRIVATE_KEY=S... ADMIN_ADDRESS=G... bash scripts/deploy.sh --network testnet
 #
+#   # Rollback with correlation ID logging
+#   ENABLE_ROLLBACK=true bash scripts/deploy.sh --network mainnet --rollback --rollback-strategy address-repoint
+#
 # Exit codes:
 #   0 - Success (or successful dry-run simulation)
 #   1 - Deployment error
 #   2 - Invalid arguments or missing required config
+#   3 - Rollback authorization denied
+#   4 - Rollback log failure
 
 set -euo pipefail
 
@@ -55,6 +69,9 @@ DRY_RUN=false
 SKIP_BUILD=false
 TARGET_CONTRACT=""
 RPC_URL_OVERRIDE="${RPC_URL:-}"
+ROLLBACK_MODE=false
+ROLLBACK_STRATEGY=""
+ENABLE_ROLLBACK="${ENABLE_ROLLBACK:-false}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Colors
@@ -72,6 +89,99 @@ log_success() { echo -e "${GREEN}[OK]${NC}    $*"; }
 log_warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 log_error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 log_dry()     { echo -e "${CYAN}[DRY-RUN]${NC} $*"; }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Rollback logging functions
+# ─────────────────────────────────────────────────────────────────────────────
+
+generate_correlation_id() {
+  if command -v uuidgen &>/dev/null; then
+    uuidgen | tr '[:upper:]' '[:lower:]'
+  elif command -v python3 &>/dev/null; then
+    python3 -c "import uuid; print(str(uuid.uuid4()))"
+  else
+    echo "$(date +%s)-$RANDOM"
+  fi
+}
+
+redact_secret() {
+  local secret="$1"
+  if [[ -n "$secret" && ${#secret} -gt 4 ]]; then
+    echo "${secret:0:1}***${secret: -1}"
+  else
+    echo "<REDACTED>"
+  fi
+}
+
+log_safe() {
+  local key="$1"
+  local value="$2"
+  case "$key" in
+    *SECRET*|*KEY*|*TOKEN*|*PRIVATE*)
+      echo "$key=$(redact_secret "$value")"
+      ;;
+    *)
+      echo "$key=$value"
+      ;;
+  esac
+}
+
+init_rollback_logging() {
+  local correlation_id="$1"
+  local network="$2"
+  local strategy="$3"
+
+  ROLLBACK_LOG_DIR="${REPO_ROOT}/ops/logs"
+  mkdir -p "$ROLLBACK_LOG_DIR"
+  ROLLBACK_LOG_FILE="${ROLLBACK_LOG_DIR}/rollback-$(date +%Y-%m-%d).log"
+
+  local git_commit
+  git_commit=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+
+  local log_entry="[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [INFO] correlation_id=${correlation_id} timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ) operator=<REDACTED> network=${network} contract_name=${TARGET_CONTRACT:-all} rollback_strategy=${strategy} authz_method=multisig authz_id=<REDACTED> status=started git_commit=${git_commit}"
+
+  if ! echo "$log_entry" >> "$ROLLBACK_LOG_FILE"; then
+    log_error "Failed to write to rollback log. Operation blocked."
+    exit 4
+  fi
+
+  log_info "Rollback logging initialized: correlation_id=$correlation_id"
+}
+
+log_rollback_status() {
+  local correlation_id="$1"
+  local status="$2"
+  local error_code="${3:-}"
+  local extra_fields="${4:-}"
+
+  local log_entry="[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [INFO] correlation_id=${correlation_id} status=${status} ${error_code:+error_code=${error_code}} ${extra_fields}"
+
+  if ! echo "$log_entry" >> "$ROLLBACK_LOG_FILE"; then
+    log_error "Failed to write rollback status to log"
+    return 1
+  fi
+}
+
+check_rollback_authz() {
+  local network="$1"
+  
+  # Fail-closed: rollback disabled by default on mainnet
+  if [[ "$network" == "mainnet" && "$ENABLE_ROLLBACK" != "true" ]]; then
+    log_error "Rollback operations are disabled on mainnet. Set ENABLE_ROLLBACK=true to enable."
+    return 1
+  fi
+
+  # Check for conflicting rollback (simplified - in production, check active lock file)
+  local lock_file="${REPO_ROOT}/ops/.rollback-lock-${network}"
+  if [[ -f "$lock_file" ]]; then
+    local active_id
+    active_id=$(cat "$lock_file")
+    log_error "Conflicting rollback in progress: $active_id"
+    return 1
+  fi
+
+  return 0
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Argument parsing
@@ -103,7 +213,15 @@ while [[ $# -gt 0 ]]; do
     --rpc-url)
       RPC_URL_OVERRIDE="${2:?'--rpc-url requires a value'}"
       shift 2
+      rollback)
+      ROLLBACK_MODE=true
+      shift
       ;;
+    --rollback-strategy)
+      ROLLBACK_STRATEGY="${2:?'--rollback-strategy requires a value'}"
+      shift 2
+      ;;
+    --;;
     --help|-h)
       show_help
       ;;
@@ -170,6 +288,16 @@ fi
 
 preflight_checks() {
   log_info "Running preflight checks..."
+
+  if [[ "$ROLLBACK_MODE" == "true" ]]; then
+    if ! check_rollback_authz "$NETWORK"; then
+      exit 3
+    fi
+    if [[ -z "$ROLLBACK_STRATEGY" ]]; then
+      log_error "--rollback-strategy is required when --rollback is set"
+      exit 2
+    fi
+  fi
 
   if [[ "$DRY_RUN" == "false" ]]; then
     if ! command -v stellar &>/dev/null; then
@@ -323,7 +451,20 @@ main() {
   log_info "RPC URL:  $RPC_URL"
   log_info "Dry-run:  $DRY_RUN"
   [[ -n "$TARGET_CONTRACT" ]] && log_info "Contract: $TARGET_CONTRACT"
+  [[ "$ROLLBACK_MODE" == "true" ]] && log_info "Rollback: $ROLLBACK_STRATEGY"
   echo ""
+
+  # Initialize rollback logging if in rollback mode
+  if [[ "$ROLLBACK_MODE" == "true" ]]; then
+    CORRELATION_ID="${CORRELATION_ID:-$(generate_correlation_id)}"
+    export CORRELATION_ID
+    init_rollback_logging "$CORRELATION_ID" "$NETWORK" "$ROLLBACK_STRATEGY"
+    
+    # Create lock file
+    local lock_file="${REPO_ROOT}/ops/.rollback-lock-${NETWORK}"
+    echo "$CORRELATION_ID" > "$lock_file"
+    trap "rm -f '$lock_file'" EXIT
+  fi
 
   preflight_checks
   build_contracts
@@ -337,16 +478,32 @@ main() {
   fi
   echo ""
 
+  local deploy_success=true
   for contract in "${CONTRACTS[@]}"; do
-    deploy_contract "$contract"
+    if ! deploy_contract "$contract"; then
+      deploy_success=false
+      break
+    fi
   done
 
   echo ""
   if [[ "$DRY_RUN" == "true" ]]; then
     log_success "Dry-run complete — no on-chain transactions were submitted"
-  else
+  elif [[ "$deploy_success" == "true" ]]; then
     log_success "Deployment complete"
     [[ -f "${REPO_ROOT}/deployment.env" ]] && log_info "Contract addresses written to deployment.env"
+  else
+    log_error "Deployment failed"
+    if [[ "$ROLLBACK_MODE" == "true" ]]; then
+      log_rollback_status "$CORRELATION_ID" "failed" "DEPLOYMENT_ERROR"
+    fi
+    exit 1
+  fi
+
+  # Log rollback completion
+  if [[ "$ROLLBACK_MODE" == "true" ]]; then
+    log_rollback_status "$CORRELATION_ID" "completed"
+    log_info "Rollback operation logged: $CORRELATION_ID"
   fi
 }
 

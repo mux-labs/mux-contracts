@@ -183,6 +183,11 @@ Per-contract storage migration notes:
 
 ## References
 
+- [Account Upgrade Migration Path](account-upgrade-migration.md) — Storage migration procedures for account upgrades
+- [Upgrade Auth Requirements](upgrade-auth-requirements.md) — Authorization requirements for upgrade operations
+- [Rollback Deploy Notes](rollback-deploy.md) — Rollback strategies and procedures
+- [Rollback Log Discipline](../ops/rollback-log.md) — Operational logging discipline
+- [Security Policy](../SECURITY.md) — Overall security guidelines
 - [Soroban Contract Upgrade Docs](https://developers.stellar.org/docs/build/smart-contracts/example-contracts/upgradeable-contract)
 - [Stellar CLI: `contract upload`](https://developers.stellar.org/docs/tools/stellar-cli)
 - Mux deployment scripts: `scripts/deploy-testnet.sh` (see #110)
