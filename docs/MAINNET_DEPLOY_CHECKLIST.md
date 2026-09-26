@@ -145,6 +145,9 @@ If a critical issue is discovered post-deploy:
 
 ## Related
 
+- [Rollback Deploy Notes](rollback-deploy.md) — Rollback strategies and procedures
+- [Rollback Log Discipline](../ops/rollback-log.md) — Operational logging for rollback
+- [Security Policy](../SECURITY.md) — Security guidelines and rollback security
 - [Funded deployer key setup](funded-deployer-key.md)
 - [Deploy dry-run flag](../scripts/deploy.sh) — `--dry-run` usage
 - [WASM hash verification](../scripts/verify-wasm-hash.sh) — post-deploy hash check

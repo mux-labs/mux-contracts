@@ -307,6 +307,8 @@ stellar contract deploy --wasm target/wasm32-unknown-unknown/release/mux_account
 - [Access Control Review Checklist](docs/access-control-checklist.md) — pre-deployment and pre-audit checklist
 - [Storage Griefing Notes](docs/storage-griefing.md) — collection caps, TTL management, keeper runbook
 - [External Audit Prep](docs/audit-prep.md) — scope, entry points, known limitations, auditor checklist
+- [Rollback Deploy Notes](docs/rollback-deploy.md) — Rollback strategies and operational procedures
+- [Security Policy](SECURITY.md) — Overall security guidelines, rollback security, and incident response
 
 To report a vulnerability, open a private security advisory on GitHub.
 

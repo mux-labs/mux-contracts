@@ -70,3 +70,79 @@ jobs:
       - name: Build distribution
         working-directory: bindings
         run: npm run build
+
+  rollback-discipline:
+    name: Rollback Discipline Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check rollback-log.md exists
+        run: |
+          if [ ! -f "ops/rollback-log.md" ]; then
+            echo "Error: ops/rollback-log.md not found"
+            exit 1
+          fi
+          echo "✓ ops/rollback-log.md exists"
+      - name: Check SECURITY.md exists
+        run: |
+          if [ ! -f "SECURITY.md" ]; then
+            echo "Error: SECURITY.md not found"
+            exit 1
+          fi
+          echo "✓ SECURITY.md exists"
+      - name: Check deploy.sh has rollback support
+        run: |
+          if ! grep -q "ROLLBACK_MODE" scripts/deploy.sh; then
+            echo "Error: deploy.sh missing rollback mode support"
+            exit 1
+          fi
+          echo "✓ deploy.sh has rollback support"
+      - name: Check verify-rollback.sh exists and is executable
+        run: |
+          if [ ! -f "scripts/verify-rollback.sh" ]; then
+            echo "Error: scripts/verify-rollback.sh not found"
+            exit 1
+          fi
+          chmod +x scripts/verify-rollback.sh
+          echo "✓ verify-rollback.sh exists and is executable"
+      - name: Check check-feature-flags.sh exists and is executable
+        run: |
+          if [ ! -f "scripts/check-feature-flags.sh" ]; then
+            echo "Error: scripts/check-feature-flags.sh not found"
+            exit 1
+          fi
+          chmod +x scripts/check-feature-flags.sh
+          echo "✓ check-feature-flags.sh exists and is executable"
+      - name: Test feature flag check
+        run: |
+          # Test disabled flag (should fail)
+          if bash scripts/check-feature-flags.sh ENABLE_ROLLBACK 2>/dev/null; then
+            echo "Error: Feature flag check should fail when flag is not set"
+            exit 1
+          fi
+          echo "✓ Feature flag check correctly fails when flag is not set"
+          
+          # Test enabled flag (should pass)
+          if ! ENABLE_ROLLBACK=true bash scripts/check-feature-flags.sh ENABLE_ROLLBACK; then
+            echo "Error: Feature flag check should pass when flag is set to true"
+            exit 1
+          fi
+          echo "✓ Feature flag check correctly passes when flag is set to true"
+      - name: Test rollback verification (dry-run)
+        run: |
+          if ! bash scripts/verify-rollback.sh --network testnet --strategy address-repoint --dry-run; then
+            echo "Error: Rollback verification dry-run failed"
+            exit 1
+          fi
+          echo "✓ Rollback verification dry-run passes"
+      - name: Check docs have rollback cross-links
+        run: |
+          if ! grep -q "ops/rollback-log.md" docs/rollback-deploy.md; then
+            echo "Error: docs/rollback-deploy.md missing link to ops/rollback-log.md"
+            exit 1
+          fi
+          if ! grep -q "SECURITY.md" docs/rollback-deploy.md; then
+            echo "Error: docs/rollback-deploy.md missing link to SECURITY.md"
+            exit 1
+          fi
+          echo "✓ Documentation has rollback cross-links"
