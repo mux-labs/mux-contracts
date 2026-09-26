@@ -303,6 +303,7 @@ stellar contract deploy --wasm target/wasm32-unknown-unknown/release/mux_account
 - [Policy Semantics](docs/policy-semantics.md) — Per-wallet daily spend limit design, reset logic, and error codes
 - [Account Abstraction Design](docs/account-abstraction.md) — Goals, architecture, session key design, and transaction flows
 - [Backend Orchestrator Integration](docs/aa-backend-orchestrator.md) — Scope and architecture for relayer integration
+- [Relayer Integration](docs/relayer-integration.md) — Production-grade relayer integration with authorization
 - [Threat Model](docs/threat-model.md) — assets, trust boundaries, and mitigations
 - [Access Control Review Checklist](docs/access-control-checklist.md) — pre-deployment and pre-audit checklist
 - [Storage Griefing Notes](docs/storage-griefing.md) — collection caps, TTL management, keeper runbook

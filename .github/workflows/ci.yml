@@ -330,3 +330,92 @@ jobs:
             exit 1
           fi
           echo "✓ Documentation has migration cross-links"
+
+  relayer-discipline:
+    name: Relayer Integration Discipline Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check relayer-integration.md exists
+        run: |
+          if [ ! -f "docs/relayer-integration.md" ]; then
+            echo "Error: docs/relayer-integration.md not found"
+            exit 1
+          fi
+          echo "✓ docs/relayer-integration.md exists"
+      - name: Check verify-relayer.sh exists and is executable
+        run: |
+          if [ ! -f "scripts/verify-relayer.sh" ]; then
+            echo "Error: scripts/verify-relayer.sh not found"
+            exit 1
+          fi
+          chmod +x scripts/verify-relayer.sh
+          echo "✓ verify-relayer.sh exists and is executable"
+      - name: Check relayer-submit.sh exists and is executable
+        run: |
+          if [ ! -f "scripts/relayer-submit.sh" ]; then
+            echo "Error: scripts/relayer-submit.sh not found"
+            exit 1
+          fi
+          chmod +x scripts/relayer-submit.sh
+          echo "✓ relayer-submit.sh exists and is executable"
+      - name: Check test-relayer-verification.sh exists and is executable
+        run: |
+          if [ ! -f "scripts/test-relayer-verification.sh" ]; then
+            echo "Error: scripts/test-relayer-verification.sh not found"
+            exit 1
+          fi
+          chmod +x scripts/test-relayer-verification.sh
+          echo "✓ test-relayer-verification.sh exists and is executable"
+      - name: Test relayer feature flag check
+        run: |
+          # Test disabled flag (should fail)
+          if bash scripts/check-feature-flags.sh ENABLE_RELAYER 2>/dev/null; then
+            echo "Error: Feature flag check should fail when flag is not set"
+            exit 1
+          fi
+          echo "✓ Relayer feature flag check correctly fails when flag is not set"
+          
+          # Test enabled flag (should pass)
+          if ! ENABLE_RELAYER=true bash scripts/check-feature-flags.sh ENABLE_RELAYER; then
+            echo "Error: Feature flag check should pass when flag is set to true"
+            exit 1
+          fi
+          echo "✓ Relayer feature flag check correctly passes when flag is set to true"
+      - name: Test relayer verification (dry-run)
+        run: |
+          if ! bash scripts/verify-relayer.sh --network testnet --relayer-id relayer-123 --operation-type intent --dry-run; then
+            echo "Error: Relayer verification dry-run failed"
+            exit 1
+          fi
+          echo "✓ Relayer verification dry-run passes"
+      - name: Test relayer verification disabled on mainnet
+        run: |
+          if ENABLE_RELAYER=false bash scripts/verify-relayer.sh --network mainnet --relayer-id relayer-123 --operation-type intent --dry-run 2>&1 | grep -q "Relayer operations are disabled"; then
+            echo "✓ Relayer correctly disabled on mainnet by default"
+          else
+            echo "Error: Relayer should be disabled on mainnet by default"
+            exit 1
+          fi
+      - name: Run relayer verification tests
+        run: |
+          if ! bash scripts/test-relayer-verification.sh; then
+            echo "Error: Relayer verification tests failed"
+            exit 1
+          fi
+          echo "✓ Relayer verification tests pass"
+      - name: Check docs have relayer cross-links
+        run: |
+          if ! grep -q "relayer-integration.md" docs/aa-backend-orchestrator.md; then
+            echo "Error: docs/aa-backend-orchestrator.md missing link to relayer-integration.md"
+            exit 1
+          fi
+          if ! grep -q "relayer-integration.md" docs/account-abstraction.md; then
+            echo "Error: docs/account-abstraction.md missing link to relayer-integration.md"
+            exit 1
+          fi
+          if ! grep -q "relayer-integration.md" README.md; then
+            echo "Error: README.md missing link to relayer-integration.md"
+            exit 1
+          fi
+          echo "✓ Documentation has relayer cross-links"

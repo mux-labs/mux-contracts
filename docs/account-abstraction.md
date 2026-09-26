@@ -361,6 +361,8 @@ The example uses the TypeScript bindings from `@mux-protocol/contracts` and supp
 
 ## References
 
+- [Relayer Integration](relayer-integration.md) — Production-grade relayer integration
+- [AA Backend Orchestrator](aa-backend-orchestrator.md) — Backend orchestrator integration
 - [Account Upgrade Migration Path](account-upgrade-migration.md) — Storage migration procedures for account upgrades
 - [Contract Upgrade Pattern](contract-upgrade-pattern.md) — Technical upgrade implementation
 - [Upgrade Auth Requirements](upgrade-auth-requirements.md) — Authorization requirements for upgrades

@@ -52,3 +52,13 @@ The orchestrator signs the Soroban transaction with its own funding key. The `mu
 - The `mux-batcher` and `mux-account` have tests simulating a relayer submission.
 - Replay protection is explicitly covered.
 - No regressions in direct execution flows (where users fund their own transactions).
+
+## References
+
+- [Relayer Integration](relayer-integration.md) — Production-grade relayer integration with authorization
+- [Account Abstraction Design](account-abstraction.md) — Account contract architecture
+- [Account Upgrade Migration Path](account-upgrade-migration.md) — Storage migration procedures
+- [Contract Upgrade Pattern](contract-upgrade-pattern.md) — Technical upgrade implementation
+- [Upgrade Auth Requirements](upgrade-auth-requirements.md) — Authorization requirements for upgrades
+- [scripts/verify-relayer.sh](../scripts/verify-relayer.sh) — Relayer verification script
+- [scripts/relayer-submit.sh](../scripts/relayer-submit.sh) — Relayer submission script
