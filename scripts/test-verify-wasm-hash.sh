@@ -9,10 +9,10 @@ assert_exit() {
   "$@" >/dev/null 2>&1 || actual_code=$?
   if [ "$actual_code" = "$expected_code" ]; then
     echo "  PASS: $label (exit $actual_code)"
-    ((PASS++))
+    PASS=$((PASS + 1))
   else
     echo "  FAIL: $label (expected exit $expected_code, got $actual_code)"
-    ((FAIL++))
+    FAIL=$((FAIL + 1))
   fi
 }
 

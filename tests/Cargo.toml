@@ -1,0 +1,48 @@
+[package]
+name = "mux-contract-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Integration / fuzz scaffolding tests for mux-contracts"
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+mux-account = { path = "../contracts/mux-account", features = ["testutils"] }
+mux-batcher = { path = "../contracts/mux-batcher", features = ["testutils"] }
+mux-permissions = { path = "../contracts/mux-permissions", features = ["testutils"] }
+mux-policy = { path = "../contracts/mux-policy", features = ["testutils"] }
+soroban-test-helpers = { path = "../contracts/soroban-test-helpers" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[[test]]
+name = "fuzz_placeholder"
+path = "fuzz_placeholder.rs"
+
+[[test]]
+name = "cross_contract_integration"
+path = "cross_contract_integration.rs"
+
+[[test]]
+name = "fixture_vectors"
+path = "fixture_vectors.rs"
+
+[[test]]
+name = "upgrade_preflight"
+path = "upgrade_preflight.rs"
+
+[[test]]
+name = "threat_model_coverage"
+path = "threat_model_coverage.rs"
+
+[[test]]
+name = "aa_phase2_milestone"
+path = "aa_phase2_milestone.rs"
+
+[[test]]
+name = "session_auth_doc_coverage"
+path = "session_auth_doc_coverage.rs"
+
+[[test]]
+name = "expiry_naming"
+path = "expiry_naming.rs"

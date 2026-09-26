@@ -1,0 +1,14 @@
+# Adds a "Report a security vulnerability" option to the issue chooser,
+# shown above the blank-issue option. Blank issues stay enabled for normal
+# bug reports — see SECURITY.md: only smart-contract vulnerabilities and
+# other security-sensitive reports must go through the private channel
+# below instead of a public issue.
+blank_issues_enabled: true
+contact_links:
+  - name: 🔒 Report a security vulnerability (private)
+    url: https://github.com/mux-labs/mux-contracts/security/advisories/new
+    about: >-
+      Do NOT open a public issue for a smart-contract vulnerability,
+      authorization bypass, or fund-loss bug. Use a private GitHub Security
+      Advisory (preferred) or email security@mux-protocol.xyz. See
+      SECURITY.md for scope and our SLA.

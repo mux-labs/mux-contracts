@@ -4,27 +4,52 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
+  # Fail-closed wasm size budget (bytes). Any compiled contract wasm larger
+  # than this limit fails the build. Adjust deliberately and document why.
+  WASM_SIZE_BUDGET_BYTES: "262144"
 
 jobs:
+  build-and-test:
+    name: Build, test, and enforce wasm size budget
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enforce mainnet address review rule
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          set -euo pipefail
+
+      - name: Validate deploy env examples are secret-free
+        run: bash scripts/validate-deploy-env.sh
+
+      - name: Validate localnet env example is complete and secret-free
+        run: bash scripts/validate-localnet-env.sh
+
   rust:
     name: Rust (fmt, clippy, test, wasm)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.81.0
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
         with:
-          components: clippy, rustfmt
+          # Pin to the MSRV declared in rust-toolchain.toml so CI and local
+          # dev always use the same channel.  Any toolchain drift is caught
+          # immediately on PRs rather than silently on contributor machines.
+          toolchain: "1.81.0"
           targets: wasm32-unknown-unknown
-      - name: Cache Cargo
+          components: rustfmt, clippy
+
+      - name: Cache cargo
         uses: actions/cache@v4
         with:
           path: |
@@ -34,37 +59,67 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-      - name: cargo fmt
-        run: cargo fmt --all -- --check
-      - name: cargo clippy
-        run: cargo clippy --workspace --all-features -- -D warnings
-      - name: cargo test
-        run: cargo test --workspace --all-features
-      - name: Build WASM (release)
-        run: bash scripts/build-wasm.sh --release
-      - name: Check contract sizes
-        run: bash scripts/check-contract-sizes.sh
 
-  bindings:
-    name: TypeScript Bindings
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # Fail closed before spending time on a build: the workspace release
+      # profile must match docs/release-profile-verification.md (#780).
+      - name: Verify release profile invariants
+        run: |
+          bash scripts/test-check-release-profile.sh
+          bash scripts/check-release-profile.sh
+
+      # Release compilation must be warning-free; any rustc warning fails CI.
+      - name: Build contracts (wasm)
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: cargo build --release --target wasm32-unknown-unknown
+
+      - name: Check formatting
+        # Enforces the rustfmt rules in rustfmt.toml.  Running `cargo fmt
+        # --all` locally produces identical output.  See issue #838.
+        run: cargo fmt --all -- --check
+
+      - name: Verify release wasm artifacts
+        run: bash scripts/check-release-profile.sh --wasm-dir target/wasm32-unknown-unknown/release
+
+      - name: Enforce wasm size budget
+        run: |
+          set -euo pipefail
+          budget="${WASM_SIZE_BUDGET_BYTES}"
+          echo "Wasm size budget: ${budget} bytes"
+          found=0
+          failed=0
+          while IFS= read -r wasm; do
+            found=1
+            size=$(stat -c%s "$wasm")
+            printf '%-60s %10s bytes\n' "$wasm" "$size"
+            if [ "$size" -gt "$budget" ]; then
+              echo "::error file=${wasm}::wasm size ${size} bytes exceeds budget ${budget} bytes"
+              failed=1
+            fi
+          done < <(find target/wasm32-unknown-unknown/release -maxdepth 1 -name '*.wasm' -type f)
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no wasm artifacts found; expected compiled contracts"
+            exit 1
+          fi
+          if [ "$failed" -ne 0 ]; then
+            echo "One or more wasm artifacts exceed the size budget."
+            exit 1
+          fi
+          echo "All wasm artifacts are within budget."
+
+      # Only artifacts that passed every release-profile and size gate above
+      # are published; a failed gate leaves no downloadable wasm behind.
+      - name: Upload wasm artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
         with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: bindings/package-lock.json
-      - name: Install dependencies
-        working-directory: bindings
-        run: npm ci
-      - name: Lint
-        working-directory: bindings
-        run: npm run lint
-      - name: TypeScript compile check
-        working-directory: bindings
-        run: npx tsc --noEmit
+          name: wasm-artifacts
+          path: target/wasm32-unknown-unknown/release/*.wasm
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Run tests
+ feat/771-upgrade-auth-requirements
         working-directory: bindings
         run: npm test
       - name: Build distribution
@@ -237,3 +292,15 @@ jobs:
             exit 1
           fi
           echo "✓ Documentation has upgrade auth cross-links"
+        run: cargo test --workspace
+      - name: Enforce Clippy warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Validate contract IDs and dependency documentation
+        run: |
+          bash scripts/check-contract-ids-sync.sh \
+            --types bindings/src/types.ts \
+            --addresses config/addresses.json \
+            --root-doc CONTRACT_IDS.md \
+            --detail-doc docs/contract-ids.md
+          bash scripts/check-dependency-graph.sh
+ main

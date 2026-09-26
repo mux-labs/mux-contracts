@@ -267,8 +267,13 @@ ALL_CONTRACTS=(
   "mux-account"
   "mux-account-factory"
   "mux-batcher"
+  "mux-delegation"
   "mux-permissions"
+  "mux-policy"
+  "mux-recovery"
   "mux-registry"
+  "mux-spending-policy"
+  "mux-wallet-registry"
 )
 
 if [[ -n "$TARGET_CONTRACT" ]]; then
@@ -341,6 +346,19 @@ build_contracts() {
   cd "$REPO_ROOT"
   cargo build --target wasm32-unknown-unknown --release --workspace
   log_success "Build complete"
+
+  # Print SHA-256 hashes of all produced WASM files so operators can record
+  # and later verify them with scripts/verify-wasm-hash.sh (#455).
+  log_info "WASM hashes (record these for deployment verification):"
+  for wasm in "${WASM_DIR}"/*.wasm; do
+    [[ -f "$wasm" ]] || continue
+    if command -v sha256sum >/dev/null 2>&1; then
+      hash=$(sha256sum "$wasm" | awk '{print $1}')
+    else
+      hash=$(shasum -a 256 "$wasm" | awk '{print $1}')
+    fi
+    log_info "  $(basename "$wasm"): $hash"
+  done
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -357,7 +375,41 @@ deploy_contract() {
     log_dry "  WASM path : $wasm_path"
     log_dry "  Upload    : stellar contract upload --wasm $wasm_path --network-passphrase \"$NETWORK_PASSPHRASE\" --rpc-url $RPC_URL"
     log_dry "  Deploy    : stellar contract deploy --wasm-hash <hash> --network-passphrase \"$NETWORK_PASSPHRASE\" --rpc-url $RPC_URL"
-    log_dry "  Init      : stellar contract invoke --id <contract_id> -- initialize --admin \${ADMIN_ADDRESS}"
+    case "$name" in
+      mux-account)
+        log_dry "  Init      : stellar contract invoke --id <contract_id> -- initialize --owner \${OWNER_ADDRESS} --guardians '[]'"
+        ;;
+      mux-account-factory)
+        log_dry "  Init      : (no explicit init — factory is used directly)"
+        ;;
+      mux-batcher)
+        log_dry "  Init      : stellar contract invoke --id <contract_id> -- initialize"
+        ;;
+      mux-delegation)
+        log_dry "  Init      : stellar contract invoke --id <contract_id> -- initialize --admin \${ADMIN_ADDRESS}"
+        ;;
+      mux-permissions)
+        log_dry "  Init      : stellar contract invoke --id <contract_id> -- initialize --admin \${ADMIN_ADDRESS}"
+        ;;
+      mux-policy)
+        log_dry "  Init      : stellar contract invoke --id <contract_id> -- initialize --admin \${ADMIN_ADDRESS}"
+        ;;
+      mux-recovery)
+        log_dry "  Init      : stellar contract invoke --id <contract_id> -- initialize --admin \${ADMIN_ADDRESS}"
+        ;;
+      mux-registry)
+        log_dry "  Init      : stellar contract invoke --id <contract_id> -- initialize --admin \${ADMIN_ADDRESS}"
+        ;;
+      mux-spending-policy)
+        log_dry "  Init      : stellar contract invoke --id <contract_id> -- initialize --admin \${ADMIN_ADDRESS}"
+        ;;
+      mux-wallet-registry)
+        log_dry "  Init      : stellar contract invoke --id <contract_id> -- initialize --admin \${ADMIN_ADDRESS}"
+        ;;
+      *)
+        log_dry "  Init      : stellar contract invoke --id <contract_id> -- initialize --admin \${ADMIN_ADDRESS}"
+        ;;
+    esac
     return
   fi
 
