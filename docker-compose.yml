@@ -1,46 +1,131 @@
+# Mux Protocol — Local Soroban Development Node
+#
+# Spins up a stellar/quickstart container in standalone mode with Soroban RPC
+# enabled. All services (core, horizon, rpc) start by default.
+#
+# Usage:
+#   docker-compose up --wait          # start and wait until healthy
+#   docker-compose down               # stop
+#   docker-compose down -v            # stop and wipe persisted ledger data
+#
+# Environment: copy .env.localnet.example → .env.localnet and adjust if needed.
+#   docker-compose --env-file .env.localnet up --wait
+#
+# Health-check notes:
+#   The quickstart image starts stellar-core, horizon, and stellar-rpc via
+#   supervisord. On slow hosts the RPC endpoint may not accept connections for
+#   60-90 s after the container starts, so start_period is set to 90 s.
+#
+# Resource limits:
+#   The deploy.resources block caps CPU and memory so the container cannot
+#   starve other processes on the developer workstation.  Adjust the values in
+#   .env.localnet (QUICKSTART_CPUS / QUICKSTART_MEMORY) if your machine has
+#   more or fewer resources available.
+#
+# Storage / TTL notes:
+#   Soroban ledger entries expire after a configurable TTL (instance storage
+#   defaults to ~30 days at 5 s/ledger).  The named volume persists the ledger
+#   between restarts.  A tmpfs-backed volume can be used for ephemeral CI runs
+#   by setting SOROBAN_DATA_DRIVER=tmpfs.  The volume size cap (default 2 GB)
+#   prevents unbounded disk growth from a long-running local chain.
+#
+# See docs/storage-griefing.md for per-contract collection caps and TTL keeper
+# runbook guidance that mirrors the network-level settings below.
+
 version: "3.9"
 
 services:
   soroban-rpc:
-    image: stellar/quickstart:soroban-latest
+    # Pin to a digest-stable tag in production; use soroban-latest for local dev.
+    # To pin: docker pull stellar/quickstart:soroban-latest && docker inspect
+    #         --format '{{index .RepoDigests 0}}' stellar/quickstart:soroban-latest
+    image: stellar/quickstart:${QUICKSTART_IMAGE_TAG:-soroban-latest}
     container_name: mux-soroban-localnet
+
     environment:
-      # Enable Soroban on quickstart
-      QUICKSTART_SOROBAN: "true"
+      # Network selection — standalone keeps a local chain with fast ledger
+      # close times and a built-in Friendbot faucet (via Horizon).
       NETWORK: ${NETWORK:-standalone}
+
+      # RPC and Horizon listen ports inside the container.
+      # The nginx reverse proxy in the image forwards all traffic on :8000.
       SOROBAN_RPC_PORT: ${SOROBAN_RPC_PORT:-8000}
+
     ports:
-      # Soroban RPC endpoint
+      # Soroban RPC + Horizon via nginx reverse proxy
       - "${SOROBAN_RPC_PORT:-8000}:8000"
-      # Horizon API (optional)
+      # Direct Horizon port (optional, useful for the Stellar CLI --horizon-url flag)
       - "${HORIZON_PORT:-8001}:8001"
+
+    # Enable only the services we need: core (always on), horizon (friendbot),
+    # and rpc (Soroban JSON-RPC).  The --standalone flag sets the network mode.
+    # --enable is the modern replacement for the deprecated QUICKSTART_SOROBAN
+    # environment variable.
+    command: >
+      --standalone
+      --enable core,horizon,rpc
+      --protocol-version ${PROTOCOL_VERSION:-21}
+
     healthcheck:
+      # Probe the Soroban RPC getNetwork method — returns 200 only when all
+      # internal services (core + horizon + rpc) are ready.
       test:
         [
           "CMD",
           "curl",
-          "-f",
-          "-X",
-          "POST",
+          "--silent",
+          "--fail",
+          "--max-time", "4",
+          "-X", "POST",
           "http://localhost:8000",
-          "-H",
-          "Content-Type: application/json",
-          "-d",
-          '{"jsonrpc":"2.0","id":1,"method":"getNetwork","params":[]}',
+          "-H", "Content-Type: application/json",
+          "-d", '{"jsonrpc":"2.0","id":1,"method":"getNetwork","params":[]}'
         ]
       interval: 10s
       timeout: 5s
-      retries: 12
-      start_period: 30s
+      retries: 15
+      # Quickstart boots core → horizon → rpc in sequence via supervisord;
+      # allow up to 90 s before the first probe so we don't generate noisy
+      # failures on slower machines or during the initial DB setup.
+      start_period: 90s
+
     volumes:
-      # Persist ledger data
+      # Named volume persists the ledger, PostgreSQL data, and RPC DB across
+      # container restarts.  Use `docker-compose down -v` to start fresh.
       - soroban-data:/opt/stellar
-    command: --standalone
+
+    deploy:
+      resources:
+        limits:
+          # Caps prevent the container from monopolising the developer machine.
+          # Override via QUICKSTART_CPUS / QUICKSTART_MEMORY in .env.localnet.
+          cpus: "${QUICKSTART_CPUS:-2.0}"
+          memory: "${QUICKSTART_MEMORY:-2G}"
+        reservations:
+          cpus: "0.25"
+          memory: "512M"
+
+    restart: unless-stopped
+
+    networks:
+      - mux-local
 
 volumes:
   soroban-data:
-    driver: local
+    driver: ${SOROBAN_DATA_DRIVER:-local}
+    driver_opts:
+      # 2 GB cap prevents unbounded ledger growth on long-running local nodes.
+      # Ignored by the local driver on Linux; effective with tmpfs or NFS.
+      size: "${SOROBAN_DATA_SIZE:-2g}"
+      type: "none"
+      o: "bind"
+      device: "${SOROBAN_DATA_DEVICE:-}"
 
 networks:
-  default:
+  mux-local:
     name: mux-network
+    driver: bridge
+    driver_opts:
+      # Isolates the local Stellar node on its own bridge; prevents accidental
+      # cross-container communication with other Docker projects.
+      com.docker.network.bridge.name: mux-localnet

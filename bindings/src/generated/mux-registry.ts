@@ -29,6 +29,12 @@ export type MuxRegistryError =
   | "ContractNotFound"
   | "TooManyContracts";
 
+export interface ContractMetadata {
+  version: string;
+  description: string;
+  author: string;
+}
+
 export class MuxRegistryClient {
   private contract: Contract;
   private server: SorobanRpc.Server;
@@ -59,6 +65,22 @@ export class MuxRegistryClient {
     await this.submitAndRead<void>(tx, sourceKeypair);
   }
 
+  async registerWithMetadata(
+    sourceKeypair: Keypair,
+    name: string,
+    version: string,
+    description: string,
+    author: string
+  ): Promise<void> {
+    const tx = await this.buildTx(sourceKeypair, "register_with_metadata", [
+      xdr.ScVal.scvSymbol(name),
+      nativeToScVal(version, { type: "string" }),
+      nativeToScVal(description, { type: "string" }),
+      nativeToScVal(author, { type: "string" }),
+    ]);
+    await this.submitAndRead<void>(tx, sourceKeypair);
+  }
+
   async getVersion(sourceKeypair: Keypair, name: string): Promise<string> {
     const tx = await this.buildTx(sourceKeypair, "get_version", [
       xdr.ScVal.scvSymbol(name),
@@ -70,6 +92,22 @@ export class MuxRegistryClient {
     const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
     if (!retval) throw new Error("No return value");
     return retval.value() as unknown as string;
+  }
+
+  async getMetadata(
+    sourceKeypair: Keypair,
+    name: string
+  ): Promise<{ version: string; description: string; author: string }> {
+    const tx = await this.buildTx(sourceKeypair, "get_metadata", [
+      xdr.ScVal.scvSymbol(name),
+    ]);
+    const result = await this.server.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(result)) {
+      throw new Error(`Simulation failed: ${result.error}`);
+    }
+    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+    if (!retval) throw new Error("No return value");
+    return retval.value() as unknown as { version: string; description: string; author: string };
   }
 
   async listContracts(sourceKeypair: Keypair): Promise<string[]> {

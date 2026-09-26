@@ -119,7 +119,7 @@ Every state-mutating entry point calls `require_auth()` on the expected signer b
 | Function | Auth required | Mutates storage | Notes |
 |---|---|---|---|
 | `initialize(owner, guardians)` | `owner` | Yes | One-time; `AlreadyInitialized` on re-call |
-| `set_delegate(delegate, expiry_ledger, can_spend)` | owner | Yes | Capped at `MAX_DELEGATES = 64` |
+| `set_delegate(delegate, expires_at, can_spend)` | owner | Yes | Capped at `MAX_DELEGATES = 64` |
 | `remove_delegate(delegate)` | owner | Yes | `DelegateNotFound` if absent |
 | `set_spend_limit(asset, amount, period_ledgers)` | owner | Yes | `amount > 0`, `period_ledgers > 0` |
 | `debit_spend(asset, spend)` | contract itself | Yes | Period auto-resets via ledger sequence |
@@ -158,7 +158,7 @@ These items are known before the audit and are documented here so auditors can f
 | L-02 | Guardian recovery (`guardians` field) is stored but no recovery flow is implemented. The guardian set is a placeholder for a future M-of-N recovery mechanism. | Acknowledged; out of scope for v0.1 |
 | L-03 | `simulate_batch` returns a conservative estimate (all ops succeed) without actually invoking targets. It does not detect auth failures or contract errors in advance. | By design; documented in code |
 | L-04 | `mux-batcher` does not validate that target contracts are non-malicious. Callers are responsible for vetting targets. | By design; documented in threat model T-10 |
-| L-05 | No upgrade mechanism exists. Contracts are immutable once deployed. A compromised or buggy contract requires redeployment and migration. | Acknowledged; upgrade governance is future roadmap |
+| L-05 | Most contracts have no upgrade mechanism (`mux-account`, `mux-account-factory`, `mux-recovery`, `mux-registry`, `mux-spending-policy`, `mux-wallet-registry`) and require redeployment + migration for a fix. `mux-policy` has a mandatory admin-gated `upgrade()`. `mux-batcher`, `mux-delegation`, and `mux-permissions` have an admin-gated `upgrade()` that is a no-op (`NotInitialized`) unless the deploying team opts in — see [mainnet-immutable-flag-guidance.md](mainnet-immutable-flag-guidance.md). | Acknowledged; opt-in upgrade path added for the three contracts named above, immutable-by-default posture otherwise |
 | L-06 | `SpendLimit` keys are unbounded in count (one per asset). Only the owner can write them, so the attack surface is limited to a self-griefing owner. | Acknowledged; see threat model T-20 |
 
 ---
@@ -171,7 +171,7 @@ These items are known before the audit and are documented here so auditors can f
 | `AlreadyInitialized` guard | `mux-account`, `mux-permissions` | `initialize` functions |
 | `overflow-checks = true` in release | All | `Cargo.toml` `[profile.release]` |
 | `panic = "abort"` in release | All | `Cargo.toml` `[profile.release]` |
-| Delegate expiry (`expiry_ledger`) | `mux-account` | `set_delegate` / `DelegateInfo` struct |
+| Delegate expiry (`expires_at`) | `mux-account` | `set_delegate` / `DelegateInfo` struct |
 | Spend limit period reset via ledger sequence | `mux-account` | `debit_spend` |
 | `MAX_BATCH_SIZE = 50` | `mux-batcher` | `execute_batch` |
 | `MAX_DELEGATES = 64` | `mux-account` | `set_delegate` |
@@ -208,6 +208,8 @@ cargo test --workspace --all-features
 | | `test_ttl_extended_on_write` | TTL extension does not panic |
 | `mux-batcher` | `test_empty_batch_rejected` | `EmptyBatch` error |
 | | `test_batch_too_large_rejected` | `BatchTooLarge` error (51 ops) |
+| | `test_execute_batch_requires_caller_auth` | Unauthorized caller cannot dispatch operations or emit events |
+| | `test_simulate_batch_requires_caller_auth` | Unauthorized caller cannot run preflight simulation or emit events |
 | | `test_execute_batch_emits_event` | `executed` event emitted |
 | | `test_ttl_extended_on_execute_batch` | TTL extension does not panic |
 | `mux-permissions` | `test_initialize` | Happy-path init |
@@ -220,13 +222,29 @@ cargo test --workspace --all-features
 | | `test_initialize_emits_event` | `init` event emitted |
 | | `test_role_lifecycle_emits_events` | `role_crt` + `role_grt` + `role_rev` events |
 | | `test_ttl_extended_on_write` | TTL extension does not panic |
+| `mux-policy` | `test_set_daily_limit_requires_admin_auth` | Unauthorized admin mutation is rejected without state or event changes |
+| | `test_record_spend_requires_wallet_auth` | Unauthorized wallet spend is rejected without state or event changes |
+| `mux-spending-policy` | `test_set_policy_requires_admin_auth` | Unauthorized admin mutation is rejected without state or event changes |
+
+Workspace-level tests, run via `cargo test -p mux-contract-tests`:
+
+| File | Test | What it covers |
+|---|---|---|
+| `tests/fuzz_placeholder.rs` | `fuzz_account::session_keys_cap_holds_under_flood` | Flooding a fresh account to `MAX_SESSION_KEYS` (32) succeeds; the 33rd registration fails closed with `TooManySessionKeys`, and every pre-cap key still authorizes |
+| | `fuzz_account::session_key_update_at_cap_is_allowed` | Re-registering an existing session key at the cap does not grow the index |
+| | `fuzz_batcher::simulate_batch_oversized_gate_holds` | `simulate_batch` mirrors `execute_batch`'s empty/oversized size gate across a sweep of lengths |
+| `tests/cross_contract_integration.rs` | `batcher_execute_batch_invokes_account_set_delegate` | `execute_batch` → `mux-account.set_delegate` actually mutates the target account's delegate map |
+| | `batcher_execute_batch_invokes_permissions_grant_role` | `execute_batch` → `mux-permissions.grant_role` actually grants the role, observable via `has_permission` |
+| | `batcher_execute_batch_required_failure_leaves_account_untouched` | A required op that fails on the target (`NotInitialized`) aborts the batch and leaves no partial state |
+| | `batcher_execute_batch_optional_cross_contract_failure_is_soft` | An optional op that fails on the target counts as a soft failure, not a rollback |
+| `tests/fixture_vectors.rs` | 9 tests | Loads `tests/fixtures/test_vectors.json` and `tests/fixtures/account_limit_vectors.json` and drives `mux-account`, `mux-batcher`, and `mux-permissions` with the vectors' `input`, asserting the recorded `expect` (including error codes) against real contract behaviour |
+
+TypeScript side: `bindings/__tests__/test-vectors.test.ts` loads the same two fixture files and cross-checks every `expect.err` / `expect.code` against `muxAccountErrorMessage` / `muxBatcherErrorMessage` / `muxPermissionsErrorMessage` in `bindings/src/types.ts`, so a fixture and a binding drifting apart fails CI on both sides.
 
 ### Coverage gaps (known before audit)
 
-- No negative auth tests (unauthorized caller attempting a write). All current tests use `mock_all_auths()`.
+- Unauthorized-caller coverage is enforced for the principal write paths in `mux-account`, `mux-account-factory`, `mux-batcher`, `mux-delegation`, `mux-permissions`, `mux-policy`, `mux-recovery`, `mux-registry`, `mux-spending-policy`, and `mux-wallet-registry`. These tests deliberately omit `mock_all_auths()` after setup and assert rejection plus no state/event mutation. New write paths must add the same negative test before merging.
 - No test for `debit_spend` period rollover across ledger sequences.
-- No test for `simulate_batch` with an oversized batch.
-- No integration test exercising `mux-batcher` calling into `mux-account` or `mux-permissions`.
 
 ---
 
@@ -254,6 +272,6 @@ Items the audit team should verify independently:
 - [ ] `AlreadyInitialized` guard prevents state overwrite on both contracts.
 - [ ] Instance TTL is extended on every write; no write path skips `extend_ttl`.
 - [ ] No contract reads or writes another contract's storage directly.
-- [ ] Release WASM does not include `testutils` or `#[cfg(test)]` code (verify with `wasm-objdump`).
+- [ ] Release WASM does not include `testutils` or `#[cfg(test)]` code (run `make check-no-testutils`; see [no-testutils-wasm.md](no-testutils-wasm.md)).
 - [ ] Error discriminants start at 1; no variant uses 0.
 - [ ] Known limitations in §6 are acceptable for the current deployment scope.

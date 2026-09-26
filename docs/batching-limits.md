@@ -38,6 +38,10 @@ Callers can query the current limit at runtime without needing to hard-code it:
 let limit: u32 = batcher_client.max_batch_size();
 ```
 
+Changing `MAX_BATCH_SIZE` requires a contract upgrade; see
+[batcher-upgrade.md](batcher-upgrade.md#changing-max_batch_size) for the
+upgrade path and breaking-change notes.
+
 ---
 
 ## Entry points
@@ -47,6 +51,10 @@ let limit: u32 = batcher_client.max_batch_size();
 | `execute_batch(caller, ops)` | Explicit | Executes ops on behalf of `caller`; `caller.require_auth()` is enforced |
 | `submit_batch(ops)` | Derived from invoker | Convenience wrapper — derives caller from `env.current_contract_address()`; no explicit caller arg needed |
 | `simulate_batch(caller, ops)` | Explicit | Preflight estimate; no state written |
+| `estimate_fees(op_count)` | — | Returns a fee estimate (in stroops) for a batch of the given size; returns `Err(EmptyBatch)` or `Err(BatchTooLarge)` on invalid input |
+| `max_batch_size()` | — | Returns the current `MAX_BATCH_SIZE` constant so callers do not need to hard-code it |
+| `set_registry_metadata(description, author)` | — | Stores informational metadata once at deployment; returns `Err(MetadataAlreadySet)` on repeat calls |
+| `get_registry_metadata()` | — | Returns stored `BatcherMeta` or `None` if not yet set |
 
 ### Why 50?
 
@@ -111,6 +119,7 @@ const op: Operation = {
 | `RequiredOperationFailed` | 3 | An op with `require_success = true` failed |
 | `Unauthorized` | 4 | Reserved for future per-op authorization checks |
 | `ReentrancyDetected` | 5 | A batched op attempted to call back into `mux-batcher` |
+| `MetadataAlreadySet` | 6 | `set_registry_metadata` was called after metadata was already stored (HTTP 409) |
 
 ---
 
@@ -194,6 +203,7 @@ outcome.
 
 | Threat ID | Description | Mitigation |
 |---|---|---|
-| T-BATCH-01 | Caller submits oversized batch to exhaust ledger resources | `MAX_BATCH_SIZE = 50` enforced on every entry point (`execute_batch`, `submit_batch`, `simulate_batch`) |
+| T-BATCH-01 | Caller submits oversized batch to exhaust ledger resources | `MAX_BATCH_SIZE = 50` enforced on every entry point (`execute_batch`, `submit_batch`, `simulate_batch`, `estimate_fees`) |
 | T-BATCH-02 | Batched op re-enters `execute_batch` or `submit_batch` | `DataKey::Executing` reentrancy guard |
-| T-21 | Instance storage TTL expiry | `extend_ttl` on every successful `execute_batch` call |
+| T-BATCH-03 | Caller overwrites registry metadata post-deployment | `set_registry_metadata` enforces write-once via `MetadataAlreadySet` (code 6, HTTP 409) |
+| T-21 | Instance storage TTL expiry | `extend_ttl` on every successful `execute_batch` call and `set_registry_metadata` call |

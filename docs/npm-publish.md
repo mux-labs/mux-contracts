@@ -1,171 +1,104 @@
 # npm Publish Flow — @mux-protocol/contracts
 
-This document describes the end-to-end process for releasing a new version of the
+This document describes the process for releasing a new version of the
 `@mux-protocol/contracts` TypeScript package to npm.
 
 ---
 
-## Overview
+## Current state: automated publish pipeline
 
-Publishing is **fully automated** via GitHub Actions
-(`.github/workflows/bindings.yml`). A human only needs to:
+**The publish pipeline is now automated via `.github/workflows/bindings.yml`.** This workflow:
+1. Regenerates TypeScript bindings from the built WASM on every push to `main` when contract or binding files change
+2. Fails fast if generated bindings differ from the committed state (binding drift detection)
+3. Runs lint, type check, and tests
+4. Publishes to npm automatically with SLSA provenance attestation
 
-1. Bump the version in `bindings/package.json`.
-2. Commit with the magic prefix `chore: release`.
-3. Push / merge to `main`.
+The pipeline requires an `NPM_TOKEN` secret configured in GitHub repo settings with publish access to the `@mux-protocol` scope.
 
-CI does the rest.
-
----
-
-## Prerequisites
-
-### npm Access Token
-
-A scoped npm publish token must be stored as the GitHub repository secret
-`NPM_TOKEN`.
-
-1. Log in at <https://www.npmjs.com> with an account that has **publish** rights
-   to the `@mux-protocol` scope.
-2. Generate an **Automation** token (type: *Automation* — bypasses MFA, safe for
-   CI):  
-   *Profile → Access Tokens → Generate New Token → Automation*
-3. Add it to the repository:  
-   *GitHub repo → Settings → Secrets and variables → Actions → New repository secret*  
-   Name: `NPM_TOKEN`, Value: the token from step 2.
-
-### Package Scope
-
-The package is published as `@mux-protocol/contracts` (scoped, public). Scoped
-packages are private by default on npm; the CI job passes `--access public` to
-override this.
+Manual release is no longer required — simply merge a version bump to `main` and the publish will trigger automatically.
 
 ---
 
-## Step-by-Step Release Process
+## Pipeline prerequisites
 
-### 1. Update the version
+An `NPM_TOKEN` secret must be configured in this repository's GitHub settings
+with publish access to the `@mux-protocol` scope:
 
-In `bindings/package.json`, bump `version` following [semver](https://semver.org/):
+1. In your npm account, generate a new automation token with publish access to `@mux-protocol`
+2. In the GitHub repository settings, add the secret as `NPM_TOKEN`
+
+The token is used **only** by the publish job in `.github/workflows/bindings.yml`.
+
+---
+
+## Release process
+
+To release a new version:
+
+### 1. Bump the version
+
+`bindings/package.json`'s `version` must equal the root Cargo workspace
+`[workspace.package].version` — this is enforced by
+`bindings/__tests__/version-sync.test.ts` (run via `npm test`, calling
+`scripts/sync-versions.sh --check`). Bump both together, following
+[semver](https://semver.org/) — see
+[`docs/BREAKING_CHANGES.md`](BREAKING_CHANGES.md) for what counts as a
+MAJOR change, including the error-enum-specific rules there.
+
+```bash
+# Update the workspace version in the root Cargo.toml, then:
+bash scripts/sync-versions.sh
+```
+
+### 2. Verify locally
 
 ```bash
 cd bindings
-# patch bump (e.g. 0.1.0 → 0.1.1)
-npm version patch --no-git-tag-version
-
-# minor bump (e.g. 0.1.0 → 0.2.0)
-npm version minor --no-git-tag-version
-
-# major bump (e.g. 0.1.0 → 1.0.0)
-npm version major --no-git-tag-version
+npm ci
+npm run lint
+npx tsc --noEmit
+npm test
+npm run build
 ```
 
-The `--no-git-tag-version` flag updates only the file without creating a git tag
-(CI handles publishing, not git tags).
+All of these must pass — they mirror the pipeline's lint/test job.
 
-### 2. Commit with the release trigger
-
-The publish job is gated on the commit message **starting with** `chore: release`:
+### 3. Commit and merge
 
 ```bash
-git add bindings/package.json
-git commit -m "chore: release v0.2.0"
+git add Cargo.toml bindings/package.json bindings/src/generated/
+git commit -m "chore: release v<new-version>"
 git push origin main
 ```
 
-Any commit that does **not** start with `chore: release` will run all CI checks
-but skip the publish step.
-
-### 3. CI pipeline
-
-On every push to `main` the `bindings.yml` workflow runs these jobs in order:
-
-| Job | What it does |
-|-----|-------------|
-| `build-contracts` | Compiles Rust contracts to WASM (release profile) |
-| `test-contracts` | Runs `cargo test --workspace --all-features` |
-| `generate-bindings` | Calls `stellar contract bindings typescript` to regenerate TS clients |
-| `test-bindings` | `npm ci` → lint → `tsc --noEmit` → `npm test` → `npm run build` |
-| `check-binding-drift` | (PRs only) Fails if generated bindings differ from committed state |
-| **`publish`** | Downloads built dist/, runs `npm publish --provenance --access public` |
-
-The `publish` job runs **only** when the commit message starts with
-`chore: release`. All other jobs run on every push and PR.
+The pipeline will automatically regenerate bindings, verify no drift, run tests,
+and publish to npm.
 
 ### 4. Verify the release
 
-After the pipeline completes:
-
 ```bash
-# Confirm the new version is live
 npm view @mux-protocol/contracts version
-
-# Install and smoke-test
 npm install @mux-protocol/contracts@<new-version>
 ```
+
+### 5. Tag the release
+
+```bash
+git tag v<new-version>
+git push origin v<new-version>
+```
+
+`scripts/check-changelog-release-artifacts.sh` (run in CI) checks that
+tagged releases have WASM hashes and a matching binding version recorded in
+`CHANGELOG.md` — update `CHANGELOG.md` before or alongside tagging.
 
 ---
 
 ## npm Provenance Attestation
 
-The publish job uses the `--provenance` flag, which generates a
-[SLSA provenance attestation](https://slsa.dev/) and attaches it to the npm
-package. This lets consumers verify:
-
-- Which GitHub repository and commit produced the package.
-- That the package was built by the official CI pipeline.
-
-No additional setup is required; GitHub Actions provides the OIDC token that
-`npm publish --provenance` uses automatically when run in a GitHub Actions
-environment.
-
-Provenance records are visible on the npm package page under
-*Provenance → View attestation*.
-
----
-
-## Manual Publish (break-glass)
-
-If CI is broken and you must publish manually:
-
-```bash
-cd bindings
-
-# 1. Ensure bindings are up-to-date
-bash ../scripts/generate-bindings.sh
-
-# 2. Build the package
-npm ci && npm run build
-
-# 3. Publish (you will be prompted for OTP if 2FA is enabled)
-npm publish --access public
-# Note: --provenance is unavailable outside GitHub Actions
-```
-
-Manual publishes do **not** include provenance attestation. Prefer the automated
-flow whenever possible.
-
----
-
-## Binding Drift Check
-
-The `check-binding-drift` CI job (PRs only) regenerates the TypeScript bindings
-from the WASM artifact and diffs them against what is committed in the PR. If
-they differ, the check fails with a message like:
-
-```
-Error: Generated bindings differ from committed state.
-Re-run `bash scripts/generate-bindings.sh` and commit the result.
-```
-
-This prevents accidental stale bindings from being merged. If you see this
-failure, run:
-
-```bash
-bash scripts/generate-bindings.sh
-git add bindings/src/generated/
-git commit -m "chore: regenerate bindings"
-```
+Published versions include a [SLSA provenance attestation](https://slsa.dev/)
+generated during the automated publish workflow. This provides cryptographic
+proof of the package's origin and build process.
 
 ---
 
@@ -173,8 +106,9 @@ git commit -m "chore: regenerate bindings"
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Publish job skipped | Commit message does not start with `chore: release` | Amend or add a new commit with the correct prefix |
-| `403 Forbidden` from npm | `NPM_TOKEN` secret is missing or expired | Regenerate token and update the GitHub secret |
-| `402 Payment Required` | Package is private (scoped default) | Ensure `--access public` is in the publish command (it already is in CI) |
-| Binding drift check fails on PR | Bindings not regenerated after contract change | Run `bash scripts/generate-bindings.sh` and commit |
-| `tsc --noEmit` fails | Type errors in generated or hand-authored TS | Fix type errors before pushing |
+| `403 Forbidden` from npm | Not logged in, or account lacks publish rights to `@mux-protocol` | `npm login`; confirm scope access on npmjs.com |
+| `402 Payment Required` | Package is private (scoped default) | Pass `--access public` |
+| `version-sync.test.ts` fails | `bindings/package.json` version doesn't match Cargo workspace version | Run `bash scripts/sync-versions.sh` |
+| Bindings differ from WASM after `generate-bindings.sh` | Contract changed since bindings were last regenerated | Commit the regenerated files under `bindings/src/generated/` |
+| `tsc --noEmit` fails | Type errors in generated or hand-authored TS | Fix type errors before publishing |
+| OTP prompt during `npm publish` | 2FA enabled on your npm account | Enter the OTP from your authenticator |

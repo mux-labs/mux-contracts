@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/mux-labs/mux-contracts/config/addresses.schema.json",
+  "title": "Mux Protocol Contract Addresses",
+  "description": "Per-network contract address configuration for Mux Protocol Soroban contracts. Mainnet entries require an explicit review marker before merge (see _review). Empty strings are valid placeholders for contracts not yet deployed to a given network.",
+  "type": "object",
+  "required": ["localnet", "testnet", "mainnet"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference URI."
+    },
+    "_review": {
+      "type": "object",
+      "description": "Mainnet address PR review rule. Any change to a mainnet entry MUST be reviewed and approved before merge. The marker is intentionally separate from the address values so that editing an address without updating the marker is detected.",
+      "required": ["rule", "description", "mainnetApproval", "mainnetApprovals", "errorCodes"],
+      "additionalProperties": false,
+      "properties": {
+        "rule": { "type": "string" },
+        "description": { "type": "string" },
+        "mainnetApproval": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "string" }
+          ],
+          "description": "Review token set by CI/maintainer when mainnet address change is approved. Must be null when no mainnet address has changed."
+        },
+        "mainnetApprovals": {
+          "type": "object",
+          "description": "Map of address key to approved value, updated when a mainnet address change is approved.",
+          "additionalProperties": { "type": "string" }
+        },
+        "errorCodes": {
+          "type": "object",
+          "description": "Stable error codes emitted when the review rule is violated.",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+    "localnet": { "$ref": "#/definitions/networkAddresses" },
+    "testnet": { "$ref": "#/definitions/networkAddresses" },
+    "mainnet": { "$ref": "#/definitions/networkAddresses" }
+  },
+  "definitions": {
+    "contractAddress": {
+      "type": "string",
+      "description": "Soroban contract address (C... Strkey) or empty string if not yet deployed.",
+      "pattern": "^(C[A-Z2-7]{55})?$"
+    },
+    "networkAddresses": {
+      "type": "object",
+      "description": "Contract addresses for a single Stellar network.",
+      "required": [
+        "muxAccount",
+        "muxAccountFactory",
+        "muxBatcher",
+        "muxDelegation",
+        "muxPermissions",
+        "muxPolicy",
+        "muxRecovery",
+        "muxRegistry",
+        "muxSpendingPolicy",
+        "muxWalletRegistry"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "muxAccount":        { "$ref": "#/definitions/contractAddress", "description": "mux-account: account abstraction contract." },
+        "muxAccountFactory": { "$ref": "#/definitions/contractAddress", "description": "mux-account-factory: factory for deploying account instances." },
+        "muxBatcher":        { "$ref": "#/definitions/contractAddress", "description": "mux-batcher: atomic multi-operation batching." },
+        "muxDelegation":     { "$ref": "#/definitions/contractAddress", "description": "mux-delegation: scoped delegate permission management." },
+        "muxPermissions":    { "$ref": "#/definitions/contractAddress", "description": "mux-permissions: RBAC registry." },
+        "muxPolicy":         { "$ref": "#/definitions/contractAddress", "description": "mux-policy: per-wallet daily spend-limit policy." },
+        "muxRecovery":       { "$ref": "#/definitions/contractAddress", "description": "mux-recovery: guardian-initiated account recovery with timelock." },
+        "muxRegistry":       { "$ref": "#/definitions/contractAddress", "description": "mux-registry: contract version and metadata registry." },
+        "muxSpendingPolicy": { "$ref": "#/definitions/contractAddress", "description": "mux-spending-policy: per-account/per-asset spend-limit policy." },
+        "muxWalletRegistry": { "$ref": "#/definitions/contractAddress", "description": "mux-wallet-registry: named wallet address registry." }
+      }
+    }
+  }
+}

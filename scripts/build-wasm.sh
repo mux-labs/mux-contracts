@@ -3,6 +3,11 @@
 #
 # Compiles every Mux Protocol Soroban contract to WASM (wasm32-unknown-unknown).
 #
+# Release builds intentionally omit the soroban-sdk `testutils` feature:
+#   - Packages are listed explicitly (excludes soroban-test-helpers)
+#   - No `--features` / `--all-features` flags are passed
+#   - Run `scripts/check-no-testutils.sh` after build to verify
+#
 # Usage:
 #   bash scripts/build-wasm.sh [--release|--dev] [--out-dir <path>]
 #
@@ -19,6 +24,20 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROFILE="release"
 OUT_DIR="${REPO_ROOT}/target/wasm"
 
+# Contract crates only — never include soroban-test-helpers (always has testutils).
+CONTRACT_PACKAGES=(
+  mux-account
+  mux-account-factory
+  mux-batcher
+  mux-delegation
+  mux-permissions
+  mux-policy
+  mux-recovery
+  mux-registry
+  mux-spending-policy
+  mux-wallet-registry
+)
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --release) PROFILE="release"; shift ;;
@@ -30,12 +49,18 @@ done
 
 WASM_SRC="${REPO_ROOT}/target/wasm32-unknown-unknown/${PROFILE}"
 
-echo "==> Building Soroban contracts (profile: ${PROFILE})..."
+PKG_ARGS=()
+for pkg in "${CONTRACT_PACKAGES[@]}"; do
+  PKG_ARGS+=(-p "$pkg")
+done
+
+echo "==> Building Soroban contracts (profile: ${PROFILE}, no testutils)..."
+# Do not pass --features / --all-features: testutils must stay off for release WASM.
 cargo build \
   --manifest-path "${REPO_ROOT}/Cargo.toml" \
   --target wasm32-unknown-unknown \
   --profile "${PROFILE}" \
-  --workspace
+  "${PKG_ARGS[@]}"
 
 mkdir -p "${OUT_DIR}"
 
@@ -47,5 +72,10 @@ for wasm in "${WASM_SRC}"/*.wasm; do
   size=$(wc -c < "${dest}")
   echo "  $(basename "${dest}")  ${size} bytes"
 done
+
+if [[ "${PROFILE}" == "release" ]]; then
+  echo "==> Verifying no testutils in release WASMs..."
+  bash "${REPO_ROOT}/scripts/check-no-testutils.sh" --wasm-dir "${WASM_SRC}"
+fi
 
 echo "==> Done. WASMs are in ${OUT_DIR}"

@@ -1,8 +1,8 @@
 # Mainnet Deployment Checklist
 
-Use this checklist before every mainnet deployment. Complete every item in order. Do not skip steps — each exists because a past incident or near-miss made it necessary.
+> **Note:** This document has been consolidated with `MAINNET_DEPLOY_CHECKLIST.md`. Please use **[MAINNET_DEPLOY_CHECKLIST.md](MAINNET_DEPLOY_CHECKLIST.md)** as the canonical pre-deployment checklist.
 
-> **When to use:** Run through this checklist for every first-time deployment and every upgrade that changes on-chain state or contract addresses.
+This checklist is maintained for reference and backward compatibility. The consolidated `MAINNET_DEPLOY_CHECKLIST.md` contains all items from both documents with complete phase-based organization, sign-off requirements, and fillable fields for audit references and contract IDs.
 
 ---
 
@@ -14,7 +14,7 @@ Use this checklist before every mainnet deployment. Complete every item in order
 - [ ] Account exists on mainnet (Horizon returns HTTP 200, not 404)
 - [ ] XLM balance ≥ 10 XLM (check: `stellar account show <KEY> --network mainnet`)
 - [ ] Secret key is stored in a secrets manager or HSM — **not** in any file on disk
-- [ ] `DEPLOYER_SECRET_KEY` is set in the deployment environment (CI secret or local env)
+- [ ] `DEPLOYER_PRIVATE_KEY` is set in the deployment environment (CI secret or local env)
 - [ ] Deployer key has **not** been used for any other on-chain activity since last rotation
 
 See [docs/deployer-key.md](deployer-key.md) for full key setup instructions.
@@ -56,7 +56,7 @@ See [docs/deployer-key.md](deployer-key.md) for full key setup instructions.
 - [ ] `SOROBAN_RPC_URL` points to mainnet RPC: `https://soroban-mainnet.stellar.org` (or approved private RPC)
 - [ ] `STELLAR_NETWORK` is set to `Public Global Stellar Network ; September 2015`
 - [ ] `SOROBAN_NETWORK` is set to `mainnet`
-- [ ] `DEPLOYER_SECRET_KEY` is the **mainnet** deployer key (not a testnet key)
+- [ ] `DEPLOYER_PRIVATE_KEY` is the **mainnet** deployer key (not a testnet key)
 - [ ] No testnet/localnet values remain in any env file being sourced
 - [ ] Run: `bash scripts/deploy.sh --dry-run --network mainnet --skip-build` and confirm output shows `mainnet` in configuration banner
 

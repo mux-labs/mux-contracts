@@ -1,0 +1,288 @@
+{
+  "description": "Mux Protocol account / factory / batcher limit vectors for deterministic boundary verification",
+  "version": "0.1.0",
+  "notes": "Pairs with tests/fixtures/test_vectors.json. Focused on storage-griefing and spend/batch caps so TypeScript bindings and Rust tests share one source of truth.",
+  "constants": {
+    "mux_account": {
+      "MAX_DELEGATES": 64,
+      "MAX_SESSION_KEYS": 32
+    },
+    "mux_account_factory": {
+      "MAX_ACCOUNTS_PER_OWNER": 64,
+      "MAX_VERSION_LENGTH": 32,
+      "MAX_DESCRIPTION_LENGTH": 256,
+      "MAX_AUTHOR_LENGTH": 64
+    },
+    "mux_batcher": {
+      "MAX_BATCH_SIZE": 50,
+      "FEE_PER_OP": 100
+    },
+    "mux_spending_policy": {
+      "SPEND_LIMIT_MIN": 1,
+      "PERIOD_LEDGERS_MIN": 1
+    }
+  },
+  "mux_account": {
+    "delegate_limits": [
+      {
+        "id": "acct-dlg-under-cap",
+        "description": "Adding the 64th distinct delegate succeeds (at cap, still allowed)",
+        "input": {
+          "pre_existing_delegates": 63,
+          "delegate": "GDEL64",
+          "expires_at": 1000,
+          "can_spend": true
+        },
+        "expect": { "ok": true, "delegate_count": 64 }
+      },
+      {
+        "id": "acct-dlg-at-cap-reject",
+        "description": "Adding a 65th distinct delegate is rejected (MAX_DELEGATES=64)",
+        "input": {
+          "pre_existing_delegates": 64,
+          "delegate": "GDEL65",
+          "expires_at": 1000,
+          "can_spend": false
+        },
+        "precondition": "delegates_at_cap",
+        "expect": { "err": "TooManyDelegates", "code": 9 }
+      },
+      {
+        "id": "acct-dlg-update-at-cap",
+        "description": "Updating an existing delegate at cap does not grow the map",
+        "input": {
+          "pre_existing_delegates": 64,
+          "delegate": "GDEL1",
+          "expires_at": 2000,
+          "can_spend": false,
+          "is_update": true
+        },
+        "precondition": "delegates_at_cap",
+        "expect": { "ok": true, "delegate_count": 64 }
+      }
+    ],
+    "session_key_limits": [
+      {
+        "id": "acct-sk-under-cap",
+        "description": "Registering the 32nd session key succeeds",
+        "input": { "pre_existing_keys": 31 },
+        "expect": { "ok": true, "session_key_count": 32 }
+      },
+      {
+        "id": "acct-sk-at-cap-reject",
+        "description": "Registering a 33rd session key is rejected (MAX_SESSION_KEYS=32)",
+        "input": { "pre_existing_keys": 32 },
+        "precondition": "session_keys_at_cap",
+        "expect": { "err": "TooManySessionKeys", "code": 12 }
+      }
+    ],
+    "spend_limit_vectors": [
+      {
+        "id": "acct-lmt-set-ok",
+        "description": "Positive amount and non-zero period succeed",
+        "input": { "asset": "USDC", "amount": 1000, "period_ledgers": 100 },
+        "expect": { "ok": true }
+      },
+      {
+        "id": "acct-lmt-zero-amount",
+        "description": "Zero amount is rejected",
+        "input": { "asset": "USDC", "amount": 0, "period_ledgers": 100 },
+        "expect": { "err": "InvalidAmount", "code": 7 }
+      },
+      {
+        "id": "acct-lmt-negative-amount",
+        "description": "Negative amount is rejected",
+        "input": { "asset": "USDC", "amount": -1, "period_ledgers": 100 },
+        "expect": { "err": "InvalidAmount", "code": 7 }
+      },
+      {
+        "id": "acct-lmt-zero-period",
+        "description": "Zero period is rejected",
+        "input": { "asset": "USDC", "amount": 100, "period_ledgers": 0 },
+        "expect": { "err": "InvalidPeriod", "code": 8 }
+      },
+      {
+        "id": "acct-lmt-debit-exact",
+        "description": "Debit equal to remaining limit succeeds",
+        "input": {
+          "asset": "USDC",
+          "limit": 1000,
+          "period_ledgers": 100,
+          "spend": 1000
+        },
+        "expect": { "ok": true, "remaining": 0 }
+      },
+      {
+        "id": "acct-lmt-debit-one-over",
+        "description": "Debit one unit over the limit is rejected",
+        "input": {
+          "asset": "USDC",
+          "limit": 1000,
+          "period_ledgers": 100,
+          "spend": 1001
+        },
+        "expect": { "err": "SpendLimitExceeded", "code": 6 }
+      },
+      {
+        "id": "acct-lmt-debit-cumulative",
+        "description": "Two debits that sum over the limit reject on the second",
+        "input": {
+          "asset": "USDC",
+          "limit": 1000,
+          "period_ledgers": 100,
+          "spends": [600, 500]
+        },
+        "expect": {
+          "first": { "ok": true, "remaining": 400 },
+          "second": { "err": "SpendLimitExceeded", "code": 6 }
+        }
+      }
+    ]
+  },
+  "mux_account_factory": {
+    "accounts_vec_limits": [
+      {
+        "id": "fac-acct-under-cap",
+        "description": "Deploying the 64th account for an owner succeeds",
+        "input": { "pre_existing_accounts": 63 },
+        "expect": { "ok": true, "accounts_len": 64 }
+      },
+      {
+        "id": "fac-acct-at-cap-reject",
+        "description": "Deploying a 65th account is rejected (MAX_ACCOUNTS_PER_OWNER=64)",
+        "input": { "pre_existing_accounts": 64 },
+        "precondition": "accounts_at_cap",
+        "expect": { "err": "TooManyAccounts", "code": 3 }
+      },
+      {
+        "id": "fac-acct-simulate-at-cap",
+        "description": "simulate_deploy mirrors TooManyAccounts at the Accounts vec cap",
+        "input": { "pre_existing_accounts": 64, "simulate": true },
+        "precondition": "accounts_at_cap",
+        "expect": { "err": "TooManyAccounts", "code": 3, "state_unchanged": true }
+      },
+      {
+        "id": "fac-acct-cap-query",
+        "description": "max_accounts_per_owner returns the documented constant",
+        "input": {},
+        "expect": { "ok": true, "max_accounts_per_owner": 64 }
+      }
+    ],
+    "metadata_limits": [
+      {
+        "id": "fac-meta-at-limit",
+        "description": "Metadata fields exactly at size limits succeed",
+        "input": {
+          "version_len": 32,
+          "description_len": 256,
+          "author_len": 64
+        },
+        "expect": { "ok": true }
+      },
+      {
+        "id": "fac-meta-version-over-limit",
+        "description": "Version string > 32 chars is rejected",
+        "input": {
+          "version_len": 33,
+          "description_len": 10,
+          "author_len": 10
+        },
+        "expect": { "err": "MetadataTooLarge", "code": 5 }
+      },
+      {
+        "id": "fac-meta-desc-over-limit",
+        "description": "Description string > 256 chars is rejected",
+        "input": {
+          "version_len": 10,
+          "description_len": 257,
+          "author_len": 10
+        },
+        "expect": { "err": "MetadataTooLarge", "code": 5 }
+      },
+      {
+        "id": "fac-meta-author-over-limit",
+        "description": "Author string > 64 chars is rejected",
+        "input": {
+          "version_len": 10,
+          "description_len": 10,
+          "author_len": 65
+        },
+        "expect": { "err": "MetadataTooLarge", "code": 5 }
+      }
+    ]
+  },
+  "mux_batcher": {
+    "batch_size_limits": [
+      {
+        "id": "bat-size-one",
+        "description": "Single-op batch passes the size gate",
+        "input": { "ops_count": 1 },
+        "expect": { "ok": true }
+      },
+      {
+        "id": "bat-size-at-cap",
+        "description": "Batch of exactly MAX_BATCH_SIZE=50 passes the size gate",
+        "input": { "ops_count": 50 },
+        "expect": { "ok": true }
+      },
+      {
+        "id": "bat-size-one-over",
+        "description": "Batch of 51 ops is rejected",
+        "input": { "ops_count": 51 },
+        "expect": { "err": "BatchTooLarge", "code": 2 }
+      },
+      {
+        "id": "bat-size-empty",
+        "description": "Empty batch is rejected",
+        "input": { "ops_count": 0 },
+        "expect": { "err": "EmptyBatch", "code": 1 }
+      }
+    ]
+  },
+  "mux_spending_policy": {
+    "boundary_limits": [
+      {
+        "id": "sp-lmt-zero-limit-reject",
+        "description": "Zero spend limit in set_policy is rejected",
+        "input": { "limit": 0, "period_ledgers": 100 },
+        "expect": { "err": "InvalidInput", "code": 6 }
+      },
+      {
+        "id": "sp-lmt-negative-limit-reject",
+        "description": "Negative spend limit in set_policy is rejected",
+        "input": { "limit": -1, "period_ledgers": 100 },
+        "expect": { "err": "InvalidInput", "code": 6 }
+      },
+      {
+        "id": "sp-lmt-zero-period-reject",
+        "description": "Zero period_ledgers in set_policy is rejected",
+        "input": { "limit": 1000, "period_ledgers": 0 },
+        "expect": { "err": "InvalidPeriod", "code": 7 }
+      },
+      {
+        "id": "sp-lmt-negative-spend-reject",
+        "description": "Negative spend amount in check_spend is rejected",
+        "input": { "amount": -1 },
+        "expect": { "err": "InvalidInput", "code": 6 }
+      },
+      {
+        "id": "sp-lmt-exact-limit-spend-ok",
+        "description": "Spend amount exactly equal to limit succeeds",
+        "input": { "limit": 1000, "amount": 1000 },
+        "expect": { "ok": true }
+      },
+      {
+        "id": "sp-lmt-one-over-limit-reject",
+        "description": "Spend amount one unit over limit is rejected",
+        "input": { "limit": 1000, "amount": 1001 },
+        "expect": { "err": "SpendLimitExceeded", "code": 5 }
+      },
+      {
+        "id": "sp-lmt-zero-spend-ok",
+        "description": "Spend amount of zero succeeds",
+        "input": { "limit": 1000, "amount": 0 },
+        "expect": { "ok": true }
+      }
+    ]
+  }
+}

@@ -1,54 +1,65 @@
-# Contributing to Mux Contracts
+# Contributing to mux-contracts
 
-Thank you for your interest in contributing to Mux! This guide explains how to submit changes, what we expect, and how we work together.
+Thanks for contributing to Mux Protocol's Soroban contracts. This guide covers the
+basics; for deeper protocol context see the canonical docs linked below.
 
-## Code of Conduct
+## Canonical documentation
 
-Be respectful and constructive. We're committed to providing a welcoming and inclusive environment.
+- [`README.md`](./README.md) — repo overview, build/test instructions, and layout.
+- [`SECURITY.md`](./SECURITY.md) — vulnerability disclosure and security policy.
+- [`CONTRACT_IDS.md`](./CONTRACT_IDS.md) — deployed contract IDs per network.
+- [`Somzilla.md`](./Somzilla.md) — status/audit notes for the Somzilla review.
+  This file is a status document only; where it disagrees with `README.md`,
+  `SECURITY.md`, or `CONTRACT_IDS.md`, those canonical docs win.
 
-## Getting Started
+## Getting started
 
-1. **Fork the repository** — Click the "Fork" button on GitHub
-2. **Clone your fork** — `git clone https://github.com/your-username/mux-contracts.git`
-3. **Create a branch** — `git checkout -b feature/your-feature-name`
-4. **Make your changes** — See guidelines below
-5. **Test** — Run `cargo test --workspace --all-features`
-6. **Commit** — Follow commit message conventions
-7. **Push** — `git push origin feature/your-feature-name`
-8. **Open a Pull Request** — Describe your changes clearly
+1. Fork and clone the repository.
+2. Install the Rust toolchain and `soroban-cli` per `README.md`.
+3. Build and run the test suite as described in `README.md`.
 
-## Commit Message Convention
+## CI: wasm size budget and artifacts
 
-Use descriptive commit messages following this format:
+The CI workflow (`.github/workflows/ci.yml`) enforces a **wasm size budget** on
+every compiled contract. The build fails closed if any `*.wasm` exceeds the
+configured limit, so oversized contracts cannot land unnoticed.
 
-```
-<type>(<scope>): <short description> (#<issue>)
+- The budget is defined by the `WASM_SIZE_BUDGET_BYTES` environment variable in
+the workflow (default `65536` bytes / 64 KiB per contract).
+- To adjust the budget, change that value in `.github/workflows/ci.yml` and
+explain the rationale in your PR description.
+- Built wasm artifacts are uploaded from each CI run as the `wasm-artifacts`
+artifact, so contributors and reviewers can download and inspect them directly
+from the workflow run page.
 
-<optional body explaining the change in detail>
-```
+If a contract legitimately needs more space, raise the budget in the same PR
+that grows the contract and note the reason; do not bypass the check.
 
-**Type** — Choose one:
-- `feat:` — New feature or functionality
-- `fix:` — Bug fix
-- `docs:` — Documentation changes
-- `test:` — Test additions or modifications
-- `refactor:` — Code refactoring without feature changes
-- `perf:` — Performance improvements
-- `chore:` — Build, dependency, or tooling changes
+## Pull requests
 
-**Scope** — One of:
-- `contracts:` — Contract code changes
-- `tests:` — Test-specific changes
-- `docs:` — Documentation files
-- `scripts:` — Build or utility scripts
-- `bindings:` — TypeScript bindings
+- Keep changes scoped to a single issue; avoid unrelated refactors.
+- Include tests for new behavior and authz/idempotency negatives where relevant.
+- Update docs (`README.md`, `SECURITY.md`, `CONTRACT_IDS.md`, `Somzilla.md`)
+  when behavior or status changes so they stay consistent.
+- Do not commit secrets, keys, JWTs, or webhook secrets.
 
-**Examples:**
-```
-feat(contracts): add session key validation for account abstraction (#26)
-fix(tests): handle ledger timestamp overflow in session key tests (#26)
-docs(docs): add account abstraction design guide (#27)
-```
+## Reporting security issues
+
+pace, raise the budget in the same PR
+that grows the contract and note the reason; do not bypass the check.
+
+## Pull requests
+
+- Keep changes scoped to a single issue; avoid unrelated refactors.
+- Include tests for new behavior and authz/idempotency negatives where relevant.
+- Update docs (`README.md`, `SECURITY.md`, `CONTRACT_IDS.md`, `Somzilla.md`)
+  when behavior or status changes so they stay consistent.
+- Do not commit secrets, keys, JWTs, or webhook secrets.
+
+## Reporting security issues
+
+Do not open public issues for vulnerabilities. Follow the process in
+[`SECURITY.md`](./SECURITY.md).
 
 ## Pull Request Process
 
@@ -79,12 +90,118 @@ Example entry:
 - Session key validation now correctly handles zero timestamps (#25)
 ```
 
+## Contract PR Guidelines
+
+All PRs that modify Soroban contract code under `contracts/` must satisfy the following before merge.
+
+### `no_std` Safety
+
+Every contract crate is `#![no_std]`. Do **not** add `std` imports or any dependency
+that pulls in the standard library. The WASM target (`wasm32-unknown-unknown`) does
+not provide `std`.
+
+- Use `soroban_sdk` types (`Vec`, `Map`, `String`, `BytesN`, …) instead of `alloc` /
+  `std` collections where possible.
+- If you genuinely need `alloc` (e.g. `Vec` in a non-Soroban context), gate it behind
+  `extern crate alloc;` and ensure the crate compiles with `--target wasm32-unknown-unknown`.
+- Verify with `cargo build --target wasm32-unknown-unknown --release -p <crate>` before pushing.
+
+### Error Enums
+
+Every contract **must** define a single `#[contracterror]` enum in its root `lib.rs`.
+
+```rust
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum MyContractError {
+    NotInitialized = 1,
+    AlreadyInitialized = 2,
+    Unauthorized = 3,
+    // … contract-specific variants
+}
+```
+
+Rules:
+- Variants are `#[repr(u32)]` with unique codes. Start at `1` and increment sequentially.
+- Always include `NotInitialized` (1), `AlreadyInitialized` (2), and `Unauthorized` (3)
+  where applicable — these map to standard HTTP status codes in the TypeScript bindings.
+- Do **not** reuse codes across contracts; each contract owns its own code space.
+- Add a brief doc comment on every variant explaining when it is returned.
+- After adding or changing variants, update:
+  - `docs/error_codes.md` — canonical Rust-side reference
+  - `bindings/src/types.ts` — the TS union type and `*ErrorMessage` map
+  - `bindings/src/errors.ts` — the `ERROR_HTTP_MAP` entry for the new variant
+
+### Storage Bounds
+
+All collection-backed storage (Vec, Map) **must** have an explicit cap to prevent
+storage griefing. Use a `const MAX_*: u32` constant and return a dedicated error
+when the cap is reached.
+
+```rust
+const MAX_WALLETS: u32 = 256;
+
+if wallet_names.len() >= MAX_WALLETS {
+    return Err(MuxPolicyError::TooManyWallets);
+}
+```
+
+Document the cap value and rationale in a comment next to the constant.
+
+### TTL Management
+
+Persistent storage entries **must** call `extend_ttl` on every write so that active
+data survives beyond the default ledger TTL. Follow the existing pattern:
+
+```rust
+const TTL_THRESHOLD: u32 = 17_280; // ~1 day
+const TTL_EXTEND_TO: u32 = 518_400; // ~30 days
+
+env.storage()
+    .persistent()
+    .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+```
+
+Instance storage should also be extended after any state-mutating function.
+
+### Unit Tests
+
+Every public function must have at least one unit test. Tests live in a `#[cfg(test)] mod tests` block at the bottom of the contract's `lib.rs`.
+
+Minimum coverage per contract:
+- Happy-path for every public entry point.
+- Each error variant returned at least once.
+- Boundary / edge cases (zero amounts, overflow, capacity limits).
+- Event emission checks where events are emitted.
+
+Run `cargo test --package <crate>` and `cargo clippy --package <crate>` before
+pushing. The CI also runs `cargo test --workspace --all-features`.
+
+### Checklist
+
+Before requesting review on a contract PR:
+
+- [ ] `#![no_std]` — no `std` imports
+- [ ] `cargo build --target wasm32-unknown-unknown --release -p <crate>` succeeds (or `make wasm` for all contracts)
+- [ ] Error enum follows the convention (single `#[contracterror]`, `#[repr(u32)]`, codes start at 1)
+- [ ] `docs/error_codes.md` updated for new or changed error variants
+- [ ] TypeScript bindings regenerated (`make bindings` or `bash scripts/generate-bindings.sh`)
+- [ ] `bindings/src/types.ts` union type and error-message map updated
+- [ ] `bindings/src/errors.ts` HTTP map updated for new variants
+- [ ] All collection storage has a cap (`MAX_*` constant + `TooMany*` error)
+- [ ] Persistent storage entries call `extend_ttl` on write
+- [ ] Unit tests cover happy path, each error variant, and edge cases
+- [ ] `cargo clippy --workspace --all-features` is clean (or `make lint`)
+- [ ] `cargo fmt --check` passes (or `make fmt`, format via `make fmt-fix`)
+- [ ] Workspace test suite passes: `cargo test --workspace --all-features` (or `make test`)
+
 ## Code Style
 
 ### Rust
 
-- **Format** — Run `cargo fmt` before committing
-- **Lint** — Run `cargo clippy` and fix warnings
+- **Format** — Run `cargo fmt` before committing (or `make fmt-fix`)
+- **Lint** — Run `cargo clippy` and fix warnings (or `make lint`)
 - **Comments** — Add doc comments (`///`) to public functions and types
 - **Tests** — All new public functionality must have unit tests
 - **Error Handling** — Use Result types; avoid unwrap() in library code
@@ -96,26 +213,82 @@ Example entry:
 - **Public APIs** — Document with examples in doc comments
 - **Architecture** — Document design decisions in `docs/` directory
 
-## Testing
+## Testing & Makefile Reference
 
-- **Unit Tests** — Run `cargo test --lib`
-- **All Tests** — Run `cargo test --workspace --all-features`
+The root `Makefile` provides standardized targets mirroring the CI checks:
+
+| Target | Command | Description |
+|---|---|---|
+| `make all` | `fmt`, `lint`, `build`, `test` | Run all standard pre-push checks |
+| `make build` | `cargo build --workspace --all-targets` | Compile all workspace targets |
+| `make test` | `cargo test --workspace --all-features` | Run complete test suite with all features enabled |
+| `make test-unit` | `cargo test --lib` | Run unit tests across workspace libraries |
+| `make fmt` | `cargo fmt --all -- --check` | Verify code formatting |
+| `make fmt-fix` | `cargo fmt --all` | Automatically format code |
+| `make lint` / `make clippy` | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | Run Clippy linter with strict warning denial |
+| `make wasm` | `bash scripts/build-wasm.sh --release` | Build release WASM artifacts |
+| `make check-sizes` | `bash scripts/check-contract-sizes.sh` | Verify contract sizes against budget |
+| `make bindings` | `bash scripts/generate-bindings.sh` | Generate TypeScript contract bindings |
+| `make deny` | `cargo deny check` | Supply-chain advisory and license check |
+| `make coverage` | `bash scripts/coverage.sh` | Measure LLVM source coverage |
+| `make test-coverage` | `bash scripts/test-coverage.sh` | Validate coverage script stub behavior |
+
+- **Unit Tests** — Run `make test-unit` or `cargo test --lib`
+- **All Tests** — Run `make test` or `cargo test --workspace --all-features`
 - **Integration Tests** — Require localnet setup (see README.md)
-- **Coverage** — Aim for >90% coverage on new code
+- **Coverage** — Aim for >90% coverage on new code. Generate a report with
+  `make coverage` or `bash scripts/coverage.sh` (add `--html` / `--lcov` as needed).
+  If `llvm-tools-preview` is not installed, the script prints a **coverage report stub**
+  listing workspace crates; validate the stub with `make test-coverage` or `bash scripts/test-coverage.sh`.
+
+## Cargo.lock Policy
+
+This repository **commits `Cargo.lock`** and keeps it under version control.
+
+- **Why** — Soroban WASM builds must be reproducible for audits, CI cache keys, and
+  mainnet deploy checklists (`docs/MAINNET_DEPLOY_CHECKLIST.md`). Pinning transitive
+  crates via the lockfile reduces supply-chain drift between developers and CI.
+- **Do** — Commit lockfile updates in the same PR that bumps dependencies in
+  `Cargo.toml` / workspace members. Run `cargo update -p <crate>` (or a full
+  `cargo update` when intentional) and include the resulting `Cargo.lock` diff.
+- **Do not** — Add `Cargo.lock` to `.gitignore`, delete it from the tree, or regenerate
+  it casually without reviewing the diff (`cargo deny check` is recommended after
+  dependency changes).
+- **CI** — Workflows hash `Cargo.lock` for cache keys; keep the committed file in sync
+  with what CI builds.
 
 Example test:
 ```rust
 #[test]
-fn test_session_key_valid_returns_true() {
+fn test_execute_with_session_succeeds_for_registered_key() {
     let (env, client, owner) = setup();
     let session_key = Address::generate(&env);
     let expires_at = env.ledger().timestamp() + 3600;
-    let scopes = Vec::new(&env);
+    // A key must be granted at least one scope; an empty list fails closed.
+    let scopes = vec![
+        &env,
+        Scope {
+            method: symbol_short!("ping"),
+        },
+    ];
+    let target = env.register_contract(None, ExecuteTarget);
 
-    client.register_session_key(&owner, &session_key, &expires_at, &scopes);
-    assert!(client.is_session_key_valid(&owner, &session_key));
+    client.register_session_key(&session_key, &expires_at, &scopes);
+    let _ = client.execute_with_session(
+        &session_key,
+        &target,
+        &symbol_short!("ping"),
+        &Vec::new(&env),
+    );
 }
 ```
+
+`register_session_key` takes `(session_key, expires_at, scopes)` — the owner is
+read from stored account state and must `require_auth()`, so it is not passed
+explicitly. Validity can be checked directly via the `is_session_key_valid(session_key)`
+read-only query, and is also checked internally by `execute_with_session` (see
+[`docs/entrypoint-matrix.md`](docs/entrypoint-matrix.md) for the full list of
+`mux-account` entrypoints).
 
 ## Security
 
@@ -225,3 +398,4 @@ By contributing, you agree that your contributions will be licensed under the MI
 ---
 
 Thank you for contributing to Mux! 🚀
+

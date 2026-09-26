@@ -30,15 +30,24 @@ import * as path from "path";
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const REPO_ROOT = path.resolve(__dirname, "..");
-const WASM_DIR = path.join(REPO_ROOT, "target", "wasm32-unknown-unknown", "release");
+const WASM_DIR = path.join(
+  REPO_ROOT,
+  "target",
+  "wasm32-unknown-unknown",
+  "release",
+);
 const BINDINGS_DIR = path.join(REPO_ROOT, "bindings", "src", "generated");
 
 const ALL_CONTRACTS = [
   "mux-account",
   "mux-account-factory",
   "mux-batcher",
+  "mux-delegation",
   "mux-permissions",
+  "mux-recovery",
   "mux-registry",
+  "mux-spending-policy",
+  "mux-wallet-registry",
 ] as const;
 
 type ContractName = (typeof ALL_CONTRACTS)[number];
@@ -70,7 +79,8 @@ function parseArgs(argv: string[]): Options {
         opts.skipBuild = true;
         break;
       case "--contract":
-        opts.contract = (args[++i] ?? die("--contract requires a value")) as ContractName;
+        opts.contract = (args[++i] ??
+          die("--contract requires a value")) as ContractName;
         break;
       case "--dry-run":
         opts.dryRun = true;
@@ -85,8 +95,13 @@ function parseArgs(argv: string[]): Options {
     }
   }
 
-  if (opts.contract && !(ALL_CONTRACTS as readonly string[]).includes(opts.contract)) {
-    die(`Unknown contract: ${opts.contract}. Valid: ${ALL_CONTRACTS.join(", ")}`);
+  if (
+    opts.contract &&
+    !(ALL_CONTRACTS as readonly string[]).includes(opts.contract)
+  ) {
+    die(
+      `Unknown contract: ${opts.contract}. Valid: ${ALL_CONTRACTS.join(", ")}`,
+    );
   }
 
   return opts;
@@ -136,14 +151,17 @@ function run(cmd: string, dryRun: boolean, opts: ExecSyncOptions = {}): void {
 
 function buildContracts(opts: Options): void {
   if (opts.skipBuild) {
-    log(INFO_PREFIX, `Skipping build (--skip-build); using WASMs from ${WASM_DIR}`);
+    log(
+      INFO_PREFIX,
+      `Skipping build (--skip-build); using WASMs from ${WASM_DIR}`,
+    );
     return;
   }
   log(INFO_PREFIX, "Building Soroban contracts (wasm32, release)...");
   run(
     "cargo build --target wasm32-unknown-unknown --release --workspace",
     opts.dryRun,
-    { cwd: REPO_ROOT }
+    { cwd: REPO_ROOT },
   );
   log(OK_PREFIX, "Build complete");
 }
@@ -156,7 +174,10 @@ function generateBindings(contractName: string, opts: Options): void {
   const outDir = path.join(BINDINGS_DIR, contractName);
 
   if (!opts.dryRun && !fs.existsSync(wasmPath)) {
-    log(WARN_PREFIX, `WASM not found for ${contractName} at ${wasmPath} — skipping`);
+    log(
+      WARN_PREFIX,
+      `WASM not found for ${contractName} at ${wasmPath} — skipping`,
+    );
     return;
   }
 
@@ -175,7 +196,7 @@ function generateBindings(contractName: string, opts: Options): void {
       "--overwrite",
     ].join(" \\\n  "),
     opts.dryRun,
-    { cwd: REPO_ROOT }
+    { cwd: REPO_ROOT },
   );
 
   log(OK_PREFIX, `${contractName} → ${path.relative(REPO_ROOT, outDir)}`);
@@ -196,9 +217,14 @@ function main(): void {
 
   buildContracts(opts);
 
-  const contracts: string[] = opts.contract ? [opts.contract] : [...ALL_CONTRACTS];
+  const contracts: string[] = opts.contract
+    ? [opts.contract]
+    : [...ALL_CONTRACTS];
 
-  log(INFO_PREFIX, `Generating bindings for ${contracts.length} contract(s)...`);
+  log(
+    INFO_PREFIX,
+    `Generating bindings for ${contracts.length} contract(s)...`,
+  );
   console.log("");
 
   for (const contract of contracts) {

@@ -52,6 +52,62 @@ Breaking changes to error handling include:
 - Adding new error codes (especially at the end of the enum)
 - Improving error messages without changing the error code value
 
+### Error Codes and the `@mux-protocol/contracts` npm Package
+
+Every contract's `#[contracterror]` enum is exposed to TypeScript consumers
+via generated bindings in `bindings/src/generated/` plus hand-maintained
+numeric maps in `bindings/src/types.ts` (`codeMap`/`nameMap` per contract,
+e.g. `muxAccountErrorMessage`) and `bindings/src/errors.ts`
+(`ERROR_HTTP_MAP`). This has semver consequences beyond the Rust-contract
+rules above:
+
+- **The generated TypeScript error type is a string-literal union**
+  (e.g. `"NotInitialized" | "Unauthorized" | ...`), decoded from the
+  on-chain numeric code by the Stellar SDK. Renumbering an existing
+  variant's discriminant (e.g. `Unauthorized = 3` → `Unauthorized = 10`)
+  does **not** change this union type — `tsc --noEmit` will not catch it,
+  and the CI `bindings` job's type-check will pass. The only things that
+  actually go stale are the hand-maintained numeric `codeMap`/`nameMap` in
+  `bindings/src/types.ts` and any consumer code that persisted, logged, or
+  compared the raw numeric code. **This makes renumbering more dangerous
+  than a typical breaking change** because nothing in CI currently detects
+  it — treat it as MAJOR and manually verify every `codeMap`/`nameMap`
+  entry for the affected contract still matches the Rust source before
+  releasing.
+- **Appending a new variant at the end of an enum** is non-breaking for the
+  Rust contract and is treated as MINOR for the npm package too — but be
+  aware that TypeScript consumers who exhaustively `switch` over the error
+  union type (relying on `never` exhaustiveness checks) will get a new
+  compile error on their side when the union grows. That is an accepted
+  cost of a MINOR bump, not a reason to reclassify it as MAJOR.
+- **The package version is shared across all 10 contracts.**
+  `@mux-protocol/contracts` ships bindings for every contract under one
+  package version, and `bindings/package.json`'s `version` field is kept
+  equal to the root Cargo workspace `[workspace.package].version` by
+  `scripts/sync-versions.sh` (checked in `bindings/__tests__/version-sync.test.ts`).
+  There is no per-contract package or version. **A breaking error-enum
+  change in any single contract forces a MAJOR bump of the entire
+  workspace and the entire npm package** — even if the other nine
+  contracts' error enums are untouched. Do not assume a change scoped to
+  one contract only affects that contract's consumers' semver expectations.
+- When bumping for an error-enum change, also complete the checklist in
+  [`CONTRIBUTING.md`](../CONTRIBUTING.md) ("Error Enums" section): update
+  `docs/error_codes.md`, `bindings/src/types.ts`, and `bindings/src/errors.ts`.
+  No automated check currently enforces that these stay in sync with the
+  Rust source — this is a manual, PR-review-time responsibility.
+
+### Event / Topic Changes
+
+Breaking changes to contract events include:
+
+- **Contract Tag or Action Rename**: Changing a `topics[0]` contract tag or a `topics[1]` action name (see [`docs/event-topic-conventions.md`](event-topic-conventions.md))
+- **Payload Shape Changes**: Changing the type, order, or count of fields in an event's `data` payload for an existing `(contract_tag, action)` pair
+- **Reserved Action Tag Reassignment**: Reusing one of the repository-wide reserved action tags (e.g. `ses_exe`, `rec_init`) for a different event or contract
+
+**Non-breaking examples:**
+- Adding a new action under an existing contract tag
+- Adding a new contract tag for a new crate
+
 ### Behavior Changes
 
 Breaking changes to function behavior include:
