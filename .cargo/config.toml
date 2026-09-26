@@ -1,0 +1,22 @@
+# .cargo/config.toml
+#
+# Workspace-level Cargo configuration for Mux Protocol contracts.
+#
+# Aliases defined here are invoked as `cargo <alias>` from any directory inside
+# the workspace.  They are shortcuts for common lint and build workflows.
+#
+# Full alias documentation: https://doc.rust-lang.org/cargo/reference/config.html#alias
+
+[alias]
+# Run clippy across the whole workspace and treat all warnings as errors.
+# This matches what CI runs (`make clippy`).
+lint = "clippy --workspace --all-features --all-targets -- -D warnings"
+
+# Run clippy with the full pedantic lint group enabled in addition to -D warnings.
+# Use this for a thorough code-quality pass before opening a PR.
+# See docs/clippy-notes.md for which pedantic lints are relevant to Soroban.
+lint-pedantic = "clippy --workspace --all-features --all-targets -- -D warnings -W clippy::pedantic"
+
+# Build all WASM artifacts in release mode (calls the build-wasm.sh script via
+# the Makefile target; use `make wasm` to invoke the script directly).
+build-wasm = "build --target wasm32-unknown-unknown --release"

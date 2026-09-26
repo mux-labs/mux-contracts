@@ -1,20 +1,50 @@
 {
+  "$schema": "./addresses.schema.json",
+  "_review": {
+    "rule": "Mainnet address PR review rule",
+    "description": "Mainnet entries MUST be reviewed and approved before merge. Any change to a mainnet address requires an explicit review marker (see _review.mainnetApproval) and a corresponding entry in _review.mainnetApprovals. Unreviewed or silently changed mainnet addresses fail closed in CI and in the bindings addresses loader.",
+    "mainnetApproval": null,
+    "mainnetApprovals": {},
+    "errorCodes": {
+      "MAINNET_ADDRESS_UNREVIEWED": "Mainnet address change lacks required review approval marker.",
+      "MAINNET_ADDRESS_MISMATCH": "Mainnet address does not match the approved value recorded in _review.mainnetApprovals.",
+      "MAINNET_APPROVAL_MISSING": "No approval record found for the given mainnet address key."
+    }
+  },
   "localnet": {
     "muxAccount": "",
+    "muxAccountFactory": "",
     "muxBatcher": "",
     "muxDelegation": "",
-    "muxPermissions": ""
+    "muxPermissions": "",
+    "muxPolicy": "",
+    "muxRecovery": "",
+    "muxRegistry": "",
+    "muxSpendingPolicy": "",
+    "muxWalletRegistry": ""
   },
   "testnet": {
     "muxAccount": "",
+    "muxAccountFactory": "",
     "muxBatcher": "",
     "muxDelegation": "",
-    "muxPermissions": ""
+    "muxPermissions": "",
+    "muxPolicy": "",
+    "muxRecovery": "",
+    "muxRegistry": "",
+    "muxSpendingPolicy": "",
+    "muxWalletRegistry": ""
   },
   "mainnet": {
     "muxAccount": "",
+    "muxAccountFactory": "",
     "muxBatcher": "",
     "muxDelegation": "",
-    "muxPermissions": ""
+    "muxPermissions": "",
+    "muxPolicy": "",
+    "muxRecovery": "",
+    "muxRegistry": "",
+    "muxSpendingPolicy": "",
+    "muxWalletRegistry": ""
   }
 }

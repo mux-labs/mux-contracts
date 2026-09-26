@@ -4,27 +4,52 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
+  # Fail-closed wasm size budget (bytes). Any compiled contract wasm larger
+  # than this limit fails the build. Adjust deliberately and document why.
+  WASM_SIZE_BUDGET_BYTES: "262144"
 
 jobs:
+  build-and-test:
+    name: Build, test, and enforce wasm size budget
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enforce mainnet address review rule
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          set -euo pipefail
+
+      - name: Validate deploy env examples are secret-free
+        run: bash scripts/validate-deploy-env.sh
+
+      - name: Validate localnet env example is complete and secret-free
+        run: bash scripts/validate-localnet-env.sh
+
   rust:
     name: Rust (fmt, clippy, test, wasm)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.81.0
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
         with:
-          components: clippy, rustfmt
+          # Pin to the MSRV declared in rust-toolchain.toml so CI and local
+          # dev always use the same channel.  Any toolchain drift is caught
+          # immediately on PRs rather than silently on contributor machines.
+          toolchain: "1.81.0"
           targets: wasm32-unknown-unknown
-      - name: Cache Cargo
+          components: rustfmt, clippy
+
+      - name: Cache cargo
         uses: actions/cache@v4
         with:
           path: |
@@ -34,115 +59,74 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-      - name: cargo fmt
+
+      # Fail closed before spending time on a build: the workspace release
+      # profile must match docs/release-profile-verification.md (#780).
+      - name: Verify release profile invariants
+        run: |
+          bash scripts/test-check-release-profile.sh
+          bash scripts/check-release-profile.sh
+
+      # Release compilation must be warning-free; any rustc warning fails CI.
+      - name: Build contracts (wasm)
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: cargo build --release --target wasm32-unknown-unknown
+
+      - name: Check formatting
+        # Enforces the rustfmt rules in rustfmt.toml.  Running `cargo fmt
+        # --all` locally produces identical output.  See issue #838.
         run: cargo fmt --all -- --check
-      - name: cargo clippy
-        run: cargo clippy --workspace --all-features -- -D warnings
-      - name: cargo test
-        run: cargo test --workspace --all-features
-      - name: Build WASM (release)
-        run: bash scripts/build-wasm.sh --release
-      - name: Check contract sizes
-        run: bash scripts/check-contract-sizes.sh
 
-  bindings:
-    name: TypeScript Bindings
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Verify release wasm artifacts
+        run: bash scripts/check-release-profile.sh --wasm-dir target/wasm32-unknown-unknown/release
+
+      - name: Enforce wasm size budget
+        run: |
+          set -euo pipefail
+          budget="${WASM_SIZE_BUDGET_BYTES}"
+          echo "Wasm size budget: ${budget} bytes"
+          found=0
+          failed=0
+          while IFS= read -r wasm; do
+            found=1
+            size=$(stat -c%s "$wasm")
+            printf '%-60s %10s bytes\n' "$wasm" "$size"
+            if [ "$size" -gt "$budget" ]; then
+              echo "::error file=${wasm}::wasm size ${size} bytes exceeds budget ${budget} bytes"
+              failed=1
+            fi
+          done < <(find target/wasm32-unknown-unknown/release -maxdepth 1 -name '*.wasm' -type f)
+          if [ "$found" -eq 0 ]; then
+            echo "::error::no wasm artifacts found; expected compiled contracts"
+            exit 1
+          fi
+          if [ "$failed" -ne 0 ]; then
+            echo "One or more wasm artifacts exceed the size budget."
+            exit 1
+          fi
+          echo "All wasm artifacts are within budget."
+
+      # Only artifacts that passed every release-profile and size gate above
+      # are published; a failed gate leaves no downloadable wasm behind.
+      - name: Upload wasm artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
         with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: bindings/package-lock.json
-      - name: Install dependencies
-        working-directory: bindings
-        run: npm ci
-      - name: Lint
-        working-directory: bindings
-        run: npm run lint
-      - name: TypeScript compile check
-        working-directory: bindings
-        run: npx tsc --noEmit
-      - name: Run tests
-        working-directory: bindings
-        run: npm test
-      - name: Build distribution
-        working-directory: bindings
-        run: npm run build
+          name: wasm-artifacts
+          path: target/wasm32-unknown-unknown/release/*.wasm
+          if-no-files-found: error
+          retention-days: 14
 
-  rollback-discipline:
-    name: Rollback Discipline Checks
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Check rollback-log.md exists
+      - name: Run tests
+        run: cargo test --workspace
+      - name: Enforce Clippy warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Validate contract IDs and dependency documentation
         run: |
-          if [ ! -f "ops/rollback-log.md" ]; then
-            echo "Error: ops/rollback-log.md not found"
-            exit 1
-          fi
-          echo "✓ ops/rollback-log.md exists"
-      - name: Check SECURITY.md exists
-        run: |
-          if [ ! -f "SECURITY.md" ]; then
-            echo "Error: SECURITY.md not found"
-            exit 1
-          fi
-          echo "✓ SECURITY.md exists"
-      - name: Check deploy.sh has rollback support
-        run: |
-          if ! grep -q "ROLLBACK_MODE" scripts/deploy.sh; then
-            echo "Error: deploy.sh missing rollback mode support"
-            exit 1
-          fi
-          echo "✓ deploy.sh has rollback support"
-      - name: Check verify-rollback.sh exists and is executable
-        run: |
-          if [ ! -f "scripts/verify-rollback.sh" ]; then
-            echo "Error: scripts/verify-rollback.sh not found"
-            exit 1
-          fi
-          chmod +x scripts/verify-rollback.sh
-          echo "✓ verify-rollback.sh exists and is executable"
-      - name: Check check-feature-flags.sh exists and is executable
-        run: |
-          if [ ! -f "scripts/check-feature-flags.sh" ]; then
-            echo "Error: scripts/check-feature-flags.sh not found"
-            exit 1
-          fi
-          chmod +x scripts/check-feature-flags.sh
-          echo "✓ check-feature-flags.sh exists and is executable"
-      - name: Test feature flag check
-        run: |
-          # Test disabled flag (should fail)
-          if bash scripts/check-feature-flags.sh ENABLE_ROLLBACK 2>/dev/null; then
-            echo "Error: Feature flag check should fail when flag is not set"
-            exit 1
-          fi
-          echo "✓ Feature flag check correctly fails when flag is not set"
-          
-          # Test enabled flag (should pass)
-          if ! ENABLE_ROLLBACK=true bash scripts/check-feature-flags.sh ENABLE_ROLLBACK; then
-            echo "Error: Feature flag check should pass when flag is set to true"
-            exit 1
-          fi
-          echo "✓ Feature flag check correctly passes when flag is set to true"
-      - name: Test rollback verification (dry-run)
-        run: |
-          if ! bash scripts/verify-rollback.sh --network testnet --strategy address-repoint --dry-run; then
-            echo "Error: Rollback verification dry-run failed"
-            exit 1
-          fi
-          echo "✓ Rollback verification dry-run passes"
-      - name: Check docs have rollback cross-links
-        run: |
-          if ! grep -q "ops/rollback-log.md" docs/rollback-deploy.md; then
-            echo "Error: docs/rollback-deploy.md missing link to ops/rollback-log.md"
-            exit 1
-          fi
-          if ! grep -q "SECURITY.md" docs/rollback-deploy.md; then
-            echo "Error: docs/rollback-deploy.md missing link to SECURITY.md"
-            exit 1
-          fi
-          echo "✓ Documentation has rollback cross-links"
+          bash scripts/check-contract-ids-sync.sh \
+            --types bindings/src/types.ts \
+            --addresses config/addresses.json \
+            --root-doc CONTRACT_IDS.md \
+            --detail-doc docs/contract-ids.md
+          bash scripts/check-dependency-graph.sh

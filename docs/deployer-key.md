@@ -72,7 +72,7 @@ All deployment scripts read the deployer key from environment variables. **Never
 
 ```bash
 # The secret key of the funded deployer account (starts with 'S')
-export DEPLOYER_SECRET_KEY="SABC...XYZ"
+export DEPLOYER_PRIVATE_KEY="SABC...XYZ"
 ```
 
 ### Optional overrides
@@ -157,11 +157,11 @@ If the account does not exist yet (HTTP 404 from Horizon), it needs to be create
 # .github/workflows — reference the secret; never print it
 - name: Deploy contracts
   env:
-    DEPLOYER_SECRET_KEY: ${{ secrets.DEPLOYER_SECRET_KEY }}
+    DEPLOYER_PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
   run: bash scripts/deploy.sh --network testnet
 ```
 
-Add `DEPLOYER_SECRET_KEY` to **GitHub → Settings → Secrets and variables → Actions** before running the workflow.
+Add `DEPLOYER_PRIVATE_KEY` to **GitHub → Settings → Secrets and variables → Actions** before running the workflow.
 
 ### Post-deployment
 

@@ -4,6 +4,10 @@
 # Usage:
 #   bash scripts/local-invoke.sh --contract-name mux-account --function owner --secret-key S...
 #   bash scripts/local-invoke.sh --contract-id C... --function initialize --secret-key S... --arg '{"type":"address","value":"G..."}'
+#   bash scripts/local-invoke.sh --contract-name mux-account --function owner --secret-key S... --simulate-only
+#
+# For multi-contract simulate-only smoke checks after deploy, see:
+#   bash scripts/local-invoke-smoke.sh --secret-key S...
 
 set -euo pipefail
 

@@ -40,15 +40,23 @@ import {
   Asset,
   rpc,
 } from "@stellar/stellar-sdk";
+import * as fs from "fs";
+import * as path from "path";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Configuration: Load from environment variables
+// Configuration: Load from environment variables and config/addresses.json
 // ─────────────────────────────────────────────────────────────────────────────
 
 const RPC_URL = process.env.RPC_URL || "http://localhost:8000";
 const SERVER_SECRET_KEY = process.env.SERVER_SECRET_KEY;
 const SOROBAN_NETWORK = process.env.SOROBAN_NETWORK || "localnet";
-const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
+
+// Load contract addresses from config/addresses.json
+const configPath = path.join(__dirname, "..", "config", "addresses.json");
+const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+// Default to muxAccount, but can be overridden via CONTRACT_ADDRESS env var
+const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS ||
+  config[SOROBAN_NETWORK]?.muxAccount;
 
 // Validate required environment variables
 if (!SERVER_SECRET_KEY) {
@@ -58,8 +66,8 @@ if (!SERVER_SECRET_KEY) {
 }
 
 if (!CONTRACT_ADDRESS) {
-  console.error("❌ Error: CONTRACT_ADDRESS environment variable is not set");
-  console.error("Set it to the Mux contract address you want to invoke (CADDRESS...)");
+  console.error("❌ Error: No contract address found");
+  console.error("Set it via CONTRACT_ADDRESS env var or in config/addresses.json");
   process.exit(1);
 }
 

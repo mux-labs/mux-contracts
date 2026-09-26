@@ -12,6 +12,7 @@ soroban-sdk = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+soroban-test-helpers = { path = "../soroban-test-helpers" }
 
 [features]
 testutils = ["soroban-sdk/testutils"]

@@ -9,6 +9,28 @@
 #   source scripts/network-config.sh
 #   load_network_config testnet
 #   echo $NETWORK_PASSPHRASE
+#
+# ── Why the network passphrase matters ────────────────────────────────────────
+#
+# Every Stellar transaction is signed over a payload that includes the network
+# passphrase hashed via SHA-256.  This ties the signature cryptographically to
+# one specific network and prevents replay attacks across networks.
+#
+# If you sign a transaction with the wrong passphrase the signature will be
+# invalid and the transaction will be rejected by the network validators.
+# More critically, submitting a mainnet-signed transaction to testnet (or vice
+# versa) is always safe — it will simply be rejected — but the converse concern
+# is real: a transaction crafted for testnet cannot be replayed on mainnet
+# because the passphrase hash will not match.
+#
+# When calling deploy scripts, the passphrase is normally set automatically by
+# sourcing this file through scripts/network-config.sh.  You can also override
+# it explicitly:
+#
+#   export STELLAR_NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
+#
+# Do NOT hard-code the passphrase string inside contract logic — pass it at
+# deploy/invoke time via the CLI --network-passphrase flag or the env var above.
 
 # ── Testnet ────────────────────────────────────────────────────────────────────
 [testnet]

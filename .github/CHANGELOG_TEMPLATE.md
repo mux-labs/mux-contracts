@@ -49,8 +49,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Security
 - Security patch 1: Description
 
+### Release Artifacts
+- Bindings package: `@mux/bindings@1.0.0`
+- Contract WASM (SHA-256):
+  | Contract | SHA-256 |
+  |---|---|
+  | `mux-account` | `<64-hex-char hash>` |
+  | `mux-account-factory` | `<64-hex-char hash>` |
+  | ... one row per deployed contract crate ... | |
+
 ...older releases...
 ```
+
+## Release Artifacts Section
+
+Every tagged release (i.e. every `## [x.y.z] - YYYY-MM-DD` header — **not**
+`Unreleased`) **must** include a `### Release Artifacts` subsection listing:
+
+1. The published bindings package version (from `bindings/package.json`),
+   e.g. `` `@mux/bindings@1.0.0` ``.
+2. A table of every deployed contract crate's WASM SHA-256 hash. Compute
+   each hash with:
+   ```bash
+   bash scripts/verify-wasm-hash.sh --compute-only <path-to-wasm>
+   ```
+
+This lets auditors and downstream integrators pin a release to the exact
+on-chain bytecode and the exact TypeScript binding version it ships with —
+the two must be released and referenced together, since a bindings version
+that doesn't match the deployed WASM's ABI is unsafe to use.
+
+**When to use:** Required on every version release. Not applicable to the
+`Unreleased` section.
 
 ## Section Guidelines
 
@@ -125,8 +155,11 @@ Examples:
    ```
    ## [1.0.0] - 2026-05-30
    ```
-3. Add a new **Unreleased** section at the top (with no subsections yet)
-4. Update the git tag and version in all Cargo.toml files to match
+3. Add a `### Release Artifacts` subsection listing the bindings package
+   version and the WASM SHA-256 hash of every deployed contract (see
+   [Release Artifacts Section](#release-artifacts-section) below)
+4. Add a new **Unreleased** section at the top (with no subsections yet)
+5. Update the git tag and version in all Cargo.toml files to match
 
 ### During Development
 
@@ -196,6 +229,9 @@ Before merging, ensure:
 - [ ] Entry uses clear, user-facing language
 - [ ] If breaking change: major version will be bumped
 - [ ] If security issue: CVE reference included (if applicable)
+- [ ] If this PR cuts a version release: `### Release Artifacts` lists the
+      bindings package version and every deployed contract's WASM SHA-256
+      hash (see [Release Artifacts Section](#release-artifacts-section))
 
 ## Questions?
 
