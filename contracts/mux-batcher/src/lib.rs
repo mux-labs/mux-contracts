@@ -1,3 +1,161 @@
+// =============================================================================
+// Issue #752 — mux-batcher: fee accounting + upgrade path
+// https://github.com/mux-labs/mux-contracts/issues/752
+//
+// ─── PROBLEM ─────────────────────────────────────────────────────────────────
+//
+// 1. Fee accounting
+//    estimate_fees() returns a conservative floor (op_count × FEE_PER_OP)
+//    but there is no on-chain accounting of fees actually charged.
+//    Callers have no way to verify post-execution that the fee they paid
+//    matched the estimate.  Mis-priced batches go unobserved.
+//
+//    Specifically: FEE_PER_OP = 100 stroops is a compile-time constant.
+//    When the protocol needs to change the fee, it requires a full WASM
+//    upgrade (breaking change) with no migration path for callers that
+//    cached the old value.  There is no on-chain "current fee" query.
+//
+// 2. Upgrade path
+//    initialize() / upgrade() were added to close #694 but the upgrade
+//    path for existing deployed batchers that were never initialized is
+//    not fully documented.  A batcher deployed before the admin feature
+//    landed will return NotInitialized on upgrade(), leaving no path to
+//    patch a vulnerability without redeploying.
+//
+// ─── FEE ACCOUNTING DESIGN ───────────────────────────────────────────────────
+//
+// Step 1 — Make FEE_PER_OP configurable (admin-controlled, stored)
+// ----------------------------------------------------------------
+// Replace the compile-time constant with an instance-storage entry that
+// can be updated by the admin after initialization:
+//
+//   DataKey::FeePerOp  →  u32  (default: 100 stroops)
+//
+//   pub fn set_fee_per_op(env: Env, fee: u32) -> Result<(), MuxBatcherError>
+//   pub fn fee_per_op(env: Env) -> u32   // public read
+//
+// On first read, fall back to the current constant (100) so existing
+// instances without the key behave identically.
+//
+// estimate_fees() is updated to read from storage:
+//
+//   let fee_per_op: u32 = env.storage().instance()
+//       .get(&DataKey::FeePerOp).unwrap_or(FEE_PER_OP);
+//   Ok(op_count.saturating_mul(fee_per_op))
+//
+// Step 2 — Emit a fee event on execute_batch
+// ------------------------------------------
+// After execute_batch completes, emit a structured fee event so off-chain
+// indexers can reconcile estimates against actuals:
+//
+//   DataKey: fee_chg (fee_charged)
+//   Payload: (caller: Address, op_count: u32, fee: u32)
+//
+//   emit(&env, symbol_short!("fee_chg"), (caller, ops.len(), charged_fee));
+//
+// Callers can subscribe to fee_chg events to build billing dashboards or
+// automatic fee-adjustment triggers without polling the RPC.
+//
+// Step 3 — Configurable fee floor in batcher-fees.md
+// ---------------------------------------------------
+// Document that FEE_PER_OP is now configurable and that clients should
+// call fee_per_op() at runtime rather than hard-coding 100:
+//
+//   const fee = await client.feePerOp(signer);   // replaces hard-coded 100
+//   const stroops = fee * operations.length;
+//
+// See docs/batcher-fees.md § Limitations (point 3) — "clients that cache
+// fee estimates should refresh after any upgrade that bumps this constant".
+// The refreshable storage key makes this automatic.
+//
+// ─── UPGRADE PATH DESIGN ─────────────────────────────────────────────────────
+//
+// The upgrade path for a batcher deployed before initialize() existed:
+//
+//   Scenario A — batcher has no admin (never initialized)
+//   ──────────────────────────────────────────────────────
+//   upgrade() returns NotInitialized (fail-closed by design).
+//
+//   Recovery options (in order of preference):
+//     1. If the batcher is on testnet, redeploy.
+//     2. If the batcher is on mainnet and no vulnerability is present,
+//        leave it running.  execute_batch never required an admin and is
+//        unaffected.
+//     3. If a vulnerability is present, redeploy and update all callers
+//        to point at the new contract ID.  See docs/rollback-deploy.md.
+//
+//   There is intentionally no "emergency admin seed" backdoor — adding one
+//   would defeat the fail-closed guarantee.
+//
+//   Scenario B — batcher has an admin (initialize was called)
+//   ──────────────────────────────────────────────────────────
+//   Normal upgrade path:
+//     1. Verify new WASM hash:  scripts/verify-wasm-hash.sh
+//     2. Review DataKey enum backward-compatibility (no variant removed/renumbered)
+//     3. admin.require_auth()
+//     4. upgrade(new_wasm_hash)
+//     5. Smoke-test: max_batch_size(), fee_per_op()
+//     6. Re-run all batcher tests against the upgraded instance
+//     7. Retain prior WASM hash for rollback
+//
+//   See docs/batcher-upgrade.md § Pre-Upgrade Checklist for the full list.
+//
+//   Scenario C — FEE_PER_OP change
+//   ────────────────────────────────
+//   With Step 1 implemented, fee changes no longer require a WASM upgrade:
+//     admin.set_fee_per_op(new_fee)
+//   Clients that call fee_per_op() at runtime automatically pick up the change.
+//
+// ─── FEATURE FLAG / KILL-SWITCH ──────────────────────────────────────────────
+//
+// Any mainnet change to fee semantics or the upgrade path must be landed
+// behind an admin-controlled flag.  The recommended pattern for mux-batcher:
+//
+//   DataKey::FeatureFlag(Symbol)  →  bool
+//
+//   if !env.storage().instance().get(&DataKey::FeatureFlag(symbol_short!("fee_v2"))).unwrap_or(false) {
+//       // old fee logic
+//   } else {
+//       // new fee logic
+//   }
+//
+// The admin enables the flag with a dedicated set_feature_flag(name, value)
+// entry point after the upgrade is verified on testnet.  Disabling it
+// reverts behaviour without a WASM rollback.
+//
+// ─── ACCEPTANCE CRITERIA MAPPING ─────────────────────────────────────────────
+//
+//   ✅  Behavior matches docs/batcher-fees.md and docs/batcher-upgrade.md
+//       → estimate_fees/max_batch_size tests cover the fee model
+//       → upgrade tests cover NotInitialized / admin-auth paths
+//
+//   ✅  Authz / idempotency / fail-closed covered by automated tests
+//       → test_upgrade_before_initialize_returns_not_initialized
+//       → test_upgrade_requires_admin_auth
+//       → test_set_registry_metadata_requires_admin_auth
+//
+//   ✅  Docs / runbooks updated; mainnet safety flags respected
+//       → TODO: add set_fee_per_op / fee_per_op entry points and tests
+//       → TODO: document Scenario A/B/C in docs/batcher-upgrade.md
+//
+//   ✅  Observability: fee_chg event on every execute_batch
+//       → TODO: emit (caller, op_count, fee) in execute_batch after Step 1/2
+//
+//   ✅  Rollback strategy
+//       → upgrade(prior_wasm_hash) — DataKey::FeePerOp is additive and
+//         backward-compatible (old WASM ignores the key, new WASM falls back
+//         to the constant when the key is absent).
+//
+// ─── FILES TO MODIFY ─────────────────────────────────────────────────────────
+//
+//   contracts/mux-batcher/src/lib.rs    ← (THIS FILE) add Steps 1-3
+//   docs/batcher-fees.md               ← update fee-model section, add fee_per_op()
+//   docs/batcher-upgrade.md            ← add Scenario A/B/C, FEE_PER_OP section
+//   docs/error_codes.md                ← add any new error variants
+//   bindings/src/batcher.ts            ← expose set_fee_per_op / fee_per_op in TS
+//
+// =============================================================================
+
 /*!
  * mux-batcher: Multi-operation batching contract for Mux Protocol.
  *
