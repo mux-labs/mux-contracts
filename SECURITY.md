@@ -29,6 +29,16 @@ Our security team will acknowledge receipt within 48 hours and provide regular u
 
 ---
 
+## Related Security Documents
+
+- [Threat model](docs/threat-model.md) — STRIDE threats and the §5.1 STRIDE → controls mapping
+- [Custodial vs contract AA](docs/custodial-vs-contract-aa.md) — which gates are enforced on-chain vs by mux-backend
+- [Audit prep](docs/audit-prep.md) — audit scope, coverage, and auditor checklist
+- [Audit events](docs/audit-events.md) — on-chain event schema, guarded by `bindings/__tests__/audit-events-gap.test.ts`
+- [`deny.toml`](deny.toml) — supply-chain advisory, license, and source policy, gated by the CI `deny` job (`make deny` locally)
+
+---
+
 ## Security Principles
 
 ### 1. Fail-Closed by Default

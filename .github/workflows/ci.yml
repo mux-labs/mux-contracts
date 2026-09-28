@@ -53,6 +53,20 @@ jobs:
       - name: Validate localnet env example is complete and secret-free
         run: bash scripts/validate-localnet-env.sh
 
+  deny:
+    name: cargo deny (advisories, sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fail-closed supply-chain gate (#778): any RustSec vulnerability
+      # advisory or crate from an unknown registry/git source
+      # fails the build. Policy lives in deny.toml.
+      - name: cargo deny check
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories sources
+
   rust:
     name: Rust (fmt, clippy, test, wasm)
     runs-on: ubuntu-latest
@@ -139,7 +153,6 @@ jobs:
           retention-days: 14
 
       - name: Run tests
- feat/771-upgrade-auth-requirements
         working-directory: bindings
         run: npm test
       - name: Build distribution

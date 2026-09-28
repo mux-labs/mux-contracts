@@ -741,6 +741,7 @@ dependencies = [
  "mux-account",
  "mux-batcher",
  "mux-permissions",
+ "mux-policy",
  "serde",
  "serde_json",
  "soroban-sdk",
