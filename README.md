@@ -121,6 +121,110 @@ await walletClient.registerWallet(signer, "treasury", walletAddress);
 const addr = await walletClient.getWallet(signer, "treasury");
 ```
 
+## Account Abstraction (`mux-account`)
+
+`mux-account` is the core Soroban smart account. It stores one owner, a
+bounded delegate map, a guardian set, per-asset spend limits, and a session key
+registry. All write entrypoints extend instance-storage TTL. The full interface
+is specified in [`docs/mux-account-interface.md`](docs/mux-account-interface.md).
+
+### Authorization
+
+Every write entrypoint requires a specific authorization level — there is no
+default-allow. Clients cannot bypass policy.
+
+| Entrypoint | Required authorization |
+|---|---|
+| `initialize` | supplied `owner` |
+| `pause` / `unpause` | stored owner |
+| `set_delegate` / `remove_delegate` | stored owner |
+| `set_spend_limit` / `debit_spend` | stored owner / contract address |
+| `execute` | stored owner |
+| `register_session_key` / `revoke_session_key` | stored owner |
+| `execute_with_session` | authorized session key |
+| `execute_with_session_sponsored` | allowlisted sponsor **and** authorized session key |
+| `set_sponsor` / `is_sponsor` | stored owner (write); public (read) |
+| `set_metadata` | stored owner |
+| Read-only entrypoints | none |
+
+### Session keys, scopes, and nonces
+
+Session keys enable scoped, time-bounded delegation without exposing the owner's key.
+
+- **`register_session_key(session_key, expires_at, scopes)`** — registers a session key
+  with a Unix-timestamp expiry and a set of `Scope` capabilities (method names). New keys
+  are capped at `MAX_SESSION_KEYS` (32) per owner.
+- **`revoke_session_key(session_key)`** — marks a key revoked; revoked keys are rejected
+  even before expiry.
+- **`execute_with_session(session_key, target, function, args, nonce)`** — executes a
+  contract call on behalf of the account using a session key. Fail-closed scope
+  enforcement: a key with an empty `scopes` list returns `Unauthorized`; a `function`
+  not listed in a non-empty `scopes` set returns `ScopeNotGranted`. The `nonce` must
+  match `nonce()` exactly or the call is rejected with `InvalidNonce` — a rejected call
+  does not burn the nonce. The reentrancy guard is held across the invocation.
+- **`execute_with_session_sponsored(session_key, sponsor, target, function, args, nonce)`** —
+  the gas-abstracted variant: the relayer submits and pays fees, and both the sponsor and
+  the session key must authorize. The sponsor must be on the owner-managed allowlist or the
+  call is rejected with `SponsorNotAuthorized` before any session state is read. Sponsorship
+  never widens a session key's scopes. See [`docs/relayer-integration.md`](docs/relayer-integration.md).
+
+### Key invariants
+
+- **Fail-closed scope enforcement:** empty scope list → `Unauthorized`; unlisted function
+  → `ScopeNotGranted`.
+- **Nonce integrity:** `nonce` must equal `nonce()` or the call is rejected with
+  `InvalidNonce`; a rejected call does not increment the nonce.
+- **Reentrancy guard:** the guard is held across all external invocations; callbacks into
+  `execute`, `debit_spend`, or `execute_with_session` are rejected.
+- **Checks-effects-interactions on spend:** the debit is persisted only after the external
+  call returns successfully.
+- **`expires_at` is a Unix timestamp (`u64`)**, not a ledger sequence. See
+  [`docs/mux-account-interface.md`](docs/mux-account-interface.md) and
+  `tests/expiry_naming.rs` for the enforced naming invariant.
+
+### Error codes
+
+| Code | Variant | Meaning |
+|---:|---|---|
+| 1 | `NotInitialized` | Required account state is absent |
+| 2 | `AlreadyInitialized` | Initialization was already completed |
+| 3 | `Unauthorized` | Contract state disallows the call |
+| 4 | `DelegateNotFound` | Delegate is absent |
+| 5 | `DelegateExpired` | Delegate is no longer active |
+| 6 | `SpendLimitExceeded` | Limit is absent or would be exceeded |
+| 7 | `InvalidAmount` | Amount is not positive |
+| 8 | `InvalidPeriod` | Reset period is zero |
+| 9 | `TooManyDelegates` | Delegate cap is reached |
+| 10 | `ReentrancyDetected` | Spend accounting is already executing |
+| 11 | `ArithmeticOverflow` | Spend addition overflowed |
+| 12 | `TooManySessionKeys` | Session-key cap is reached |
+| 13 | `ScopeNotGranted` | Invoked method is not in the session key's scopes |
+| 14 | `SponsorNotAuthorized` | Relayer is not on the sponsor allowlist |
+| 15 | `InvalidNonce` | Supplied nonce is not the account's current nonce |
+
+### TypeScript example
+
+```ts
+import { MuxAccountClient } from "@mux-protocol/contracts";
+
+const accountClient = new MuxAccountClient({ contractId, networkPassphrase, rpcUrl });
+
+// Register a session key scoped to a single method
+await accountClient.registerSessionKey(owner, sessionPublicKey, expiresAt, ["transfer"]);
+
+// Execute via session key (nonce is consumed on success only)
+const currentNonce = await accountClient.nonce(owner);
+await accountClient.executeWithSession(sessionKeypair, sessionPublicKey, target, "transfer", args, currentNonce);
+
+// Revoke a session key immediately
+await accountClient.revokeSessionKey(owner, sessionPublicKey);
+```
+
+See [`examples/authorize-flow.ts`](examples/authorize-flow.ts) for the full
+owner → scoped session key → optional relayer → revocation flow, and
+[`docs/mux-account-interface.md`](docs/mux-account-interface.md) for the
+complete entrypoint reference.
+
 ## Tech Stack
 - Soroban smart contracts (Rust)
 - Stellar Soroban SDK v21
@@ -290,7 +394,6 @@ async function handleContractCall(req, res) {
 docker compose up -d
 ```
 
- feat/770-rollback-deploy-ops-log
 Supported options:
 - `--network <network>` — `localnet|testnet|mainnet` (default: `localnet`)
 - `--contract-id <id>` or `--contract-name <name>` — contract to call
@@ -337,7 +440,6 @@ stellar contract deploy --wasm target/wasm32-unknown-unknown/release/mux_account
 This exposes:
 - Soroban RPC on `http://localhost:8000`
 - Horizon on `http://localhost:8001`
- main
 
 Stop the stack with `docker compose down`.
 

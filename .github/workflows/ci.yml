@@ -139,7 +139,6 @@ jobs:
           retention-days: 14
 
       - name: Run tests
- feat/771-upgrade-auth-requirements
         working-directory: bindings
         run: npm test
       - name: Build distribution
@@ -352,3 +351,48 @@ jobs:
             exit 1
           fi
           echo "All expected generated contracts directories are present."
+
+  # ── Security policy & security.txt staleness guard (#839) ───────────────────
+  # Fails the build if security.txt has expired or will expire within 60 days,
+  # or if SECURITY.md / .github/ISSUE_TEMPLATE/config.yml drift from the
+  # requirements verified by scripts/check-security-policy.sh.
+  security-policy:
+    name: Security policy and security.txt expiry check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run security policy consistency checks
+        run: bash scripts/check-security-policy.sh
+
+      - name: Enforce security.txt Expires is set and not stale
+        run: |
+          set -euo pipefail
+          SECURITY_TXT=".well-known/security.txt"
+          if [[ ! -f "$SECURITY_TXT" ]]; then
+            echo "::error::$SECURITY_TXT not found"
+            exit 1
+          fi
+          expires_line=$(grep -E '^Expires:' "$SECURITY_TXT" || true)
+          if [[ -z "$expires_line" ]]; then
+            echo "::error::$SECURITY_TXT has no Expires field"
+            exit 1
+          fi
+          expires_value=$(echo "$expires_line" | sed 's/^Expires:[[:space:]]*//')
+          expires_epoch=$(date -d "$expires_value" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S.%fZ" "$expires_value" +%s 2>/dev/null || true)
+          now_epoch=$(date +%s)
+          warn_epoch=$(( now_epoch + 60 * 86400 ))
+          if [[ -z "$expires_epoch" ]]; then
+            echo "::error::Could not parse Expires date: $expires_value"
+            exit 1
+          fi
+          if [[ "$expires_epoch" -lt "$now_epoch" ]]; then
+            echo "::error::security.txt has EXPIRED (Expires: $expires_value). Rotate it immediately."
+            exit 1
+          fi
+          if [[ "$expires_epoch" -lt "$warn_epoch" ]]; then
+            echo "::warning::security.txt expires within 60 days ($expires_value). Rotate it soon."
+          fi
+          echo "security.txt Expires is valid: $expires_value"

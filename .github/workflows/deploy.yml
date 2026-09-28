@@ -55,6 +55,13 @@ concurrency:
   group: deploy-${{ inputs.network }}
   cancel-in-progress: false
 
+# ── Least-privilege permissions (#840) ──────────────────────────────────────
+# Workflow-level default: deny everything. Each job declares only what it
+# actually needs, following the principle of least privilege. The deploy job
+# requires no GITHUB_TOKEN write permissions — it authenticates to the network
+# via DEPLOYER_PRIVATE_KEY (a repository secret), not via the token.
+permissions: {}
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -68,6 +75,8 @@ jobs:
   mainnet-guard:
     name: Mainnet safety check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     if: inputs.network == 'mainnet' && inputs.dry_run == 'false'
     steps:
       - name: Enforce immutable mainnet flag
@@ -88,6 +97,8 @@ jobs:
   build:
     name: Build WASM artifacts
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     if: inputs.skip_build == 'false'
     steps:
       - uses: actions/checkout@v4
@@ -141,6 +152,8 @@ jobs:
     # job is skipped for non-mainnet/dry-run paths, so allow 'skipped' there;
     # a failed guard (deny-by-default) blocks the deploy.
     if: always() && (needs.build.result == 'success' || needs.build.result == 'skipped') && (needs.mainnet-guard.result == 'success' || needs.mainnet-guard.result == 'skipped')
+    permissions:
+      contents: read
     environment:
       name: ${{ inputs.network }}
 

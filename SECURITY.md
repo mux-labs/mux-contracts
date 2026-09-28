@@ -10,7 +10,7 @@ Reporting Vulnerabilities
 
 To report a security vulnerability:
 
-1. Send an email to: security@mux-protocol.com
+1. Send an email to: security@mux-protocol.xyz
 2. Include detailed information about the vulnerability
 3. Provide proof-of-concept if possible
 4. Allow us 90 days to address the vulnerability before public disclosure
@@ -421,7 +421,7 @@ If a critical issue is discovered post-deploy:
 
 ## Contact
 
-- **Security Team**: security@mux-protocol.com
+- **Security Team**: security@mux-protocol.xyz
 - **GitHub Security**: https://github.com/mux-labs/mux-contracts/security/advisories
 - **Incident Channel**: #incidents on Slack (internal)
 
@@ -431,7 +431,6 @@ If a critical issue is discovered post-deploy:
 
 This security policy is part of the Mux Protocol project and is licensed under the MIT License.
 
- feat/771-upgrade-auth-requirements
 This document outlines the security policies, procedures, and guidelines for the Mux Protocol contracts repository.
 
 ---
@@ -442,7 +441,7 @@ This document outlines the security policies, procedures, and guidelines for the
 
 To report a security vulnerability:
 
-1. Send an email to: security@mux-protocol.com
+1. Send an email to: security@mux-protocol.xyz
 2. Include detailed information about the vulnerability
 3. Provide proof-of-concept if possible
 4. Allow us 90 days to address the vulnerability before public disclosure
@@ -853,7 +852,7 @@ If a critical issue is discovered post-deploy:
 
 ## Contact
 
-- **Security Team**: security@mux-protocol.com
+- **Security Team**: security@mux-protocol.xyz
 - **GitHub Security**: https://github.com/mux-labs/mux-contracts/security/advisories
 - **Incident Channel**: #incidents on Slack (internal)
 
@@ -999,4 +998,3 @@ See [docs/audit-prep.md](docs/audit-prep.md) for audit preparation notes and the
 - **Email**: security@mux-protocol.xyz
 - **GitHub**: [Security Advisories](https://github.com/mux-labs/mux-contracts/security/advisories)
 - **security.txt**: [.well-known/security.txt](.well-known/security.txt)
- main
