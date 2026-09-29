@@ -194,3 +194,89 @@ describe("Wallet registry name charset policy", () => {
     );
   });
 });
+
+describe("Wallet registry named register/lookup authz", () => {
+  const client = new MuxWalletRegistryClient({
+    contractId: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    networkPassphrase: "Test SDF Network ; September 2015",
+    rpcUrl: "http://localhost:8000/soroban/rpc",
+  });
+
+  const owner = {
+    publicKey: () => "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+  } as any;
+  const delegate = {
+    publicKey: () => "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+  } as any;
+  const stranger = {
+    publicKey: () => "GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+  } as any;
+
+  it("denies register when no signer is supplied (deny-by-default)", async () => {
+    await expect(
+      client.registerWallet(undefined as any, "treasury", "GAAA" as any)
+    ).rejects.toThrow(/Unauthorized|signer/i);
+  });
+
+  it("denies register when signer is not the owner or an authorized delegate", async () => {
+    await expect(
+      client.registerWallet(stranger, "treasury", "GAAA" as any)
+    ).rejects.toThrow(/Unauthorized|not authorized/i);
+  });
+
+  it("allows register when signer is the owner", async () => {
+    await expect(
+      client.registerWallet(owner, "treasury", "GAAA" as any)
+    ).resolves.toBeDefined();
+  });
+
+  it("allows register when signer is an authorized delegate", async () => {
+    await expect(
+      client.registerWallet(delegate, "hot_wallet", "GAAA" as any)
+    ).resolves.toBeDefined();
+  });
+
+  it("denies lookup for a revoked delegate", async () => {
+    await expect(
+      client.getWallet(delegate, "treasury")
+    ).rejects.toThrow(/Unauthorized|revoked/i);
+  });
+
+  it("allows lookup for the owner", async () => {
+    await expect(client.getWallet(owner, "treasury")).resolves.toBeDefined();
+  });
+
+  it("is idempotent for replayed register requests with the same correlation id", async () => {
+    const correlationId = "corr-760-replay-1";
+    const first = await client.registerWallet(owner, "ops_01_backup", "GAAA" as any, {
+      correlationId,
+    });
+    const second = await client.registerWallet(owner, "ops_01_backup", "GAAA" as any, {
+      correlationId,
+    });
+    expect(second).toEqual(first);
+  });
+
+  it("fails closed on register when the RPC dependency is unavailable", async () => {
+    const offline = new MuxWalletRegistryClient({
+      contractId: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+      networkPassphrase: "Test SDF Network ; September 2015",
+      rpcUrl: "http://127.0.0.1:1/soroban/rpc",
+    });
+    await expect(
+      offline.registerWallet(owner, "treasury", "GAAA" as any)
+    ).rejects.toThrow();
+  });
+
+  it("does not leak raw key material or secrets in thrown errors", async () => {
+    try {
+      await client.registerWallet(stranger, "treasury", "GAAA" as any);
+      throw new Error("expected register to be rejected");
+    } catch (err) {
+      const message = String((err as Error).message);
+      expect(message).not.toMatch(/G[A-Z0-9]{55}/);
+      expect(message).not.toMatch(/Bearer\s+[A-Za-z0-9._-]+/);
+      expect(message).not.toMatch(/secret/i);
+    }
+  });
+});

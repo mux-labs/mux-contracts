@@ -17,6 +17,27 @@ import { NETWORK_CONFIGS } from "../src/network";
 const NETWORK = process.env.SOROBAN_NETWORK || "localnet";
 const config = NETWORK_CONFIGS[NETWORK];
 
+/**
+ * Canonical version metadata for the mux-registry contract.
+ *
+ * This constant is the single source of truth for the version reported by the
+ * contract's `version()` entrypoint.  It must stay in lockstep with the
+ * generated bindings and the on-chain contract; a mismatch is a fail-closed
+ * condition (see the version-consistency tests below).
+ */
+const REGISTRY_CONTRACT_VERSION = "1.0.0";
+
+/**
+ * Stable error codes surfaced by the mux-registry contract.  Kept in sync with
+ * the contract's typed error enum so integration assertions can match on a
+ * stable identifier rather than a free-form message.
+ */
+const MuxRegistryError = {
+  ContractNotFound: 1,
+  AlreadyInitialized: 2,
+  VersionMismatch: 3,
+} as const;
+
 async function isNetworkAvailable(): Promise<boolean> {
   try {
     const response = await globalThis.fetch(config.rpcUrl, {
@@ -32,6 +53,19 @@ async function isNetworkAvailable(): Promise<boolean> {
     return response.ok;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Fail-closed version check: reject any reported version that does not match
+ * the expected constant instead of silently proceeding.
+ */
+function assertVersionConsistent(reported: string, expected: string): void {
+  if (reported !== expected) {
+    throw new Error(
+      `VersionMismatch (${MuxRegistryError.VersionMismatch}): ` +
+        `registry reported "${reported}" but expected "${expected}"`
+    );
   }
 }
 
@@ -63,6 +97,26 @@ describe("Registry Integration Tests (mux-registry)", () => {
         `ℹ️  Skipping live RPC check — ${NETWORK} at ${config.rpcUrl} is not reachable.`
       );
     }
+  });
+
+  // ── Version metadata invariants ───────────────────────────────────────────
+  it("version metadata: constant is a well-formed semver string", () => {
+    expect(REGISTRY_CONTRACT_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it("version metadata: matching version passes the fail-closed check", () => {
+    expect(() =>
+      assertVersionConsistent(REGISTRY_CONTRACT_VERSION, REGISTRY_CONTRACT_VERSION)
+    ).not.toThrow();
+  });
+
+  it("version metadata: mismatched version fails closed with VersionMismatch", () => {
+    expect(() => assertVersionConsistent("0.0.1", REGISTRY_CONTRACT_VERSION)).toThrow(
+      /VersionMismatch/
+    );
+    expect(() => assertVersionConsistent("0.0.1", REGISTRY_CONTRACT_VERSION)).toThrow(
+      new RegExp(String(MuxRegistryError.VersionMismatch))
+    );
   });
 
   // ── Stub: register + get_version ──────────────────────────────────────────

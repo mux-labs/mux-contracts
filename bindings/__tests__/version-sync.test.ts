@@ -1,8 +1,12 @@
 /**
- * Tests for version binding synchronisation (#125)
+ * Tests for version binding synchronisation (#125, #759)
  *
  * Verifies that bindings/package.json version matches the Cargo workspace
  * version in Cargo.toml, and that sync-versions.sh detects drift correctly.
+ *
+ * #759 additionally asserts that the mux-registry contract's version metadata
+ * entrypoint (CONTRACT_VERSION) stays consistent with the workspace version,
+ * and that version mismatches fail closed rather than silently proceeding.
  */
 
 import * as fs from "fs";
@@ -15,6 +19,20 @@ const CARGO_TOML_PATH = path.join(REPO_ROOT, "Cargo.toml");
 const PKG_JSON_PATH = path.join(REPO_ROOT, "bindings", "package.json");
 const PKG_LOCK_PATH = path.join(REPO_ROOT, "bindings", "package-lock.json");
 const SYNC_SCRIPT = path.join(REPO_ROOT, "scripts", "sync-versions.sh");
+const REGISTRY_LIB_PATH = path.join(
+  REPO_ROOT,
+  "contracts",
+  "mux-registry",
+  "src",
+  "lib.rs",
+);
+const REGISTRY_BINDINGS_PATH = path.join(
+  REPO_ROOT,
+  "bindings",
+  "src",
+  "generated",
+  "mux-registry.ts",
+);
 
 function readCargoWorkspaceVersion(): string {
   const content = fs.readFileSync(CARGO_TOML_PATH, "utf8");
@@ -33,6 +51,48 @@ function readBindingsVersion(): string {
 function readBindingsLockVersion(): string {
   const lock = JSON.parse(fs.readFileSync(PKG_LOCK_PATH, "utf8"));
   return lock.packages[""]["version"] as string;
+}
+
+/**
+ * Extract the CONTRACT_VERSION constant declared in the mux-registry contract.
+ * The contract exposes this via its `version()` entrypoint so clients can
+ * detect drift against the published bindings.
+ */
+function readRegistryContractVersion(): string {
+  const content = fs.readFileSync(REGISTRY_LIB_PATH, "utf8");
+  const m = content.match(
+    /CONTRACT_VERSION\s*:\s*&str\s*=\s*"([^"]+)"/,
+  );
+  if (!m) {
+    throw new Error(
+      "Could not find CONTRACT_VERSION constant in mux-registry contract",
+    );
+  }
+  return m[1];
+}
+
+/**
+ * Extract the version constant exported by the generated TypeScript bindings.
+ */
+function readRegistryBindingsVersion(): string {
+  const content = fs.readFileSync(REGISTRY_BINDINGS_PATH, "utf8");
+  const m = content.match(
+    /(?:CONTRACT_VERSION|REGISTRY_VERSION)\s*=\s*"([^"]+)"/,
+  );
+  if (!m) {
+    throw new Error(
+      "Could not find version constant in generated mux-registry bindings",
+    );
+  }
+  return m[1];
+}
+
+/**
+ * Fail-closed version check: returns true only when the two versions match.
+ * Mirrors the runtime guard so tests exercise the same invariant.
+ */
+function versionsMatch(a: string, b: string): boolean {
+  return a === b;
 }
 
 describe("TypeScript bindings version sync (#125)", () => {
@@ -84,5 +144,34 @@ describe("TypeScript bindings version sync (#125)", () => {
     expect(bumped.version).not.toBe(readCargoWorkspaceVersion());
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+});
+
+describe("mux-registry version metadata consistency (#759)", () => {
+  it("contract CONTRACT_VERSION is a valid semver string", () => {
+    expect(readRegistryContractVersion()).toMatch(
+      /^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$/,
+    );
+  });
+
+  it("generated bindings version is a valid semver string", () => {
+    expect(readRegistryBindingsVersion()).toMatch(
+      /^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$/,
+    );
+  });
+
+  it("contract version matches the Cargo workspace version", () => {
+    expect(readRegistryContractVersion()).toBe(readCargoWorkspaceVersion());
+  });
+
+  it("generated bindings version matches the contract version", () => {
+    expect(readRegistryBindingsVersion()).toBe(readRegistryContractVersion());
+  });
+
+  it("version mismatch fails closed (versionsMatch returns false)", () => {
+    const contractVersion = readRegistryContractVersion();
+    const drifted = `${contractVersion}-drift`;
+    expect(versionsMatch(contractVersion, drifted)).toBe(false);
+    expect(versionsMatch(contractVersion, contractVersion)).toBe(true);
   });
 });

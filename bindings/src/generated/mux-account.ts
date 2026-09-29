@@ -25,6 +25,31 @@ export interface MuxAccountClientOptions {
   rpcUrl: string;
 }
 
+/**
+ * Authorization requirement for a mutating entrypoint.
+ *
+ * - `owner`    — only the account owner may invoke.
+ * - `delegate` — owner or an active, non-expired delegate with spend rights.
+ * - `guardian` — owner or a configured guardian (recovery paths).
+ * - `public`   — intentionally unauthenticated (e.g. one-time init).
+ *
+ * Deny-by-default: any mutating entrypoint not listed in
+ * `MUX_ACCOUNT_MUTATING_AUTHZ` is treated as unguarded and must fail the
+ * access-control checklist test.
+ */
+export type MutatingAuthz = "owner" | "delegate" | "guardian" | "public";
+
+/**
+ * Authorization map for every mutating entrypoint on `mux-account`.
+ * Keep in sync with `docs/access-control-checklist.md`.
+ */
+export const MUX_ACCOUNT_MUTATING_AUTHZ: Readonly<Record<string, MutatingAuthz>> = {
+  initialize: "public",
+  set_delegate: "owner",
+  remove_delegate: "owner",
+  set_spend_limit: "owner",
+};
+
 export class MuxAccountClient {
   private contract: Contract;
   private server: SorobanRpc.Server;
