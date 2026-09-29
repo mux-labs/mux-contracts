@@ -150,3 +150,42 @@ describe("parseRecoveryEvent — returns null for non-recovery events", () => {
     expect(parseRecoveryEvent(event)).toBeNull();
   });
 });
+
+describe("parseRecoveryEvent — cancel/advance audit semantics (#758)", () => {
+  it("rec_cncl carries the cancelling actor for audit correlation", () => {
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_cncl, [GUARDIAN]);
+    const result = parseRecoveryEvent(event);
+    expect(result).not.toBeNull();
+    expect(result?.action).toBe("rec_cncl");
+    expect((result as any)?.guardian).toBe(GUARDIAN);
+  });
+
+  it("rec_exec (advance) carries guardian and new owner for audit correlation", () => {
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_exec, [
+      GUARDIAN,
+      NEW_OWNER,
+    ]);
+    const result = parseRecoveryEvent(event);
+    expect(result).not.toBeNull();
+    expect(result?.action).toBe("rec_exec");
+    expect((result as any)?.guardian).toBe(GUARDIAN);
+    expect((result as any)?.newOwner).toBe(NEW_OWNER);
+  });
+
+  it("rec_cncl with no actor is still a valid audit event", () => {
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_cncl, []);
+    const result = parseRecoveryEvent(event);
+    expect(result).not.toBeNull();
+    expect(result?.action).toBe("rec_cncl");
+  });
+
+  it("rec_cncl and rec_exec are distinct audit actions", () => {
+    const cancel = parseRecoveryEvent(
+      makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_cncl, [GUARDIAN]),
+    );
+    const advance = parseRecoveryEvent(
+      makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_exec, [GUARDIAN, NEW_OWNER]),
+    );
+    expect(cancel?.action).not.toBe(advance?.action);
+  });
+});

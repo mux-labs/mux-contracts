@@ -56,6 +56,28 @@ export const FACTORY_EVENT_TOPICS = {
 
 export type FactoryEventAction = (typeof FACTORY_EVENT_TOPICS)[keyof typeof FACTORY_EVENT_TOPICS];
 
+/**
+ * Frozen schema version for the factory event catalog. Indexers MUST pin this
+ * value and reject events whose {@link FactoryEventEnvelope.schemaVersion}
+ * differs, so a future breaking change cannot be silently mis-decoded.
+ *
+ * Bump only alongside a docs/event-topic-conventions.md breaking-change note.
+ */
+export const FACTORY_EVENT_SCHEMA_VERSION = 1 as const;
+
+/**
+ * Hard maximum number of topic elements accepted for a factory event. The
+ * contract emits exactly two (`tag`, `action`); anything larger is treated as
+ * adversarial and rejected fail-closed.
+ */
+export const MAX_FACTORY_EVENT_TOPICS = 2 as const;
+
+/**
+ * Hard maximum byte length accepted for a single decoded event field. Guards
+ * indexers against oversized/griefing payloads before they are parsed.
+ */
+export const MAX_FACTORY_EVENT_FIELD_BYTES = 1024 as const;
+
 // ── getAccounts bounds ─────────────────────────────────────────────────────────
 
 /**
@@ -189,6 +211,35 @@ export interface FactoryMetaSetEvent {
 
 export type FactoryEvent = FactoryDeployedEvent | FactoryMetaSetEvent;
 
+/**
+ * Frozen, indexer-facing envelope wrapping a decoded {@link FactoryEvent}.
+ *
+ * Indexers consume this shape rather than the bare event so that every record
+ * carries a stable schema version, a deterministic correlation id, and the
+ * originating ledger/transaction coordinates needed for idempotent replay.
+ */
+export interface FactoryEventEnvelope {
+  /** Frozen schema version — see {@link FACTORY_EVENT_SCHEMA_VERSION}. */
+  schemaVersion: typeof FACTORY_EVENT_SCHEMA_VERSION;
+  /** Contract-family tag (`topics[0]`). */
+  contractTag: typeof FACTORY_CONTRACT_TAG;
+  /** Action name (`topics[1]`). */
+  action: FactoryEventAction;
+  /**
+   * Deterministic correlation id for idempotent indexing. Derived from the
+   * ledger, transaction hash, and event index so replays collapse to one row.
+   */
+  correlationId: string;
+  /** Ledger sequence the event was emitted in. */
+  ledger: number;
+  /** Transaction hash the event belongs to. */
+  txHash: string;
+  /** Zero-based index of the event within its transaction. */
+  eventIndex: number;
+  /** The decoded, typed event payload. */
+  event: FactoryEvent;
+}
+
 // ── Raw Soroban event shape (minimal — avoids importing the full SDK) ──────────
 
 /**
@@ -200,16 +251,172 @@ export interface RawSorobanEvent {
   topic: string[];
   /** Decoded data value (XDR-decoded or JSON string). */
   value: string | unknown;
+  /** Ledger sequence the event was emitted in (optional for lenient callers). */
+  ledger?: number;
+  /** Transaction hash the event belongs to (optional for lenient callers). */
+  txHash?: string;
+  /** Zero-based index of the event within its transaction. */
+  eventIndex?: number;
 }
 
 // ── Parser ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Stable, typed error codes emitted by the factory event parser. Indexers can
+ * branch on these codes to fail closed instead of silently dropping or
+ * mis-decoding events.
+ */
+export const FactoryEventErrorCode = {
+  /** Event did not carry the factory contract tag (`topics[0]`). */
+  UnknownContractTag: "UnknownContractTag",
+  /** Event carried an unrecognised action (`topics[1]`). */
+  UnknownAction: "UnknownAction",
+  /** Topic vector was missing, malformed, or exceeded the frozen maximum. */
+  MalformedTopics: "MalformedTopics",
+  /** Data payload was missing, malformed, or not decodable. */
+  MalformedPayload: "MalformedPayload",
+  /** A decoded field exceeded {@link MAX_FACTORY_EVENT_FIELD_BYTES}. */
+  OversizedPayload: "OversizedPayload",
+  /** Envelope schema version did not match the frozen version. */
+  SchemaVersionMismatch: "SchemaVersionMismatch",
+} as const;
+
+export type FactoryEventErrorCode =
+  (typeof FactoryEventErrorCode)[keyof typeof FactoryEventErrorCode];
+
+/**
+ * Typed error thrown by {@link decodeFactoryEvent} when an event cannot be
+ * decoded against the frozen schema. Carries a stable {@link FactoryEventErrorCode}
+ * and an optional correlation id so indexers can log actionable failures.
+ */
+export class FactoryEventError extends Error {
+  readonly code: FactoryEventErrorCode;
+  readonly correlationId?: string;
+
+  constructor(code: FactoryEventErrorCode, message?: string, correlationId?: string) {
+    super(message ?? code);
+    this.name = "FactoryEventError";
+    this.code = code;
+    this.correlationId = correlationId;
+  }
+}
+
+/**
+ * Build the deterministic correlation id used for idempotent indexing. Stable
+ * across replays of the same event and unique across events in a transaction.
+ */
+export function factoryEventCorrelationId(input: {
+  ledger: number;
+  txHash: string;
+  eventIndex: number;
+}): string {
+  return `${input.ledger}:${input.txHash}:${input.eventIndex}`;
+}
+
+/**
+ * Decode a raw Soroban RPC event into a frozen {@link FactoryEventEnvelope}.
+ *
+ * Fail-closed: throws a typed {@link FactoryEventError} for unknown contract
+ * tags, unknown actions, malformed/oversized payloads, or schema mismatches
+ * rather than returning a partial or silently-wrong record. Use
+ * {@link parseFactoryEvent} when a lenient `null`-on-mismatch filter is wanted.
+ *
+ * @throws {FactoryEventError} when the event cannot be decoded against the
+ * frozen schema.
+ */
+export function decodeFactoryEvent(event: RawSorobanEvent): FactoryEventEnvelope {
+  const topics = event.topic ?? [];
+
+  if (!Array.isArray(topics) || topics.length !== MAX_FACTORY_EVENT_TOPICS) {
+    throw new FactoryEventError(
+      FactoryEventErrorCode.MalformedTopics,
+      `expected ${MAX_FACTORY_EVENT_TOPICS} topics, received ${topics.length}`,
+    );
+  }
+
+  const [tag, action] = topics;
+
+  if (tag !== FACTORY_CONTRACT_TAG) {
+    throw new FactoryEventError(
+      FactoryEventErrorCode.UnknownContractTag,
+      `unexpected contract tag ${String(tag)}`,
+    );
+  }
+
+  if (action !== FACTORY_EVENT_TOPICS.deployed && action !== FACTORY_EVENT_TOPICS.meta_set) {
+    throw new FactoryEventError(
+      FactoryEventErrorCode.UnknownAction,
+      `unrecognised factory action ${String(action)}`,
+    );
+  }
+
+  const data = normaliseData(event.value);
+  if (!data) {
+    throw new FactoryEventError(
+      FactoryEventErrorCode.MalformedPayload,
+      "event data payload was missing or not decodable",
+    );
+  }
+
+  for (const field of data) {
+    if (typeof field !== "string" || byteLength(field) > MAX_FACTORY_EVENT_FIELD_BYTES) {
+      throw new FactoryEventError(
+        FactoryEventErrorCode.OversizedPayload,
+        `event field exceeds ${MAX_FACTORY_EVENT_FIELD_BYTES} bytes or is not a string`,
+      );
+    }
+  }
+
+  const ledger = event.ledger ?? 0;
+  const txHash = event.txHash ?? "";
+  const eventIndex = event.eventIndex ?? 0;
+  const correlationId = factoryEventCorrelationId({ ledger, txHash, eventIndex });
+
+  let decoded: FactoryEvent;
+  if (action === FACTORY_EVENT_TOPICS.deployed) {
+    if (data.length !== 2) {
+      throw new FactoryEventError(
+        FactoryEventErrorCode.MalformedPayload,
+        `deployed expects 2 fields, received ${data.length}`,
+        correlationId,
+      );
+    }
+    decoded = { action: "deployed", owner: data[0], accountAddress: data[1] };
+  } else {
+    if (data.length !== 3) {
+      throw new FactoryEventError(
+        FactoryEventErrorCode.MalformedPayload,
+        `meta_set expects 3 fields, received ${data.length}`,
+        correlationId,
+      );
+    }
+    decoded = {
+      action: "meta_set",
+      owner: data[0],
+      accountAddress: data[1],
+      version: data[2],
+    };
+  }
+
+  return {
+    schemaVersion: FACTORY_EVENT_SCHEMA_VERSION,
+    contractTag: FACTORY_CONTRACT_TAG,
+    action,
+    correlationId,
+    ledger,
+    txHash,
+    eventIndex,
+    event: decoded,
+  };
+}
 
 /**
  * Parse a raw Soroban RPC event into a typed {@link FactoryEvent}.
  *
  * Returns `null` when the event does not match the factory's contract tag or
  * when the action is unrecognised — allowing callers to filter safely with
- * a simple `filter(Boolean)`.
+ * a simple `filter(Boolean)`. For fail-closed decoding with typed errors and a
+ * correlation id, use {@link decodeFactoryEvent}.
  *
  * The parser is intentionally lenient on the `value` field type because the
  * Stellar SDK may return decoded XDR as an object or as a JSON string depending
@@ -235,113 +442,62 @@ export function parseFactoryEvent(event: RawSorobanEvent): FactoryEvent | null {
   const data = normaliseData(event.value);
   if (!data) return null;
 
-  switch (action as FactoryEventAction) {
-    case FACTORY_EVENT_TOPICS.deployed: {
-      const [owner, accountAddress] = extractAddressPair(data);
-      if (!owner || !accountAddress) return null;
-      return { action: "deployed", owner, accountAddress };
-    }
-
-    case FACTORY_EVENT_TOPICS.meta_set: {
-      const [owner, accountAddress, version] = extractAddressAddressString(data);
-      if (!owner || !accountAddress || !version) return null;
-      return { action: "meta_set", owner, accountAddress, version };
-    }
-
-    default:
-      return null;
+  if (action === FACTORY_EVENT_TOPICS.deployed) {
+    if (data.length !== 2) return null;
+    return { action: "deployed", owner: data[0], accountAddress: data[1] };
   }
+
+  if (action === FACTORY_EVENT_TOPICS.meta_set) {
+    if (data.length !== 3) return null;
+    return {
+      action: "meta_set",
+      owner: data[0],
+      accountAddress: data[1],
+      version: data[2],
+    };
+  }
+
+  return null;
 }
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
 
 /**
- * Normalise the raw `value` field from a Soroban RPC event into a plain
- * array of primitives. Handles both object form (SDK v11+) and string form.
- *
- * @internal
+ * Normalise the raw `value` field into a flat string array. Accepts either an
+ * already-decoded array of scalars or a JSON-encoded string. Returns `null`
+ * when the payload cannot be coerced into a string array.
  */
-function normaliseData(raw: unknown): unknown[] | null {
-  if (Array.isArray(raw)) return raw as unknown[];
+function normaliseData(value: string | unknown): string[] | null {
+  let parsed: unknown = value;
 
-  // Object with a `.vec` property (XDR-decoded struct from stellar-sdk).
-  if (raw && typeof raw === "object") {
-    const obj = raw as Record<string, unknown>;
-    if (Array.isArray(obj["vec"])) return obj["vec"] as unknown[];
-    // Some SDK versions wrap in { _value: [...] }
-    if (Array.isArray(obj["_value"])) return obj["_value"] as unknown[];
-  }
-
-  // JSON-encoded string fallback.
-  if (typeof raw === "string") {
+  if (typeof value === "string") {
     try {
-      const parsed: unknown = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed as unknown[];
+      parsed = JSON.parse(value);
     } catch {
-      // Not JSON — fall through.
+      // A bare string is treated as a single-field payload.
+      return [value];
     }
   }
 
-  return null;
+  if (!Array.isArray(parsed)) return null;
+
+  return parsed.map((field) => (typeof field === "string" ? field : String(field)));
 }
 
 /**
- * Extract the first two elements as address strings from a normalised data
- * array. Returns an empty tuple on type mismatches.
- *
- * @internal
+ * UTF-8 byte length of a string without depending on Node's Buffer, so this
+ * module stays usable in browser and edge runtimes.
  */
-function extractAddressPair(data: unknown[]): [string, string] | [] {
-  const [a, b] = data;
-  const owner = resolveAddress(a);
-  const accountAddress = resolveAddress(b);
-  if (!owner || !accountAddress) return [];
-  return [owner, accountAddress];
-}
-
-/**
- * Extract two address strings and a version string from a normalised data
- * array. Returns an empty tuple on type mismatches.
- *
- * @internal
- */
-function extractAddressAddressString(
-  data: unknown[],
-): [string, string, string] | [] {
-  const [a, b, c] = data;
-  const owner = resolveAddress(a);
-  const accountAddress = resolveAddress(b);
-  const version = resolveString(c);
-  if (!owner || !accountAddress || !version) return [];
-  return [owner, accountAddress, version];
-}
-
-/**
- * Coerce a raw data element to an address string.  Handles both plain strings
- * (Strkey addresses) and objects with an `address` property.
- *
- * @internal
- */
-function resolveAddress(raw: unknown): string | null {
-  if (typeof raw === "string" && raw.startsWith("C")) return raw;
-  if (raw && typeof raw === "object") {
-    const obj = raw as Record<string, unknown>;
-    if (typeof obj["address"] === "string") return obj["address"];
+function byteLength(value: string): number {
+  let bytes = 0;
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff) {
+      bytes += 4;
+      i++;
+    } else bytes += 3;
   }
-  return null;
-}
-
-/**
- * Coerce a raw data element to a plain string.  Handles both plain strings and
- * objects with a `string` property.
- *
- * @internal
- */
-function resolveString(raw: unknown): string | null {
-  if (typeof raw === "string") return raw;
-  if (raw && typeof raw === "object") {
-    const obj = raw as Record<string, unknown>;
-    if (typeof obj["string"] === "string") return obj["string"];
-  }
-  return null;
+  return bytes;
 }

@@ -125,6 +125,73 @@ export class DelegationExpiryError extends Error {
   }
 }
 
+// ── Named-permission error codes ──────────────────────────────────────────────
+
+/**
+ * Stable error codes for named-permission grant/revoke failures.
+ *
+ * These are surfaced by the contract and mapped to typed errors by the client
+ * so callers can branch on a stable code rather than parsing free-form text.
+ *
+ * - `DELEGATION_UNAUTHORIZED` — caller is not owner/authorized delegate/guardian.
+ * - `DELEGATION_PERMISSION_UNKNOWN` — permission name is not in the allow-list.
+ * - `DELEGATION_PERMISSION_INVALID` — permission name is malformed/empty.
+ * - `DELEGATION_BATCH_TOO_LARGE` — batch exceeds the max permissions per call.
+ * - `DELEGATION_DELEGATE_REVOKED` — delegate was revoked/expired; deny-by-default.
+ * - `DELEGATION_RPC_UNAVAILABLE` — dependency outage; writes fail closed.
+ */
+export const DELEGATION_PERMISSION_ERROR_CODES = {
+  DELEGATION_UNAUTHORIZED: "DELEGATION_UNAUTHORIZED",
+  DELEGATION_PERMISSION_UNKNOWN: "DELEGATION_PERMISSION_UNKNOWN",
+  DELEGATION_PERMISSION_INVALID: "DELEGATION_PERMISSION_INVALID",
+  DELEGATION_BATCH_TOO_LARGE: "DELEGATION_BATCH_TOO_LARGE",
+  DELEGATION_DELEGATE_REVOKED: "DELEGATION_DELEGATE_REVOKED",
+  DELEGATION_RPC_UNAVAILABLE: "DELEGATION_RPC_UNAVAILABLE",
+} as const;
+
+export type DelegationPermissionErrorCode =
+  (typeof DELEGATION_PERMISSION_ERROR_CODES)[keyof typeof DELEGATION_PERMISSION_ERROR_CODES];
+
+/**
+ * Typed error thrown by named-permission grant/revoke operations.
+ *
+ * Carries a stable {@link DelegationPermissionErrorCode} plus an optional
+ * `correlationId` so ops can trace a failure across logs without exposing
+ * secrets or raw key material.
+ */
+export class DelegationPermissionError extends Error {
+  readonly code: DelegationPermissionErrorCode;
+  readonly correlationId?: string;
+
+  constructor(code: DelegationPermissionErrorCode, correlationId?: string) {
+    super(code);
+    this.name = "DelegationPermissionError";
+    this.code = code;
+    this.correlationId = correlationId;
+  }
+}
+
+/**
+ * Named permissions recognized by the delegation model.
+ *
+ * See `docs/delegation-permission-model.md` for the authoritative list and
+ * semantics. Granting an unknown name fails closed with
+ * `DELEGATION_PERMISSION_UNKNOWN`.
+ */
+export const DELEGATION_NAMED_PERMISSIONS = [
+  "spend",
+  "recover",
+  "admin",
+  "withdraw",
+  "sign",
+] as const;
+
+export type DelegationNamedPermission =
+  (typeof DELEGATION_NAMED_PERMISSIONS)[number];
+
+/** Maximum number of permissions accepted in a single grant/revoke batch. */
+export const DELEGATION_MAX_PERMISSIONS_PER_CALL = 32;
+
 // ── Event types ───────────────────────────────────────────────────────────────
 
 /**
@@ -229,6 +296,52 @@ export interface MuxDelegationClientOptions {
   rpcUrl: string;
 }
 
+// ── Named-permission grant/revoke types ───────────────────────────────────────
+
+/**
+ * Request to grant one or more named permissions from `owner` to `delegate`.
+ *
+ * `permissions` must be a non-empty subset of {@link DELEGATION_NAMED_PERMISSIONS}
+ * and at most {@link DELEGATION_MAX_PERMISSIONS_PER_CALL} entries. `expiresAt`
+ * (unix seconds), when provided, MUST be strictly in the future.
+ */
+export interface GrantPermissionsRequest {
+  owner: string;
+  delegate: string;
+  permissions: DelegationNamedPermission[];
+  /** Optional unix-seconds expiry; must be strictly in the future. */
+  expiresAt?: number;
+  /** Optional idempotency key to make retries safe. */
+  idempotencyKey?: string;
+  /** Optional correlation id propagated to logs/errors (never a secret). */
+  correlationId?: string;
+}
+
+/**
+ * Request to revoke one or more named permissions from `owner` to `delegate`.
+ *
+ * Revoking a permission that is not currently granted is a no-op (idempotent).
+ */
+export interface RevokePermissionsRequest {
+  owner: string;
+  delegate: string;
+  permissions: DelegationNamedPermission[];
+  /** Optional idempotency key to make retries safe. */
+  idempotencyKey?: string;
+  /** Optional correlation id propagated to logs/errors (never a secret). */
+  correlationId?: string;
+}
+
+/** Result of a successful grant/revoke call. */
+export interface PermissionMutationResult {
+  /** Transaction hash of the submitted operation. */
+  txHash: string;
+  /** Permissions that were effectively granted/revoked. */
+  permissions: DelegationNamedPermission[];
+  /** Correlation id echoed back for tracing. */
+  correlationId?: string;
+}
+
 // ── Client ────────────────────────────────────────────────────────────────────
 
 export class MuxDelegationClient {
@@ -250,285 +363,6 @@ export class MuxDelegationClient {
    *
    * When `expiresAt` is provided it MUST be strictly in the future; otherwise
    * the client fails closed with `DELEGATION_EXPIRY_INVALID` before submitting
-   * any transaction. Omitting `expiresAt` grants a non-expiring delegation.
-   */
-  async grantDelegate(
-    sourceKeypair: Keypair,
-    owner: Address,
-    delegate: Address,
-    permissions: string[],
-    expiresAt?: number
-  ): Promise<void> {
-    if (expiresAt !== undefined) {
-      const now = Math.floor(Date.now() / 1000);
-      if (!Number.isFinite(expiresAt) || expiresAt <= now) {
-        throw new DelegationExpiryError(
-          DELEGATION_EXPIRY_ERROR_CODES.DELEGATION_EXPIRY_INVALID
-        );
-      }
-    }
+   * any tr
 
-    const args = [
-      nativeToScVal(owner.toString(), { type: "address" }),
-      nativeToScVal(delegate.toString(), { type: "address" }),
-      xdr.ScVal.scvVec(permissions.map((p) => xdr.ScVal.scvSymbol(p))),
-    ];
-    if (expiresAt !== undefined) {
-      args.push(nativeToScVal(expiresAt, { type: "u64" }));
-    }
-
-    const tx = await this.buildTx(sourceKeypair, "grant_delegate", args);
-    await this.submit(tx, sourceKeypair);
-  }
-
-  async revokeDelegate(
-    sourceKeypair: Keypair,
-    owner: Address,
-    delegate: Address
-  ): Promise<void> {
-    const tx = await this.buildTx(sourceKeypair, "revoke_delegate", [
-      nativeToScVal(owner.toString(), { type: "address" }),
-      nativeToScVal(delegate.toString(), { type: "address" }),
-    ]);
-    await this.submit(tx, sourceKeypair);
-  }
-
-  // ── Read operations ─────────────────────────────────────────────────────────
-
-  /**
-   * Return the permissions granted by `owner` to `delegate`.
-   *
-   * Accepts optional `DelegationQueryFilters` to narrow results client-side:
-   * - `permission`: only return that permission if present in the grant.
-   * - `hasAnyPermission`: if `true`, returns the full list only when non-empty;
-   *   if `false`, returns the full list only when empty.
-   */
-  async getDelegatePermissions(
-    sourceKeypair: Keypair,
-    owner: Address,
-    delegate: Address,
-    filters?: DelegationQueryFilters
-  ): Promise<string[]> {
-    const tx = await this.buildTx(sourceKeypair, "get_delegate_permissions", [
-      nativeToScVal(owner.toString(), { type: "address" }),
-      nativeToScVal(delegate.toString(), { type: "address" }),
-    ]);
-    const result = await this.simulateRead<string[]>(tx);
-    return this.applyPermissionFilters(result, filters);
-  }
-
-  /**
-   * Return the expiry timestamp (unix seconds) for the grant from `owner` to
-   * `delegate`, or `null` when the grant does not expire.
-   *
-   * Throws {@link DelegationExpiryError} with `DELEGATION_NOT_FOUND` when no
-   * grant exists.
-   */
-  async getDelegateExpiry(
-    sourceKeypair: Keypair,
-    owner: Address,
-    delegate: Address
-  ): Promise<number | null> {
-    const tx = await this.buildTx(sourceKeypair, "get_delegate_expiry", [
-      nativeToScVal(owner.toString(), { type: "address" }),
-      nativeToScVal(delegate.toString(), { type: "address" }),
-    ]);
-    const result = await this.simulateRead<number | null>(tx);
-    if (result === undefined) {
-      throw new DelegationExpiryError(
-        DELEGATION_EXPIRY_ERROR_CODES.DELEGATION_NOT_FOUND
-      );
-    }
-    return result;
-  }
-
-  /**
-   * Assert that the grant from `owner` to `delegate` is currently valid.
-   *
-   * Fails closed: throws {@link DelegationExpiryError} when the grant is
-   * missing, revoked, or expired. Callers MUST treat any thrown error as a
-   * denial and MUST NOT proceed with the delegated action.
-   *
-   * @param correlationId Optional opaque id echoed into the error for ops
-   *   tracing. Never include secrets or raw key material.
-   */
-  async assertDelegateActive(
-    sourceKeypair: Keypair,
-    owner: Address,
-    delegate: Address,
-    correlationId?: string
-  ): Promise<void> {
-    const tx = await this.buildTx(sourceKeypair, "get_delegate_expiry", [
-      nativeToScVal(owner.toString(), { type: "address" }),
-      nativeToScVal(delegate.toString(), { type: "address" }),
-    ]);
-    const result = await this.simulateRead<number | null>(tx);
-    if (result === undefined) {
-      throw new DelegationExpiryError(
-        DELEGATION_EXPIRY_ERROR_CODES.DELEGATION_NOT_FOUND,
-        correlationId
-      );
-    }
-    if (result !== null && result <= Math.floor(Date.now() / 1000)) {
-      throw new DelegationExpiryError(
-        DELEGATION_EXPIRY_ERROR_CODES.DELEGATION_EXPIRED,
-        correlationId
-      );
-    }
-  }
-
-  async isDelegate(
-    sourceKeypair: Keypair,
-    owner: Address,
-    delegate: Address,
-    permission: string
-  ): Promise<boolean> {
-    const tx = await this.buildTx(sourceKeypair, "is_delegate", [
-      nativeToScVal(owner.toString(), { type: "address" }),
-      nativeToScVal(delegate.toString(), { type: "address" }),
-      xdr.ScVal.scvSymbol(permission),
-    ]);
-    return this.simulateRead<boolean>(tx);
-  }
-
-  /**
-   * Return all delegates registered under `owner`.
-   *
-   * Accepts optional `DelegationQueryFilters` to narrow results client-side:
-   * - `permission`: only include delegates that have been granted this specific
-   *   permission (requires an additional `getDelegatePermissions` call per delegate).
-   * - `hasAnyPermission`: if `true`, only include delegates with at least one
-   *   permission in the current grant set (no-op here since all listed delegates
-   *   have at least one permission; included for API symmetry).
-   */
-  async getDelegates(
-    sourceKeypair: Keypair,
-    owner: Address,
-    filters?: DelegationQueryFilters
-  ): Promise<Address[]> {
-    const tx = await this.buildTx(sourceKeypair, "get_delegates", [
-      nativeToScVal(owner.toString(), { type: "address" }),
-    ]);
-    const result = await this.simulateRead<Address[]>(tx);
-    return this.applyDelegateFilters(sourceKeypair, owner, result, filters);
-  }
-
-  /**
-   * Convenience read-only check: returns `true` if `owner` has granted
-   * `permission` to `delegate`, `false` otherwise (including when no grant
-   * exists at all).
-   *
-   * Calls the `check_delegate` on-chain entrypoint which returns `Ok(())`
-   * for a match or `Err(NotADelegate)` when the permission is absent.
-   */
-  async checkDelegate(
-    sourceKeypair: Keypair,
-    owner: Address,
-    delegate: Address,
-    permission: string
-  ): Promise<boolean> {
-    try {
-      const tx = await this.buildTx(sourceKeypair, "check_delegate", [
-        nativeToScVal(owner.toString(), { type: "address" }),
-        nativeToScVal(delegate.toString(), { type: "address" }),
-        xdr.ScVal.scvSymbol(permission),
-      ]);
-      await this.simulateRead<void>(tx);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  // ── Private filter helpers ───────────────────────────────────────────────────
-
-  private applyPermissionFilters(
-    permissions: string[],
-    filters?: DelegationQueryFilters
-  ): string[] {
-    if (!filters) return permissions;
-    let result = permissions;
-    if (filters.permission !== undefined) {
-      result = result.filter((p) => p === filters.permission);
-    }
-    if (filters.hasAnyPermission === true && result.length === 0) {
-      return [];
-    }
-    if (filters.hasAnyPermission === false && result.length > 0) {
-      return [];
-    }
-    return result;
-  }
-
-  private async applyDelegateFilters(
-    sourceKeypair: Keypair,
-    owner: Address,
-    delegates: Address[],
-    filters?: DelegationQueryFilters
-  ): Promise<Address[]> {
-    if (!filters) return delegates;
-    // If a specific permission filter is given, further narrow the list by
-    // checking each delegate's granted permissions client-side.
-    if (filters.permission !== undefined) {
-      const filtered: Address[] = [];
-      for (const d of delegates) {
-        const perms = await this.getDelegatePermissions(
-          sourceKeypair,
-          owner,
-          d
-        );
-        if (perms.includes(filters.permission)) {
-          filtered.push(d);
-        }
-      }
-      return filtered;
-    }
-    // hasAnyPermission is always true for delegates returned by get_delegates
-    // (they all have an active grant), so no additional filtering is needed.
-    return delegates;
-  }
-
-  // ── Private helpers ──────────────────────────────────────────────────────────
-
-  private async buildTx(
-    sourceKeypair: Keypair,
-    method: string,
-    args: xdr.ScVal[]
-  ): Promise<Transaction> {
-    const account = await this.server.getAccount(sourceKeypair.publicKey());
-    return new TransactionBuilder(account, {
-      fee: "100",
-      networkPassphrase: this.networkPassphrase,
-    })
-      .addOperation(this.contract.call(method, ...args))
-      .setTimeout(30)
-      .build();
-  }
-
-  private async simulateRead<T>(tx: Transaction): Promise<T> {
-    const result = await this.server.simulateTransaction(tx);
-    if (SorobanRpc.Api.isSimulationError(result)) {
-      throw new Error(`Simulation failed: ${result.error}`);
-    }
-    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
-    if (!retval) throw new Error("No return value");
-    return scValToNative(retval) as T;
-  }
-
-  private async submit(tx: Transaction, signer: Keypair): Promise<void> {
-    const simResult = await this.server.simulateTransaction(tx);
-    if (SorobanRpc.Api.isSimulationError(simResult)) {
-      throw new Error(`Simulation failed: ${simResult.error}`);
-    }
-    const prepared = SorobanRpc.assembleTransaction(
-      tx,
-      simResult as SorobanRpc.Api.SimulateTransactionSuccessResponse
-    ).build();
-    prepared.sign(signer);
-    const sendResult = await this.server.sendTransaction(prepared);
-    if (sendResult.status === "ERROR") {
-      throw new Error(`Transaction failed: ${JSON.stringify(sendResult.errorResult)}`);
-    }
-    await pollTransaction(this.server, sendResult.hash);
-  }
-}
+/* … truncated 9658 chars — edit only what you need near the top … */
