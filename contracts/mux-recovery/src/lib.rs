@@ -1,7 +1,4 @@
 /*!
- * mux-recovery: Account recovery contract for Mux Protocol.
- *
- * Provides a timelocked recovery workflow with guardian-set approval.
  * mux-recovery: Account recovery system for Mux Protocol.
  *
  * Implements a guardian-initiated recovery mechanism with a mandatory
@@ -85,25 +82,6 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Vec};
-
-// ── Storage keys ──────────────────────────────────────────────────────────────
-
-#[contracttype]
-pub enum DataKey {
-    Owner,
-    PendingRecovery,
-    Guardians,
-    QuorumThreshold,
-}
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct RecoveryRequest {
-    pub new_owner: Address,
-    pub initiated_at: u32,
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, BytesN, Env, Vec,
 };
@@ -274,21 +252,6 @@ pub enum DataKey {
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
-pub enum MuxRecoveryError {
-    NotInitialized = 1,
-    AlreadyInitialized = 2,
-    Unauthorized = 3,
-    NoPendingRecovery = 4,
-    RecoveryNotReady = 5,
-    GuardianExists = 6,
-    GuardianNotFound = 7,
-    InvalidThreshold = 8,
-}
-
-// ── Constants ─────────────────────────────────────────────────────────────────
-
-/// Ledgers that must pass between initiate and execute.
-const RECOVERY_TIMELOCK: u32 = 100;
 pub enum RecoveryError {
     NotInitialized = 1,
     AlreadyInitialized = 2,
@@ -304,6 +267,9 @@ pub enum RecoveryError {
     QuorumNotReached = 12,
     DuplicateApproval = 13,
     InvalidQuorumThreshold = 14,
+    /// The address passed to `set_registry` is not a live registry contract
+    /// (the `list_contracts` cross-contract validation call failed).
+    RegistryNotFound = 15,
 }
 
 // ── Storage TTL ───────────────────────────────────────────────────────────────
@@ -322,9 +288,6 @@ pub struct MuxRecovery;
 
 #[contractimpl]
 impl MuxRecovery {
-    pub fn initialize(env: Env, owner: Address) -> Result<(), MuxRecoveryError> {
-        if env.storage().instance().has(&DataKey::Owner) {
-            return Err(MuxRecoveryError::AlreadyInitialized);
     /// Initialize the recovery contract with an owner, a guardian set, and a
     /// quorum threshold.
     ///
@@ -348,52 +311,6 @@ impl MuxRecovery {
         env.storage().instance().set(&DataKey::Owner, &owner);
         env.storage()
             .instance()
-            .set(&DataKey::Guardians, &Vec::<Address>::new(&env));
-        env.storage().instance().set(&DataKey::QuorumThreshold, &1_u32);
-        Ok(())
-    }
-
-    pub fn initiate_recovery(env: Env, new_owner: Address) -> Result<(), MuxRecoveryError> {
-        Self::require_owner(&env)?;
-        let req = RecoveryRequest {
-            new_owner: new_owner.clone(),
-            initiated_at: env.ledger().sequence(),
-        };
-        env.storage().instance().set(&DataKey::PendingRecovery, &req);
-        env.events()
-            .publish((symbol_short!("mux_recv"), symbol_short!("rec_init")), new_owner);
-        Ok(())
-    }
-
-    pub fn execute_recovery(env: Env) -> Result<(), MuxRecoveryError> {
-        Self::require_owner(&env)?;
-        let req: RecoveryRequest = env
-            .storage()
-            .instance()
-            .get(&DataKey::PendingRecovery)
-            .ok_or(MuxRecoveryError::NoPendingRecovery)?;
-        if env.ledger().sequence() < req.initiated_at + RECOVERY_TIMELOCK {
-            return Err(MuxRecoveryError::RecoveryNotReady);
-        }
-        env.storage().instance().set(&DataKey::Owner, &req.new_owner);
-        env.storage().instance().remove(&DataKey::PendingRecovery);
-        env.events()
-            .publish((symbol_short!("mux_recv"), symbol_short!("rec_exec")), ());
-        Ok(())
-    }
-
-    pub fn cancel_recovery(env: Env) -> Result<(), MuxRecoveryError> {
-        Self::require_owner(&env)?;
-        if !env.storage().instance().has(&DataKey::PendingRecovery) {
-            return Err(MuxRecoveryError::NoPendingRecovery);
-        }
-        env.storage().instance().remove(&DataKey::PendingRecovery);
-        env.events()
-            .publish((symbol_short!("mux_recv"), symbol_short!("rec_cncl")), ());
-        Ok(())
-    }
-
-    pub fn add_guardian(env: Env, guardian: Address) -> Result<(), MuxRecoveryError> {
             .set(&DataKey::Guardians, &guardians);
         env.storage()
             .instance()
@@ -603,18 +520,6 @@ impl MuxRecovery {
             .storage()
             .instance()
             .get(&DataKey::Guardians)
-            .unwrap_or_else(|| Vec::new(&env));
-        if guardians.contains(&guardian) {
-            return Err(MuxRecoveryError::GuardianExists);
-        }
-        guardians.push_back(guardian.clone());
-        env.storage().instance().set(&DataKey::Guardians, &guardians);
-        env.events()
-            .publish((symbol_short!("mux_recv"), symbol_short!("grd_add")), guardian);
-        Ok(())
-    }
-
-    pub fn remove_guardian(env: Env, guardian: Address) -> Result<(), MuxRecoveryError> {
             .ok_or(RecoveryError::NotInitialized)?;
         if guardians.contains(&guardian) {
             return Err(RecoveryError::GuardianAlreadyExists);
@@ -639,45 +544,6 @@ impl MuxRecovery {
             .storage()
             .instance()
             .get(&DataKey::Guardians)
-            .unwrap_or_else(|| Vec::new(&env));
-        let pos = guardians
-            .iter()
-            .position(|g| g == guardian)
-            .ok_or(MuxRecoveryError::GuardianNotFound)?;
-        guardians.remove(pos as u32);
-        env.storage().instance().set(&DataKey::Guardians, &guardians);
-        env.events()
-            .publish((symbol_short!("mux_recv"), symbol_short!("grd_rm")), guardian);
-        Ok(())
-    }
-
-    pub fn set_quorum_threshold(env: Env, threshold: u32) -> Result<(), MuxRecoveryError> {
-        Self::require_owner(&env)?;
-        let guardians: Vec<Address> = env
-            .storage()
-            .instance()
-            .get(&DataKey::Guardians)
-            .unwrap_or_else(|| Vec::new(&env));
-        if threshold == 0 || threshold > guardians.len() {
-            return Err(MuxRecoveryError::InvalidThreshold);
-        }
-        env.storage()
-            .instance()
-            .set(&DataKey::QuorumThreshold, &threshold);
-        env.events()
-            .publish((symbol_short!("mux_recv"), symbol_short!("qrm_set")), threshold);
-        Ok(())
-    }
-
-    pub fn get_guardians(env: Env) -> Vec<Address> {
-        env.storage()
-            .instance()
-            .get(&DataKey::Guardians)
-            .unwrap_or_else(|| Vec::new(&env))
-    }
-
-    pub fn get_pending_recovery(env: Env) -> Option<RecoveryRequest> {
-        env.storage().instance().get(&DataKey::PendingRecovery)
             .ok_or(RecoveryError::NotInitialized)?;
         let index = guardians
             .first_index_of(&guardian)
@@ -813,16 +679,11 @@ impl MuxRecovery {
 
     // ── Private helpers ────────────────────────────────────────────────────────
 
-    fn require_owner(env: &Env) -> Result<(), MuxRecoveryError> {
     fn require_owner(env: &Env) -> Result<(), RecoveryError> {
         let owner: Address = env
             .storage()
             .instance()
             .get(&DataKey::Owner)
-            .ok_or(MuxRecoveryError::NotInitialized)?;
-        owner.require_auth();
-        Ok(())
-    }
             .ok_or(RecoveryError::NotInitialized)?;
         owner.require_auth();
         Ok(())
@@ -1460,7 +1321,8 @@ mod tests {
         assert_eq!(topic_action(&env, &events, 0), symbol_short!("init"));
     }
 
-    /// RegistryNotFound error code must be 12 — stable ABI.
+    // `RecoveryError::RegistryNotFound` (code 15) is a stable ABI code —
+    // error codes are never reused or renumbered.
     #[test]
     fn test_set_registry_non_owner_rejected() {
         // Fail-closed: even with auth fully mocked, a caller-supplied `owner`

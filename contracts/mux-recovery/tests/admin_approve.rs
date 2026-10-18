@@ -49,7 +49,7 @@ fn test_approve_recovery_admin_rejects_owner_alone_without_guardian_cosign() {
 
     // Initialize and initiate using mock_all_auths for setup.
     env.mock_all_auths();
-    client.initialize(&owner, &vec![&env, guardian.clone()]);
+    client.initialize(&owner, &vec![&env, guardian.clone()], &1_u32);
     client.initiate_recovery(&guardian, &new_owner);
 
     // Restrict auth to only the owner; guardian does NOT co-sign.
@@ -86,7 +86,7 @@ fn test_approve_recovery_admin_rejects_non_guardian_cosigner() {
     let stranger = Address::generate(&env);
     let new_owner = Address::generate(&env);
 
-    client.initialize(&owner, &vec![&env, guardian.clone()]);
+    client.initialize(&owner, &vec![&env, guardian.clone()], &1_u32);
     client.initiate_recovery(&guardian, &new_owner);
 
     // Even with mock_all_auths, the guardian-membership check must reject stranger.
@@ -175,7 +175,7 @@ fn test_approve_recovery_admin_without_pending_recovery_rejected() {
     let owner = Address::generate(&env);
     let guardian = Address::generate(&env);
 
-    client.initialize(&owner, &vec![&env, guardian], &1_u32);
+    client.initialize(&owner, &vec![&env, guardian.clone()], &1_u32);
 
     let result = client.try_approve_recovery_admin(&guardian);
     assert!(

@@ -78,7 +78,8 @@ export type MuxRecoveryError =
   | "GuardianAlreadyExists"
   | "GuardianNotFound"
   | "MinGuardiansRequired"
-  | "RecoveryExpired";
+  | "RecoveryExpired"
+  | "RegistryNotFound";
 
 // ── Recovery timelock constants ───────────────────────────────────────────────
 
@@ -335,6 +336,7 @@ export function muxRecoveryErrorMessage(
     9: "address is not a registered guardian",
     10: "cannot remove the last remaining guardian",
     11: "recovery execution window has elapsed",
+    15: "registry contract is not live (list_contracts validation failed)",
   };
 
   const nameMap: Record<MuxRecoveryError, number> = {
@@ -349,6 +351,7 @@ export function muxRecoveryErrorMessage(
     GuardianNotFound: 9,
     MinGuardiansRequired: 10,
     RecoveryExpired: 11,
+    RegistryNotFound: 15,
   };
 
   const code = typeof error === "number" ? error : (nameMap[error] ?? -1);
