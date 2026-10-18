@@ -26,6 +26,10 @@
  *   - {@link parseBatcherEvent} — lenient. Returns `null` instead of throwing,
  *     for callers that only want to filter a mixed event stream.
  *
+ * A third, focused entrypoint — {@link decodeBatchOutcome} — maps the
+ * `bat_ok` / `bat_abort` lifecycle events to a discriminated success/abort
+ * result and fails closed for anything else.
+ *
  * See docs/audit-events.md and docs/event-topic-conventions.md for the
  * canonical event catalog.
  *
@@ -173,6 +177,8 @@ export interface BatcherEventContext {
  *                     another contract; stream decoders skip it.
  *   MalformedTopics   topic vector is not exactly `[Symbol, Symbol]`.
  *   UnknownAction     topics[1] is not a documented batcher action.
+ *   NotBatchOutcome   the event decoded fine but is not a `bat_ok` /
+ *                     `bat_abort` lifecycle outcome (see {@link decodeBatchOutcome}).
  *   MalformedPayload  data is missing or has the wrong arity for the action.
  *   InvalidAddress    an Address field is not a G…/C… strkey.
  *   InvalidU32        a u32 field is not an integer in [0, 2^32 - 1].
@@ -183,6 +189,7 @@ export const BATCHER_EVENT_DECODE_ERROR_CODES = {
   NotBatcherEvent: "NotBatcherEvent",
   MalformedTopics: "MalformedTopics",
   UnknownAction: "UnknownAction",
+  NotBatchOutcome: "NotBatchOutcome",
   MalformedPayload: "MalformedPayload",
   InvalidAddress: "InvalidAddress",
   InvalidU32: "InvalidU32",
@@ -337,6 +344,92 @@ export function correlateBatcherEvents(
     else groups.set(event.correlationId, [event]);
   }
   return groups;
+}
+
+// ── Batch lifecycle outcome decoder (#953) ─────────────────────────────────────
+
+/**
+ * Discriminated batch outcome derived from the `bat_ok` / `bat_abort`
+ * lifecycle events emitted by `execute_batch`.
+ *
+ * `success` — every operation in the batch succeeded (`bat_ok`).
+ * `abort`   — a `require_success` operation failed and the batch aborted
+ *             (`bat_abort`); the call itself returns `RequiredOperationFailed`.
+ */
+export type BatcherBatchOutcome =
+  | {
+      outcome: "success";
+      caller: string;
+      successCount: string;
+      txHash: string;
+      correlationId: string;
+    }
+  | {
+      outcome: "abort";
+      caller: string;
+      txHash: string;
+      correlationId: string;
+    };
+
+/**
+ * Fail-closed decoder mapping a raw mux-batcher lifecycle event to its
+ * {@link BatcherBatchOutcome}.
+ *
+ * Only the two outcome actions are accepted:
+ *
+ *   - `bat_ok`    → `{ outcome: "success", caller, successCount, … }`
+ *   - `bat_abort` → `{ outcome: "abort", caller, … }`
+ *
+ * Everything else fails closed with a typed
+ * {@link BatcherEventDecodeError} instead of guessing:
+ * unknown or malformed topics/payloads surface the underlying decode error,
+ * non-lifecycle actions (e.g. `bat_start`, `executed`) raise
+ * `NotBatchOutcome`, and non-batcher events raise `NotBatcherEvent`.
+ *
+ * @example
+ * ```ts
+ * import { decodeBatchOutcome } from "@mux-protocol/contracts";
+ *
+ * const outcome = decodeBatchOutcome(rawEvent); // throws on anything unexpected
+ * if (outcome.outcome === "success") {
+ *   console.log(`batch ok: ${outcome.successCount} ops`);
+ * } else {
+ *   console.warn(`batch aborted by ${outcome.caller}`);
+ * }
+ * ```
+ */
+export function decodeBatchOutcome(
+  event: BatcherRawEvent,
+  context?: BatcherEventContext,
+): BatcherBatchOutcome {
+  const decoded = decodeBatcherEvent(event, context);
+  const meta = {
+    txHash: decoded.txHash,
+    correlationId: decoded.correlationId,
+  };
+
+  switch (decoded.action) {
+    case "bat_ok":
+      return {
+        outcome: "success",
+        caller: decoded.caller,
+        successCount: decoded.successCount,
+        ...meta,
+      };
+    case "bat_abort":
+      return {
+        outcome: "abort",
+        caller: decoded.caller,
+        ...meta,
+      };
+    default:
+      throw new BatcherEventDecodeError(
+        BATCHER_EVENT_DECODE_ERROR_CODES.NotBatchOutcome,
+        `mux_bat.${decoded.action} is not a batch outcome event ` +
+          `(expected "${BATCHER_EVENT_TOPICS.bat_ok}" or "${BATCHER_EVENT_TOPICS.bat_abort}")`,
+        { ...meta, action: decoded.action },
+      );
+  }
 }
 
 // ── Lenient parser ─────────────────────────────────────────────────────────────
