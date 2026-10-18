@@ -40,6 +40,7 @@ by a specific actor; public entrypoints are callable by anyone.
 | `delegates()` | P | Read-only; filters expired |
 | `get_delegate(delegate)` | P | Read-only |
 | `guardians()` | P | Read-only |
+| `nonce()` | P | Read-only; returns the nonce the next `execute` must supply; `NotInitialized` if `initialize` was never called |
 | `register_session_key(session_key, expires_at, scopes)` | A | Owner only; paused check; capped at `MAX_SESSION_KEYS`; emits `sk_reg` |
 | `revoke_session_key(session_key)` | A | Owner only; paused check; removes the key from `SessionKeyIndex`; emits `sk_rev` |
 | `is_session_key_valid(session_key)` | P | Read-only; `true` iff registered, not revoked, and not expired |
@@ -72,6 +73,8 @@ by a specific actor; public entrypoints are callable by anyone.
 | `execute_batch(caller, ops)` | U | Caller authorizes; reentrancy guard; emits `bat_start` before execution, `executed`/`bat_ok`/`bat_abort` on completion |
 | `submit_batch(ops)` | U | Delegates to `execute_batch` |
 | `estimate_fees(op_count)` | P | Pure computation |
+| `set_fee_per_op(fee)` | A | Admin only; sets the per-operation fee in stroops (`FeePerOp` instance storage); see [batcher-fees.md](batcher-fees.md) |
+| `fee_per_op()` | P | Read-only; current per-operation fee in stroops; defaults to `FEE_PER_OP` (100 stroops) when unset |
 | `max_batch_size()` | P | Returns constant |
 | `set_registry_metadata(desc, author)` | A | Admin only; one-time; returns `NotInitialized` if `initialize` was never called, `MetadataAlreadySet` on a second call |
 | `get_registry_metadata()` | P | Read-only |
@@ -102,9 +105,11 @@ by a specific actor; public entrypoints are callable by anyone.
 | `grant_role(account, role)` | A | Admin only |
 | `revoke_role(account, role)` | A | Admin only |
 | `has_permission(account, perm)` | P | Read-only; emits `perm_ok` on grant only, nothing on denial |
+| `check_permission_strict(account, permission)` | P | Read-only; `Ok(())` when the account holds the permission, `Err(Unauthorized)` otherwise — typed-error variant of `has_permission` |
 | `get_roles(account)` | P | Read-only |
 | `get_role_members(role)` | P | Read-only |
 | `set_admin_threshold(threshold)` | A | Admin only |
+| `get_admin_threshold()` | P | Read-only; returns the current admin threshold (defaults to 1 when never set) |
 | `propose_admin(new_admin)` | A | Admin only |
 | `approve_admin(approver, new_admin)` | A | Admin + approver auth |
 | `get_pending_admins()` | P | Read-only |
