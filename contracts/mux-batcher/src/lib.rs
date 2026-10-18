@@ -170,7 +170,6 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Vec};
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN,
     Env, String, Vec,
@@ -210,13 +209,15 @@ fn emit(
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
 #[contracttype]
-enum DataKey {
+pub enum DataKey {
     Executing,
     /// Stores optional contract-level metadata set once at deployment.
     Meta,
     /// Upgrade authority, set once by `initialize`. Optional: a batcher that
     /// is never initialized has no admin and can never be upgraded.
     Admin,
+    /// Configurable per-operation fee in stroops (issue #748 fee accounting).
+    FeePerOp,
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -249,7 +250,7 @@ pub struct Operation {
 }
 
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BatchResult {
     /// Number of operations that completed without error.
     pub success_count: u32,
@@ -285,17 +286,6 @@ pub enum MuxBatcherError {
 const MAX_BATCH_SIZE: u32 = 50;
 
 /// Default fee per operation in stroops.
-const FEE_PER_OP: u32 = 100;
-
-// ── Storage keys ──────────────────────────────────────────────────────────────
-
-#[contracttype]
-pub enum DataKey {
-    Admin,
-    FeePerOp,
-}
-/// Base fee (in stroops) charged per operation in a batch.
-/// Used by `estimate_fees` to give callers a conservative preflight estimate.
 const FEE_PER_OP: u32 = 100;
 
 // ── Storage TTL ───────────────────────────────────────────────────────────────
@@ -334,16 +324,6 @@ pub struct MuxBatcher;
 
 #[contractimpl]
 impl MuxBatcher {
-    /// Initialize the batcher with an admin who can adjust fees.
-    pub fn initialize(env: Env, admin: Address) -> Result<(), MuxBatcherError> {
-        if env.storage().instance().has(&DataKey::Admin) {
-            return Err(MuxBatcherError::Unauthorized);
-        }
-        admin.require_auth();
-        env.storage().instance().set(&DataKey::Admin, &admin);
-        Ok(())
-    }
-
     /// Admin-only: set the per-operation fee in stroops.
     pub fn set_fee_per_op(env: Env, fee: u32) -> Result<(), MuxBatcherError> {
         Self::require_admin(&env)?;
@@ -360,9 +340,6 @@ impl MuxBatcher {
             .unwrap_or(FEE_PER_OP)
     }
 
-    /// Estimate total fees for a batch of `op_count` operations.
-    pub fn estimate_fees(env: Env, op_count: u32) -> u32 {
-        op_count.saturating_mul(Self::fee_per_op(env))
     /// Initialize the batcher with an upgrade admin. Optional: a batcher
     /// that is never initialized behaves exactly as before this admin was
     /// introduced — it simply has no `upgrade()` path (`upgrade` returns
@@ -542,14 +519,16 @@ impl MuxBatcher {
     /// Estimate the fee (in stroops) for a batch of the given size.
     ///
     /// Returns `Err(BatchTooLarge)` when `op_count` exceeds `max_batch_size`.
-    pub fn estimate_fees(_env: Env, op_count: u32) -> Result<u32, MuxBatcherError> {
+    pub fn estimate_fees(env: Env, op_count: u32) -> Result<u32, MuxBatcherError> {
         if op_count == 0 {
             return Err(MuxBatcherError::EmptyBatch);
         }
         if op_count > MAX_BATCH_SIZE {
             return Err(MuxBatcherError::BatchTooLarge);
         }
-        Ok(op_count.saturating_mul(FEE_PER_OP))
+        // Reflect the configurable per-op fee (fee accounting, issue #748):
+        // clients that call fee_per_op() at runtime pick up admin changes.
+        Ok(op_count.saturating_mul(Self::fee_per_op(env)))
     }
 
     /// Store registry metadata (description, author) for this batcher instance.
@@ -638,18 +617,6 @@ impl MuxBatcher {
         admin.require_auth();
         Ok(())
     }
-
-    // ── Private helpers ────────────────────────────────────────────────────────
-
-    fn require_admin(env: &Env) -> Result<(), MuxBatcherError> {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(MuxBatcherError::Unauthorized)?;
-        admin.require_auth();
-        Ok(())
-    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -712,9 +679,9 @@ mod tests {
 
     #[test]
     fn test_fee_per_op_default_fallback() {
-        let (env, _client, _) = setup();
+        let (_env, client, _) = setup();
         // Before any set, fee_per_op should return the compile-time default (100)
-        assert_eq!(MuxBatcher::fee_per_op(env), 100);
+        assert_eq!(client.fee_per_op(), 100);
     }
 
     #[test]
@@ -1202,11 +1169,12 @@ mod tests {
         let client = MuxBatcherClient::new(&env, &contract_id);
 
         let caller = Address::generate(&env);
+        let target_id = env.register_contract(None, DummyTarget);
         let mut ops: Vec<Operation> = Vec::new(&env);
         // Successful op 1
         ops.push_back(Operation {
-            target: contract_id.clone(),
-            fn_name: symbol_short!("max_batch"),
+            target: target_id,
+            fn_name: symbol_short!("noop"),
             args: Vec::new(&env),
             require_success: false,
             kind: BatchOperationKind::Invoke,
@@ -1774,7 +1742,17 @@ mod tests {
         assert_eq!(exec_over.unwrap_err().unwrap(), MuxBatcherError::BatchTooLarge);
 
         // Parity 3: In-bound valid batch accepts and returns matching success_count
-        let valid_ops = make_nop_ops(&env, 5);
+        let target_id = env.register_contract(None, DummyTarget);
+        let mut valid_ops: Vec<Operation> = Vec::new(&env);
+        for _ in 0..5 {
+            valid_ops.push_back(Operation {
+                target: target_id.clone(),
+                fn_name: symbol_short!("noop"),
+                args: Vec::new(&env),
+                require_success: false,
+                kind: BatchOperationKind::Invoke,
+            });
+        }
         let sim_valid = client.simulate_batch(&caller, &valid_ops);
         let exec_valid = client.execute_batch(&caller, &valid_ops);
         assert_eq!(sim_valid.success_count, exec_valid.success_count);

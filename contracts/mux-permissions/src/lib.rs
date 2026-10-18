@@ -644,7 +644,7 @@ impl MuxPermissions {
                 .instance()
                 .get(&DataKey::RolePermissions(role))
                 .unwrap_or_else(|| Vec::new(env));
-            if perms.contains(&permission) {
+            if perms.contains(permission) {
                 return true;
             }
         }

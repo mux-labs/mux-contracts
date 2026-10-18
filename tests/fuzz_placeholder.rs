@@ -263,7 +263,7 @@ mod fuzz_account {
         let args: Vec<Val> = Vec::new(&env);
         let overflow_exec =
             client.try_execute_with_session(&overflow, &target, &pay, &args, &client.nonce());
-        assert_eq!(overflow_exec, Err(Ok(MuxAccountError::Unauthorized)));
+        assert_eq!(overflow_exec.unwrap_err(), Ok(MuxAccountError::Unauthorized));
 
         // Every key registered before the cap was hit must still authorize —
         // rejecting the flood must not have silently skipped or corrupted

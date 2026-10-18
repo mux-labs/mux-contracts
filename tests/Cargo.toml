@@ -36,6 +36,14 @@ name = "threat_model_coverage"
 path = "threat_model_coverage.rs"
 
 [[test]]
+name = "bindings_coverage"
+path = "bindings_coverage.rs"
+
+[[test]]
+name = "entrypoint_matrix_coverage"
+path = "entrypoint_matrix_coverage.rs"
+
+[[test]]
 name = "aa_phase2_milestone"
 path = "aa_phase2_milestone.rs"
 

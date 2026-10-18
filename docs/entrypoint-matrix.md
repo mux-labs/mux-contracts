@@ -36,6 +36,7 @@ by a specific actor; public entrypoints are callable by anyone.
 | `set_spend_limit(asset, amount, period)` | A | Owner only; paused check |
 | `debit_spend(asset, spend)` | U | Caller (contract) authorizes; paused check; reentrancy guard |
 | `execute(target, function, args, asset, spend, nonce)` | A | Owner only; paused check; validates spend limit, consumes `nonce` (must equal `nonce()`, else `InvalidNonce`), then invokes `target` while the reentrancy guard is held, then persists the debit (checks-effects-interactions); emits `executed` event |
+| `nonce()` | P | Read-only; current transaction nonce |
 | `owner()` | P | Read-only |
 | `delegates()` | P | Read-only; filters expired |
 | `get_delegate(delegate)` | P | Read-only |
@@ -71,7 +72,9 @@ by a specific actor; public entrypoints are callable by anyone.
 | `upgrade(new_wasm_hash)` | A | Admin only; `NotInitialized` if `initialize` was never called |
 | `execute_batch(caller, ops)` | U | Caller authorizes; reentrancy guard; emits `bat_start` before execution, `executed`/`bat_ok`/`bat_abort` on completion |
 | `submit_batch(ops)` | U | Delegates to `execute_batch` |
-| `estimate_fees(op_count)` | P | Pure computation |
+| `estimate_fees(op_count)` | P | Pure computation; `EmptyBatch` if `op_count == 0`, `BatchTooLarge` above `max_batch_size()`; multiplies the runtime `fee_per_op()` value |
+| `set_fee_per_op(fee)` | A | Admin only; updates the stored per-operation fee in stroops; `NotInitialized` if `initialize` was never called |
+| `fee_per_op()` | P | Read-only; current per-operation fee, falling back to the compile-time default (100 stroops) when unset |
 | `max_batch_size()` | P | Returns constant |
 | `set_registry_metadata(desc, author)` | A | Admin only; one-time; returns `NotInitialized` if `initialize` was never called, `MetadataAlreadySet` on a second call |
 | `get_registry_metadata()` | P | Read-only |
@@ -104,6 +107,8 @@ by a specific actor; public entrypoints are callable by anyone.
 | `has_permission(account, perm)` | P | Read-only; emits `perm_ok` on grant only, nothing on denial |
 | `get_roles(account)` | P | Read-only |
 | `get_role_members(role)` | P | Read-only |
+| `check_permission_strict(account, perm)` | P | Read-only; deny-by-default permission check, returns `Unauthorized` when the account does not hold the permission |
+| `get_admin_threshold()` | P | Read-only; current multisig admin approval threshold |
 | `set_admin_threshold(threshold)` | A | Admin only |
 | `propose_admin(new_admin)` | A | Admin only |
 | `approve_admin(approver, new_admin)` | A | Admin + approver auth |

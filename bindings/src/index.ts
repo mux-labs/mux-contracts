@@ -27,6 +27,7 @@ export * from "./generated/mux-account-factory";
 export * from "./generated/mux-batcher";
 export * from "./generated/mux-delegation";
 export * from "./generated/mux-permissions";
+export * from "./generated/mux-policy";
 export * from "./generated/mux-registry";
 export * from "./generated/mux-wallet-registry";
 export * from "./generated/mux-spending-policy";

@@ -45,9 +45,13 @@ CONTRACTS=(
   "mux-account"
   "mux-account-factory"
   "mux-batcher"
+  "mux-delegation"
   "mux-permissions"
   "mux-policy"
+  "mux-recovery"
   "mux-registry"
+  "mux-spending-policy"
+  "mux-wallet-registry"
 )
 
 if [[ "${SKIP_BUILD}" == "false" ]]; then

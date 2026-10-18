@@ -69,10 +69,21 @@ const sorobanRpc = new rpc.SorobanRpc.Server(RPC_URL, { allowHttp: true });
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * Outcome of one build/simulate/submit/poll cycle.
+ *
+ * Failure is reported to the caller (never swallowed) so `main()` can abort
+ * the remaining steps and exit non-zero — the example is fail-closed like the
+ * other examples in `examples/` (issue #966).
+ */
+type StepResult =
+  | { ok: true; ledger: number }
+  | { ok: false; reason: string };
+
 async function buildAndSubmit(
   functionName: string,
   args: xdr.ScVal[]
-): Promise<void> {
+): Promise<StepResult> {
   const account = await sorobanRpc.getAccount(serverPublicKey);
 
   const tx = new TransactionBuilder(account, {
@@ -99,7 +110,7 @@ async function buildAndSubmit(
   const simResult = await sorobanRpc.simulateTransaction(tx);
   if (simResult.error) {
     console.error(`Simulation failed for ${functionName}:`, simResult.error);
-    return;
+    return { ok: false, reason: `simulation failed: ${simResult.error}` };
   }
   console.log(`[${functionName}] simulation OK`);
 
@@ -113,20 +124,25 @@ async function buildAndSubmit(
     const resp = await sorobanRpc.getTransaction(submitResult.hash);
     if (resp.status === "SUCCESS") {
       console.log(`[${functionName}] confirmed on ledger ${resp.ledger}`);
-      return;
+      return { ok: true, ledger: resp.ledger };
     }
     if (resp.status === "FAILED") {
       console.error(`[${functionName}] failed:`, resp.resultXdr);
-      return;
+      return { ok: false, reason: `transaction FAILED: ${resp.resultXdr}` };
     }
     await new Promise((r) => setTimeout(r, 1000));
   }
   console.error(`[${functionName}] timed out waiting for confirmation`);
+  return { ok: false, reason: "timed out waiting for confirmation" };
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
+  // NOTE: `initialize` is expected to fail on an already-initialized contract
+  // (AlreadyInitialized). That failure is now surfaced as a non-zero exit
+  // instead of being swallowed, so a re-run against a live contract stops
+  // after step 1 rather than attempting the remaining steps (issue #966).
   console.log("=== mux-permissions invoke example ===");
   console.log(`  RPC:      ${RPC_URL}`);
   console.log(`  Network:  ${SOROBAN_NETWORK}`);
@@ -135,24 +151,36 @@ async function main() {
 
   // 1. Initialize the permissions contract
   console.log("--- Step 1: Initialize ---");
-  await buildAndSubmit("initialize", [
+  const initResult = await buildAndSubmit("initialize", [
     new Address(serverPublicKey).toScVal(),
   ]);
+  if (initResult.ok === false) {
+    console.error(`Aborting: initialize failed (${initResult.reason}); remaining steps skipped`);
+    process.exit(1);
+  }
 
   // 2. Create an "operator" role with "transfer" and "mint" permissions
   console.log("\n--- Step 2: Create role ---");
-  await buildAndSubmit("create_role", [
+  const createRoleResult = await buildAndSubmit("create_role", [
     nativeToScVal("operator", { type: "symbol" }),
     nativeToScVal(["transfer", "mint"], { type: "symbol" }),
   ]);
+  if (createRoleResult.ok === false) {
+    console.error(`Aborting: create_role failed (${createRoleResult.reason}); remaining steps skipped`);
+    process.exit(1);
+  }
 
   // 3. Grant the role to a target account
   console.log("\n--- Step 3: Grant role ---");
   const targetPublicKey = process.env.TARGET_ACCOUNT || serverPublicKey;
-  await buildAndSubmit("grant_role", [
+  const grantResult = await buildAndSubmit("grant_role", [
     new Address(targetPublicKey).toScVal(),
     nativeToScVal("operator", { type: "symbol" }),
   ]);
+  if (grantResult.ok === false) {
+    console.error(`Aborting: grant_role failed (${grantResult.reason}); remaining steps skipped`);
+    process.exit(1);
+  }
 
   // 4. Check permission (read-only, simulation only)
   console.log("\n--- Step 4: Check permission (has_permission) ---");
@@ -184,16 +212,22 @@ async function main() {
   const simCheck = await sorobanRpc.simulateTransaction(checkTx);
   if (simCheck.error) {
     console.error("has_permission simulation failed:", simCheck.error);
+    console.error("Aborting: has_permission check failed; remaining steps skipped");
+    process.exit(1);
   } else {
     console.log("has_permission simulation OK (check returnValue for result)");
   }
 
   // 5. Revoke the role
   console.log("\n--- Step 5: Revoke role ---");
-  await buildAndSubmit("revoke_role", [
+  const revokeResult = await buildAndSubmit("revoke_role", [
     new Address(targetPublicKey).toScVal(),
     nativeToScVal("operator", { type: "symbol" }),
   ]);
+  if (revokeResult.ok === false) {
+    console.error(`Aborting: revoke_role failed (${revokeResult.reason})`);
+    process.exit(1);
+  }
 
   console.log("\n=== Done ===");
 }

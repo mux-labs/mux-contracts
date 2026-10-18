@@ -44,6 +44,7 @@ const ALL_CONTRACTS = [
   "mux-batcher",
   "mux-delegation",
   "mux-permissions",
+  "mux-policy",
   "mux-recovery",
   "mux-registry",
   "mux-spending-policy",
