@@ -28,15 +28,36 @@ import type { Operation } from "./types";
  * exceeds a cap is rejected before execution and no partial state is written.
  * These constants mirror the contract's `BatchCaps` so clients can pre-validate
  * and surface actionable errors instead of relying on a failed simulation.
+ *
+ * `maxBatchSize` mirrors the contract's `MAX_BATCH_SIZE` constant
+ * (`contracts/mux-batcher/src/lib.rs`, pinned to 50 by
+ * `test_max_batch_size_constant_is_50`) and is documented in
+ * `docs/batching-limits.md`. `maxAggregateOps` is a client-side
+ * pre-validation cap (the contract currently enforces only the operation
+ * count on-chain). Both values are asserted against the docs by
+ * `__tests__/batcher-limits-sync.test.ts` so drift fails CI.
  */
 export const BATCH_CAPS = {
   /** Maximum number of operations allowed in a single batch. */
-  maxBatchSize: 64,
+  maxBatchSize: 50,
   /** Maximum aggregate operation weight (sum of per-op weights) per batch. */
   maxAggregateOps: 256,
 } as const;
 
 export type BatchCaps = typeof BATCH_CAPS;
+
+/**
+ * Maximum operations per batch — named alias for `BATCH_CAPS.maxBatchSize`,
+ * mirroring the on-chain `MAX_BATCH_SIZE` constant so callers can import the
+ * familiar name directly.
+ */
+export const MAX_BATCH_SIZE = BATCH_CAPS.maxBatchSize;
+
+/**
+ * Maximum aggregate operation weight per batch — named alias for
+ * `BATCH_CAPS.maxAggregateOps` (client-side pre-validation cap).
+ */
+export const MAX_AGGREGATE_OPS = BATCH_CAPS.maxAggregateOps;
 
 /**
  * Stable error codes emitted by the batcher contract for cap violations.

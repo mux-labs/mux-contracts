@@ -21,6 +21,19 @@ that may be submitted in one batch.
 |---|---|---|
 | `MAX_BATCH_SIZE` | **50** | Bounds CPU instructions, memory, and fee usage per transaction |
 
+## Aggregate operation limit
+
+| Constant | Value | Reason |
+|---|---|---|
+| `MAX_AGGREGATE_OPS` | **256** | Bounds the aggregate operation weight accepted in one batch |
+
+`MAX_AGGREGATE_OPS` is enforced **client-side** by the TypeScript bindings
+(`assertBatchWithinCaps` in `bindings/src/batcher.ts`) as a pre-validation
+layer; the contract currently enforces only the operation count
+(`MAX_BATCH_SIZE`) on-chain. Both constants are asserted against this document
+by `bindings/__tests__/batcher-limits-sync.test.ts`, so updating either limit
+requires updating this file (and the contract pin test) in the same change.
+
 ### Enforcement
 
 Both `execute_batch`, `submit_batch`, and `simulate_batch` check the limit before any operations
