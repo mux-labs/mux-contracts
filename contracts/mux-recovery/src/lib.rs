@@ -267,6 +267,8 @@ pub enum RecoveryError {
     QuorumNotReached = 12,
     DuplicateApproval = 13,
     InvalidQuorumThreshold = 14,
+    /// The address passed to `set_registry` is not a live registry contract
+    /// (the `list_contracts` cross-contract validation call failed).
     RegistryNotFound = 15,
 }
 
@@ -1321,7 +1323,8 @@ mod tests {
         assert_eq!(topic_action(&env, &events, 0), symbol_short!("init"));
     }
 
-    /// RegistryNotFound error code must be 12 — stable ABI.
+    // `RecoveryError::RegistryNotFound` (code 15) is a stable ABI code —
+    // error codes are never reused or renumbered.
     #[test]
     fn test_set_registry_non_owner_rejected() {
         // Fail-closed: even with auth fully mocked, a caller-supplied `owner`

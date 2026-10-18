@@ -1205,4 +1205,125 @@ mod tests {
         assert_eq!(WalletRegistryError::WalletNotFound as u32, 4);
         assert_eq!(WalletRegistryError::TooManyWallets as u32, 5);
     }
+
+    // ── Issue #959: init event payload + double-initialize no-event invariant ──
+
+    /// `initialize` must emit exactly one `mux_wreg/init` event whose data
+    /// decodes to the `owner` Address. A second `initialize` must return
+    /// `AlreadyInitialized` and must not emit a second `init` event, so
+    /// indexers keyed on `mux_wreg/init` are never corrupted.
+    #[test]
+    fn test_initialize_emits_single_init_event_with_owner_payload() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxWalletRegistry);
+        let client = MuxWalletRegistryClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+
+        client.initialize(&owner);
+
+        let events = env.events().all();
+        let mut init_idx: alloc::vec::Vec<u32> = alloc::vec::Vec::new();
+        for i in 0..events.len() {
+            let (contract, _, _) = events.get(i).unwrap();
+            if contract == contract_id
+                && topic_tag(&env, &events, i) == symbol_short!("mux_wreg")
+                && topic_action(&env, &events, i) == symbol_short!("init")
+            {
+                init_idx.push(i);
+            }
+        }
+        assert_eq!(
+            init_idx.len(),
+            1,
+            "a successful initialize must emit exactly one mux_wreg/init event"
+        );
+        let (_, _, data) = events.get(init_idx[0]).unwrap();
+        let ev_owner: Address = FromVal::from_val(&env, &data);
+        assert_eq!(ev_owner, owner, "init event data must decode to the owner");
+    }
+
+    /// A rejected second `initialize` must return `AlreadyInitialized` and
+    /// must leave the `mux_wreg/init` event count unchanged.
+    #[test]
+    fn test_second_initialize_returns_already_initialized_without_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxWalletRegistry);
+        let client = MuxWalletRegistryClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+
+        client.initialize(&owner);
+
+        let count_init_events = |events: &soroban_sdk::Vec<(
+            Address,
+            soroban_sdk::Vec<soroban_sdk::Val>,
+            soroban_sdk::Val,
+        )>| {
+            (0..events.len())
+                .filter(|i| {
+                    let (contract, _, _) = events.get(*i).unwrap();
+                    contract == contract_id
+                        && topic_tag(&env, events, *i) == symbol_short!("mux_wreg")
+                        && topic_action(&env, events, *i) == symbol_short!("init")
+                })
+                .count()
+        };
+        assert_eq!(count_init_events(&env.events().all()), 1);
+
+        let result = client.try_initialize(&owner);
+        assert_eq!(
+            result,
+            Err(Ok(WalletRegistryError::AlreadyInitialized)),
+            "second initialize must fail with AlreadyInitialized"
+        );
+        assert_eq!(
+            count_init_events(&env.events().all()),
+            1,
+            "a rejected second initialize must not emit another init event"
+        );
+    }
+
+    // ── Issue #961: register_wallet_with_metadata storage + wlt_meta event ───
+
+    /// `register_wallet_with_metadata` must store the address and the
+    /// `WalletMetadata` under the same name, and must emit exactly one
+    /// `mux_wreg/wlt_meta` event with the `(name, wallet)` payload. A
+    /// regression that stores under the wrong key or emits `wlt_reg`
+    /// instead of `wlt_meta` must be caught here.
+    #[test]
+    fn test_register_wallet_with_metadata_stores_metadata_and_emits_wlt_meta() {
+        let (env, client, _) = setup();
+        let name = symbol_short!("carol");
+        let wallet = Address::generate(&env);
+        let label = String::from_str(&env, "Carol's Vault");
+        let description = String::from_str(&env, "Treasury wallet");
+
+        client.register_wallet_with_metadata(&name, &wallet, &label, &description);
+
+        // Wallet retrievable by name; metadata stored under the same name.
+        assert_eq!(client.get_wallet(&name), wallet);
+        let meta = client.get_metadata(&name);
+        assert_eq!(meta.label, label);
+        assert_eq!(meta.description, description);
+
+        // Exactly one wlt_meta event with the (name, wallet) payload.
+        let events = env.events().all();
+        let mut meta_idx: alloc::vec::Vec<u32> = alloc::vec::Vec::new();
+        for i in 0..events.len() {
+            if topic_action(&env, &events, i) == symbol_short!("wlt_meta") {
+                meta_idx.push(i);
+            }
+        }
+        assert_eq!(
+            meta_idx.len(),
+            1,
+            "register_wallet_with_metadata must emit exactly one wlt_meta event"
+        );
+        let (_, _, data) = events.get(meta_idx[0]).unwrap();
+        assert_eq!(topic_tag(&env, &events, meta_idx[0]), symbol_short!("mux_wreg"));
+        let (ev_name, ev_wallet): (Symbol, Address) = FromVal::from_val(&env, &data);
+        assert_eq!(ev_name, name);
+        assert_eq!(ev_wallet, wallet);
+    }
 }

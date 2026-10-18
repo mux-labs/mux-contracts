@@ -6,6 +6,7 @@ import {
   correlateBatcherEvents,
   decodeBatcherEvent,
   decodeBatcherEvents,
+  decodeBatchOutcome,
   parseBatcherEvent,
   type BatcherEvent,
   type BatcherEventDecodeErrorCode,
@@ -429,5 +430,98 @@ describe("BATCHER_EVENT_TOPICS literal values (closes #918)", () => {
       bat_abort: "bat_abort",
       sim_done: "sim_done",
     });
+  });
+});
+
+// ── Batch outcome decoder (closes #953) ───────────────────────────────────────
+
+describe("decodeBatchOutcome (closes #953)", () => {
+  it("decodes bat_ok into a discriminated success outcome", () => {
+    const outcome = decodeBatchOutcome(rpcEvent("bat_ok", [CALLER, 4]));
+    expect(outcome).toEqual({
+      outcome: "success",
+      caller: CALLER,
+      successCount: "4",
+      txHash: TX_A,
+      correlationId: TX_A,
+    });
+  });
+
+  it("decodes bat_abort into a discriminated abort outcome", () => {
+    const outcome = decodeBatchOutcome(rpcEvent("bat_abort", CALLER));
+    expect(outcome).toEqual({
+      outcome: "abort",
+      caller: CALLER,
+      txHash: TX_A,
+      correlationId: TX_A,
+    });
+  });
+
+  it("honours caller-supplied correlation metadata", () => {
+    const outcome = decodeBatchOutcome(rpcEvent("bat_ok", [CALLER, 1]), {
+      correlationId: "batch-7",
+    });
+    expect(outcome.correlationId).toBe("batch-7");
+  });
+
+  it("fails closed for an unknown action topic", () => {
+    expectDecodeError(
+      () => decodeBatchOutcome(rpcEvent("fee_paid", [CALLER, 1])),
+      BATCHER_EVENT_DECODE_ERROR_CODES.UnknownAction,
+      { action: "fee_paid" },
+    );
+  });
+
+  it("fails closed for a malformed payload", () => {
+    expectDecodeError(
+      () => decodeBatchOutcome(rpcEvent("bat_ok", [CALLER])),
+      BATCHER_EVENT_DECODE_ERROR_CODES.MalformedPayload,
+      { action: "bat_ok" },
+    );
+    expectDecodeError(
+      () => decodeBatchOutcome(rpcEvent("bat_abort", [CALLER, 9])),
+      BATCHER_EVENT_DECODE_ERROR_CODES.MalformedPayload,
+      { action: "bat_abort" },
+    );
+  });
+
+  it("fails closed for a corrupted caller address", () => {
+    expectDecodeError(
+      () => decodeBatchOutcome(rpcEvent("bat_abort", "not-an-address")),
+      BATCHER_EVENT_DECODE_ERROR_CODES.InvalidAddress,
+      { action: "bat_abort", field: "caller" },
+    );
+  });
+
+  it("fails closed for valid non-outcome batcher actions", () => {
+    for (const action of ["init", "bat_start", "executed", "sim_done"]) {
+      const value =
+        action === "init"
+          ? ADMIN
+          : action === "executed"
+            ? [CALLER, 1, 0]
+            : [CALLER, 1];
+      expectDecodeError(
+        () => decodeBatchOutcome(rpcEvent(action, value)),
+        BATCHER_EVENT_DECODE_ERROR_CODES.NotBatchOutcome,
+        { action },
+      );
+    }
+  });
+
+  it("fails closed for events from another contract and for a missing tx hash", () => {
+    expectDecodeError(
+      () =>
+        decodeBatchOutcome({
+          topic: ["mux_pol", "bat_ok"],
+          value: [CALLER, 1],
+          txHash: TX_A,
+        }),
+      BATCHER_EVENT_DECODE_ERROR_CODES.NotBatcherEvent,
+    );
+    expectDecodeError(
+      () => decodeBatchOutcome({ topic: [BATCHER_CONTRACT_TAG, "bat_ok"], value: [CALLER, 1] }),
+      BATCHER_EVENT_DECODE_ERROR_CODES.MissingTxHash,
+    );
   });
 });

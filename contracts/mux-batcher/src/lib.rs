@@ -285,7 +285,8 @@ pub enum MuxBatcherError {
 // monopolising ledger capacity.
 const MAX_BATCH_SIZE: u32 = 50;
 
-/// Default fee per operation in stroops.
+/// Base fee (in stroops) charged per operation in a batch.
+/// Used by `estimate_fees` to give callers a conservative preflight estimate.
 const FEE_PER_OP: u32 = 100;
 
 // ── Storage TTL ───────────────────────────────────────────────────────────────
@@ -324,22 +325,6 @@ pub struct MuxBatcher;
 
 #[contractimpl]
 impl MuxBatcher {
-    /// Admin-only: set the per-operation fee in stroops.
-    pub fn set_fee_per_op(env: Env, fee: u32) -> Result<(), MuxBatcherError> {
-        Self::require_admin(&env)?;
-        env.storage().instance().set(&DataKey::FeePerOp, &fee);
-        Ok(())
-    }
-
-    /// Public read: returns the current per-operation fee in stroops.
-    /// Falls back to the compile-time default (100) when unset.
-    pub fn fee_per_op(env: Env) -> u32 {
-        env.storage()
-            .instance()
-            .get(&DataKey::FeePerOp)
-            .unwrap_or(FEE_PER_OP)
-    }
-
     /// Initialize the batcher with an upgrade admin. Optional: a batcher
     /// that is never initialized behaves exactly as before this admin was
     /// introduced — it simply has no `upgrade()` path (`upgrade` returns
@@ -665,39 +650,6 @@ mod tests {
             });
         }
         ops
-    }
-
-    fn setup() -> (Env, MuxBatcherClient<'static>, Address) {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register_contract(None, MuxBatcher);
-        let client = MuxBatcherClient::new(&env, &contract_id);
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-        (env, client, admin)
-    }
-
-    #[test]
-    fn test_fee_per_op_default_fallback() {
-        let (_env, client, _) = setup();
-        // Before any set, fee_per_op should return the compile-time default (100)
-        assert_eq!(client.fee_per_op(), 100);
-    }
-
-    #[test]
-    fn test_set_fee_per_op_admin() {
-        let (env, client, _) = setup();
-        client.set_fee_per_op(&250_u32);
-        assert_eq!(client.fee_per_op(), 250);
-        // estimate_fees reflects the new fee
-        assert_eq!(client.estimate_fees(&4_u32), 1000);
-    }
-
-    #[test]
-    fn test_set_fee_per_op_non_admin_fails() {
-        let (env, client, _admin) = setup();
-        env.mock_auths(&[]);
-        assert!(client.try_set_fee_per_op(&500_u32).is_err());
     }
 
     #[test]
