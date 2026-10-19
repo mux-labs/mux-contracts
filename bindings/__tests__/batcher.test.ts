@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { Keypair, StrKey } from "@stellar/stellar-sdk";
 import {
   BATCH_CAPS,
   BatchCapError,
@@ -7,6 +8,12 @@ import {
   MAX_BATCH_SIZE,
   assertBatchWithinCaps,
 } from "../src/batcher";
+import {
+  MuxBatcherClient,
+  MAX_BATCH_SIZE as CLIENT_MAX_BATCH_SIZE,
+  MUX_BATCHER_ERROR_CODES,
+  MuxBatcherCapError,
+} from "../src/generated/mux-batcher";
 import type { Operation } from "../src/types";
 
 /**
@@ -85,6 +92,88 @@ describe("batching DoS caps", () => {
     } catch (err) {
       expect((err as Error).message).toContain(BatchCapErrorCode.BatchTooLarge);
     }
+  });
+});
+
+/**
+ * `MuxBatcherClient.estimateFees` client-side caps (issue #942).
+ * The guard must fail closed before any RPC call is attempted.
+ */
+describe("MuxBatcherClient.estimateFees bounds", () => {
+  const CONTRACT_ID = StrKey.encodeContract(new Uint8Array(32));
+  const NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
+  const RPC_URL = "https://127.0.0.1:8000";
+
+  /** Account shape accepted by `TransactionBuilder` without a live RPC. */
+  function mockAccount(signer: Keypair) {
+    return {
+      accountId: () => signer.publicKey(),
+      sequence: "0",
+      sequenceNumber: () => 0,
+      incrementSequenceNumber: () => {},
+    };
+  }
+
+  function buildClient() {
+    const client = new MuxBatcherClient({
+      contractId: CONTRACT_ID,
+      networkPassphrase: NETWORK_PASSPHRASE,
+      rpcUrl: RPC_URL,
+    });
+    const signer = Keypair.random();
+    const server = {
+      getAccount: vi.fn().mockResolvedValue(mockAccount(signer)),
+      simulateTransaction: vi.fn().mockResolvedValue({
+        result: { retval: { value: () => 4200 } },
+      }),
+    };
+    (client as unknown as { server: unknown }).server = server;
+    return { client, server };
+  }
+
+  it("throws MuxBatcherCapError with code EmptyBatch for opCount 0, without submitting a transaction", async () => {
+    const { client, server } = buildClient();
+    await expect(client.estimateFees(Keypair.random(), 0)).rejects.toMatchObject(
+      {
+        name: "MuxBatcherCapError",
+        code: MUX_BATCHER_ERROR_CODES.EmptyBatch,
+      }
+    );
+    expect(server.getAccount).not.toHaveBeenCalled();
+    expect(server.simulateTransaction).not.toHaveBeenCalled();
+  });
+
+  it("throws MuxBatcherCapError with code BatchTooLarge for opCount above MAX_BATCH_SIZE, without submitting a transaction", async () => {
+    const { client, server } = buildClient();
+    await expect(
+      client.estimateFees(Keypair.random(), CLIENT_MAX_BATCH_SIZE + 1)
+    ).rejects.toMatchObject({
+      name: "MuxBatcherCapError",
+      code: MUX_BATCHER_ERROR_CODES.BatchTooLarge,
+    });
+    expect(server.getAccount).not.toHaveBeenCalled();
+    expect(server.simulateTransaction).not.toHaveBeenCalled();
+  });
+
+  it("does not throw the cap error for opCount 1 and proceeds to simulate", async () => {
+    const { client, server } = buildClient();
+    const fee = await client.estimateFees(Keypair.random(), 1);
+    expect(fee).toBe(4200);
+    expect(server.simulateTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not throw the cap error for opCount equal to MAX_BATCH_SIZE", async () => {
+    const { client, server } = buildClient();
+    const fee = await client.estimateFees(
+      Keypair.random(),
+      CLIENT_MAX_BATCH_SIZE
+    );
+    expect(fee).toBe(4200);
+    expect(server.simulateTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("client MAX_BATCH_SIZE is the on-chain cap (100)", () => {
+    expect(CLIENT_MAX_BATCH_SIZE).toBe(100);
   });
 });
 

@@ -16,6 +16,11 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { pollTransaction } from "../horizon";
+import {
+  MAX_ACCOUNTS_PAGE_SIZE,
+  FactoryBoundsError,
+  FactoryBoundsErrorCode,
+} from "../factory-events";
 
 export interface MuxAccountFactoryClientOptions {
   contractId: string;
@@ -33,11 +38,12 @@ export const FACTORY_MAX_DESCRIPTION_LENGTH = 256;
 export const FACTORY_MAX_AUTHOR_LENGTH = 64;
 
 /**
- * Hard maximum page size for `getAccounts`. Requests for a larger limit are
- * rejected with `InvalidBounds` rather than silently clamped, so callers can
- * never receive an unbounded result set.
+ * Hard maximum page size for `getAccounts`. Defined in {@link MAX_ACCOUNTS_PAGE_SIZE}
+ * (imported from `../factory-events`) and kept in sync with the on-chain
+ * `MAX_ACCOUNTS_PAGE_SIZE`; requests for a larger limit are rejected with
+ * `FactoryBoundsErrorCode.LimitTooLarge` rather than silently clamped, so
+ * callers can never receive an unbounded result set.
  */
-export const FACTORY_MAX_ACCOUNTS_PAGE_SIZE = 64;
 
 export type MuxAccountFactoryError =
   | "Unauthorized"
@@ -74,24 +80,52 @@ export function validateFactoryMetadata(
 }
 
 /**
- * Validates pagination bounds for `getAccounts`.
+ * Validates pagination bounds for `getAccounts` before they reach the
+ * contract, using the shared `MAX_ACCOUNTS_PAGE_SIZE` and the typed
+ * `FactoryBoundsError` from `../factory-events`.
  *
  * Fail-closed: negative offsets, non-positive limits, and limits above
- * `FACTORY_MAX_ACCOUNTS_PAGE_SIZE` all throw `InvalidBounds` instead of
- * panicking or returning an unbounded result set.
+ * `MAX_ACCOUNTS_PAGE_SIZE` all throw `FactoryBoundsError` with a stable code
+ * instead of panicking or returning an unbounded result set. No RPC call is
+ * made when bounds are invalid.
  */
 export function validateGetAccountsBounds(offset: number, limit: number): void {
   if (!Number.isInteger(offset) || offset < 0) {
-    throw new Error(`InvalidBounds: offset (${offset}) must be a non-negative integer`);
-  }
-  if (!Number.isInteger(limit) || limit <= 0) {
-    throw new Error(`InvalidBounds: limit (${limit}) must be a positive integer`);
-  }
-  if (limit > FACTORY_MAX_ACCOUNTS_PAGE_SIZE) {
-    throw new Error(
-      `InvalidBounds: limit (${limit}) exceeds maximum page size of ${FACTORY_MAX_ACCOUNTS_PAGE_SIZE}`
+    throw new FactoryBoundsError(
+      FactoryBoundsErrorCode.InvalidOffset,
+      `offset must be a non-negative integer, received ${offset}`
     );
   }
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new FactoryBoundsError(
+      FactoryBoundsErrorCode.InvalidLimit,
+      `limit must be a positive integer, received ${limit}`
+    );
+  }
+  if (limit > MAX_ACCOUNTS_PAGE_SIZE) {
+    throw new FactoryBoundsError(
+      FactoryBoundsErrorCode.LimitTooLarge,
+      `limit ${limit} exceeds maximum page size ${MAX_ACCOUNTS_PAGE_SIZE}`
+    );
+  }
+}
+
+/**
+ * Re-throws a host simulation error as a `FactoryBoundsError` when the error
+ * message indicates the contract rejected the requested bounds, so off-chain
+ * callers can branch on a stable code instead of parsing raw strings.
+ */
+function throwFactoryBoundsOnSimulationError(result: unknown): never {
+  const raw = (result as { error?: unknown }).error;
+  const message = typeof raw === "string" ? raw : String(raw?.message ?? raw ?? result);
+  const lowered = message.toLowerCase();
+  if (lowered.includes("offset")) {
+    throw new FactoryBoundsError(FactoryBoundsErrorCode.InvalidOffset, message);
+  }
+  if (lowered.includes("limit") || lowered.includes("page size")) {
+    throw new FactoryBoundsError(FactoryBoundsErrorCode.LimitTooLarge, message);
+  }
+  throw new Error(`Simulation failed: ${message}`);
 }
 
 export class MuxAccountFactoryClient {
@@ -197,14 +231,17 @@ export class MuxAccountFactoryClient {
    * Return a bounded page of accounts owned by `owner`.
    *
    * `offset` must be a non-negative integer and `limit` must be a positive
-   * integer no greater than `FACTORY_MAX_ACCOUNTS_PAGE_SIZE`. Invalid bounds
-   * throw `InvalidBounds` before any RPC call is made (fail-closed).
+   * integer no greater than `MAX_ACCOUNTS_PAGE_SIZE` (imported from
+   * `../factory-events`). Invalid bounds throw `FactoryBoundsError` with a
+   * stable code before any RPC call is made (fail-closed). When the host
+   * rejects the bounds at simulation time, the raw simulation error is
+   * rethrown as a `FactoryBoundsError` with the matching code.
    */
   async getAccounts(
     sourceKeypair: Keypair,
     owner: Address,
     offset = 0,
-    limit = FACTORY_MAX_ACCOUNTS_PAGE_SIZE
+    limit = MAX_ACCOUNTS_PAGE_SIZE
   ): Promise<Address[]> {
     validateGetAccountsBounds(offset, limit);
     const tx = await this.buildTx(sourceKeypair, "get_accounts", [
@@ -214,7 +251,7 @@ export class MuxAccountFactoryClient {
     ]);
     const result = await this.server.simulateTransaction(tx);
     if (SorobanRpc.Api.isSimulationError(result)) {
-      throw new Error(`Simulation failed: ${result.error}`);
+      throwFactoryBoundsOnSimulationError(result);
     }
     const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
     if (!retval) return [];

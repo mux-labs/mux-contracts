@@ -27,8 +27,12 @@ export type NamedContract =
   | "mux-account"
   | "mux-account-factory"
   | "mux-batcher"
+  | "mux-delegation"
   | "mux-policy"
   | "mux-permissions"
+  | "mux-recovery"
+  | "mux-registry"
+  | "mux-spending-policy"
   | "mux-wallet-registry";
 
 export function resolveContractId(
@@ -39,8 +43,12 @@ export function resolveContractId(
     "mux-account": "muxAccount",
     "mux-account-factory": "muxAccountFactory",
     "mux-batcher": "muxBatcher",
+    "mux-delegation": "muxDelegation",
     "mux-policy": "muxPolicy",
     "mux-permissions": "muxPermissions",
+    "mux-recovery": "muxRecovery",
+    "mux-registry": "muxRegistry",
+    "mux-spending-policy": "muxSpendingPolicy",
     "mux-wallet-registry": "muxWalletRegistry",
   };
 
