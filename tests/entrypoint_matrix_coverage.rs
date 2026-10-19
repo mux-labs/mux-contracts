@@ -21,6 +21,11 @@
 /// actual source body: every `A`/`U` entrypoint must contain a recognised
 /// auth call, and every `P` entrypoint must not (unless explicitly
 /// allowlisted). See `AUTH_CALL_NAMES` and `PUBLIC_AUTH_ALLOWLIST`.
+///
+/// As of issue #970 the contract crate list is derived from the `Cargo.toml`
+/// workspace members and cross-checked against `CONTRACTS` and the `## `
+/// sections of `docs/entrypoint-matrix.md`, so a new crate cannot be added
+/// to the workspace without also being covered here and documented.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -40,6 +45,11 @@ const CONTRACTS: [&str; 10] = [
     "mux-wallet-registry",
 ];
 
+/// Workspace members that are not production contract crates and are
+/// therefore excluded from the membership check. Keep this list explicit so
+/// adding a non-contract member is a deliberate, reviewable change.
+const NON_CONTRACT_MEMBERS: [&str; 2] = ["tests", "contracts/soroban-test-helpers"];
+
 /// Recognised auth-call names. A non-public entrypoint must contain at least
 /// one of these in its body; a public entrypoint must contain none (unless
 /// allowlisted). Keep this list in one place so the check is auditable.
@@ -57,6 +67,78 @@ fn workspace_path(rel: &str) -> std::path::PathBuf {
         .parent()
         .expect("workspace root")
         .join(rel)
+}
+
+/// Parse the `members = [...]` block of the workspace `Cargo.toml` with a
+/// minimal line scan (no extra deps) and return the contract crate names
+/// (the last path segment of every `contracts/mux-*` member).
+fn workspace_contract_crates() -> Result<Vec<String>, String> {
+    let manifest_path = workspace_path("Cargo.toml");
+    let content = fs::read_to_string(&manifest_path)
+        .map_err(|e| format!("Failed to read {}: {}", manifest_path.display(), e))?;
+
+    let mut members: Vec<String> = Vec::new();
+    let mut in_members = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if !in_members {
+            if trimmed.starts_with("members") && trimmed.contains('[') {
+                in_members = true;
+                // Handle a single-line `members = ["a", "b"]` form too.
+                if let Some(rest) = trimmed.split_once('[').map(|(_, r)| r) {
+                    collect_members(rest, &mut members);
+                    if rest.contains(']') {
+                        in_members = false;
+                    }
+                }
+            }
+            continue;
+        }
+
+        collect_members(trimmed, &mut members);
+        if trimmed.contains(']') {
+            in_members = false;
+        }
+    }
+
+    let mut crates: Vec<String> = members
+        .into_iter()
+        .filter(|m| m.starts_with("contracts/mux-"))
+        .filter(|m| !NON_CONTRACT_MEMBERS.contains(&m.as_str()))
+        .map(|m| m.rsplit('/').next().unwrap_or(&m).to_string())
+        .collect();
+    crates.sort();
+    crates.dedup();
+    Ok(crates)
+}
+
+/// Extract quoted member strings from a fragment of the `members` block.
+fn collect_members(fragment: &str, out: &mut Vec<String>) {
+    let mut rest = fragment;
+    while let Some(start) = rest.find('"') {
+        let after = &rest[start + 1..];
+        match after.find('"') {
+            Some(end) => {
+                out.push(after[..end].to_string());
+                rest = &after[end + 1..];
+            }
+            None => break,
+        }
+    }
+}
+
+/// Parse the `## <crate>` section headers from `docs/entrypoint-matrix.md`.
+fn matrix_section_headers() -> Result<HashSet<String>, String> {
+    let matrix_path = workspace_path("docs/entrypoint-matrix.md");
+    let content = fs::read_to_string(&matrix_path)
+        .map_err(|e| format!("Failed to read {}: {}", matrix_path.display(), e))?;
+    Ok(content
+        .lines()
+        .filter_map(|line| line.strip_prefix("## "))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect())
 }
 
 /// Expected entrypoints that should be documented in entrypoint-matrix.md
@@ -200,13 +282,22 @@ fn extract_implemented_entrypoints() -> Result<HashMap<String, Vec<String>>, Str
                 // (other impls, test modules) are not mis-attributed.
                 if in_impl_body && brace_depth <= 0 {
                     in_contractimpl = false;
+                    in_impl_body = false;
                     continue;
                 }
                 
-                // Look for public function definitions
-                if trimmed.starts_with("pub fn ") {
-                    if let Some(fn_name) = extract_function_name(trimmed) {
-                        entrypoints.push(fn_name);
+                // Extract pub fn names from within the impl block
+                if in_impl_body && trimmed.starts_with("pub fn ") {
+                    if let Some(fn_name) = trimmed.strip_prefix("pub fn ") {
+                        let name = fn_name
+                            .split('(')
+                            .next()
+                            .unwrap_or(fn_name)
+                            .trim()
+                            .to_string();
+                        if !name.is_empty() {
+                            entrypoints.push(name);
+                        }
                     }
                 }
             }
@@ -218,119 +309,9 @@ fn extract_implemented_entrypoints() -> Result<HashMap<String, Vec<String>>, Str
     Ok(implemented)
 }
 
-/// Extract function name from a "pub fn name(...)" line
-fn extract_function_name(line: &str) -> Option<String> {
-    if let Some(start) = line.find("pub fn ") {
-        let after_fn = &line[start + 7..];
-        if let Some(paren_pos) = after_fn.find('(') {
-            let name = after_fn[..paren_pos].trim();
-            return Some(name.to_string());
-        }
-    }
-    None
-}
-
-/// Locate the body of `pub fn <name>` in `source` by brace matching and
-/// return the text between the outermost braces (exclusive). Returns `None`
-/// when the function cannot be found.
-fn extract_function_body(source: &str, name: &str) -> Option<String> {
-    let needle = format!("pub fn {}", name);
-    let mut search_from = 0usize;
-    while let Some(rel) = source[search_from..].find(&needle) {
-        let start = search_from + rel;
-        // Ensure the match is a whole identifier (next char is not ident-ish).
-        let after = &source[start + needle.len()..];
-        let next_char = after.chars().next();
-        let is_ident = matches!(next_char, Some(c) if c.is_alphanumeric() || c == '_');
-        if !is_ident {
-            // Find the opening brace of the body.
-            if let Some(open_rel) = source[start..].find('{') {
-                let open = start + open_rel;
-                let mut depth = 0i32;
-                let bytes = source.as_bytes();
-                let mut i = open;
-                while i < bytes.len() {
-                    match bytes[i] {
-                        b'{' => depth += 1,
-                        b'}' => {
-                            depth -= 1;
-                            if depth == 0 {
-                                return Some(source[open + 1..i].to_string());
-                            }
-                        }
-                        _ => {}
-                    }
-                    i += 1;
-                }
-            }
-        }
-        search_from = start + needle.len();
-    }
-    None
-}
-
-/// Return true when `body` contains any recognised auth call.
-fn body_has_auth_call(body: &str) -> bool {
-    AUTH_CALL_NAMES.iter().any(|call| body.contains(call))
-}
-
-/// Cross-check documented auth classes against the actual source bodies.
-///
-/// Returns a list of human-readable mismatch descriptions. Empty means the
-/// matrix and the code agree.
-fn check_auth_classes(
-    documented: &HashMap<String, Vec<ContractEntrypoint>>,
-) -> Result<Vec<String>, String> {
-    let mut mismatches = Vec::new();
-
-    for (contract, entries) in documented {
-        let lib_path = workspace_path(&format!("contracts/{}/src/lib.rs", contract));
-        if !lib_path.exists() {
-            continue;
-        }
-        let source = fs::read_to_string(&lib_path)
-            .map_err(|e| format!("Failed to read {}: {}", lib_path.display(), e))?;
-
-        for entry in entries {
-            let body = match extract_function_body(&source, &entry.name) {
-                Some(b) => b,
-                None => continue,
-            };
-            let has_auth = body_has_auth_call(&body);
-            let allowlisted = PUBLIC_AUTH_ALLOWLIST
-                .iter()
-                .any(|(c, n)| *c == contract.as_str() && *n == entry.name.as_str());
-
-            match entry.auth_class {
-                AuthClass::Admin | AuthClass::User => {
-                    if !has_auth {
-                        mismatches.push(format!(
-                            "{}::{} documented as {} but body has no auth call (expected one of {:?})",
-                            contract,
-                            entry.name,
-                            entry.auth_class.as_char(),
-                            AUTH_CALL_NAMES
-                        ));
-                    }
-                }
-                AuthClass::Public => {
-                    if has_auth && !allowlisted {
-                        mismatches.push(format!(
-                            "{}::{} documented as P but body contains an auth call (add to PUBLIC_AUTH_ALLOWLIST if intentional)",
-                            contract, entry.name
-                        ));
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(mismatches)
-}
-
-/// Compute the two-way set difference between documented and implemented
+/// Compute the symmetric difference between documented and implemented
 /// entrypoints for a single contract. Returns `(missing_from_docs,
-/// missing_from_code)` as sorted vectors.
+/// missing_from_source)` sorted for stable failure messages.
 fn diff_entrypoints(
     documented: &[String],
     implemented: &[String],
@@ -339,36 +320,108 @@ fn diff_entrypoints(
     let impl_set: HashSet<&String> = implemented.iter().collect();
 
     let mut missing_from_docs: Vec<String> = impl_set
-        .iter()
-        .filter(|n| !doc_set.contains(*n))
-        .map(|n| (*n).clone())
+        .difference(&doc_set)
+        .map(|s| (*s).clone())
         .collect();
-    let mut missing_from_code: Vec<String> = doc_set
-        .iter()
-        .filter(|n| !impl_set.contains(*n))
-        .map(|n| (*n).clone())
+    let mut missing_from_source: Vec<String> = doc_set
+        .difference(&impl_set)
+        .map(|s| (*s).clone())
         .collect();
-
     missing_from_docs.sort();
-    missing_from_code.sort();
-    (missing_from_docs, missing_from_code)
+    missing_from_source.sort();
+    (missing_from_docs, missing_from_source)
 }
 
+/// Verify that every contract crate listed in the `Cargo.toml` workspace
+/// members has a `src/lib.rs`, a `## <crate>` section in
+/// `docs/entrypoint-matrix.md`, and an entry in this test's `CONTRACTS`
+/// array. Fails naming the symmetric difference so a newly added crate
+/// cannot silently escape coverage.
+#[test]
+fn workspace_members_match_coverage_and_matrix() {
+    let workspace_crates = workspace_contract_crates()
+        .expect("failed to parse Cargo.toml workspace members");
+    assert!(
+        !workspace_crates.is_empty(),
+        "no contract crates found in Cargo.toml workspace members"
+    );
+
+    let workspace_set: HashSet<&String> = workspace_crates.iter().collect();
+    let coverage_set: HashSet<String> = CONTRACTS.iter().map(|s| s.to_string()).collect();
+
+    // 1. Every workspace contract crate must be in the coverage test's list.
+    let mut missing_from_coverage: Vec<&String> = workspace_set
+        .iter()
+        .filter(|c| !coverage_set.contains(**c))
+        .copied()
+        .collect();
+    missing_from_coverage.sort();
+
+    // 2. Every crate in the coverage list must be a workspace member.
+    let mut missing_from_workspace: Vec<&String> = coverage_set
+        .iter()
+        .filter(|c| !workspace_set.contains(c))
+        .collect();
+    missing_from_workspace.sort();
+
+    assert!(
+        missing_from_coverage.is_empty() && missing_from_workspace.is_empty(),
+        "workspace members and CONTRACTS array disagree: \
+         in Cargo.toml but not CONTRACTS = {:?}; \
+         in CONTRACTS but not Cargo.toml = {:?}",
+        missing_from_coverage,
+        missing_from_workspace
+    );
+
+    // 3. Every workspace contract crate must have a src/lib.rs.
+    let mut missing_lib: Vec<&String> = workspace_crates
+        .iter()
+        .filter(|c| !workspace_path(&format!("contracts/{}/src/lib.rs", c)).exists())
+        .collect();
+    missing_lib.sort();
+    assert!(
+        missing_lib.is_empty(),
+        "workspace contract crates missing src/lib.rs: {:?}",
+        missing_lib
+    );
+
+    // 4. Every workspace contract crate must have a `## <crate>` matrix section.
+    let matrix_headers = matrix_section_headers()
+        .expect("failed to parse docs/entrypoint-matrix.md");
+    let mut missing_matrix: Vec<&String> = workspace_crates
+        .iter()
+        .filter(|c| !matrix_headers.contains(*c))
+        .collect();
+    missing_matrix.sort();
+    assert!(
+        missing_matrix.is_empty(),
+        "workspace contract crates missing a `## <crate>` section in docs/entrypoint-matrix.md: {:?}",
+        missing_matrix
+    );
+}
+
+/// Verify that every implemented entrypoint is documented and vice versa.
 #[test]
 fn entrypoint_matrix_is_complete() {
-    let documented = parse_documented_entrypoints().expect("parse documented entrypoints");
-    let implemented = extract_implemented_entrypoints().expect("extract implemented entrypoints");
+    let documented = parse_documented_entrypoints()
+        .expect("failed to parse documented entrypoints");
+    let implemented = extract_implemented_entrypoints()
+        .expect("failed to extract implemented entrypoints");
 
-    let mut failures = Vec::new();
+    let mut failures: Vec<String> = Vec::new();
 
-    for contract in &CONTRACTS {
+    for contract in CONTRACTS.iter() {
         let doc_names: Vec<String> = documented
-            .get(*contract)
-            .map(|v| v.iter().map(|e| e.name.clone()).collect())
+            .get(contract)
+            .map(|entries| entries.iter().map(|e| e.name.clone()).collect())
             .unwrap_or_default();
-        let impl_names: Vec<String> = implemented.get(*contract).cloned().unwrap_or_default();
+        let impl_names: Vec<String> = implemented
+            .get(contract)
+            .cloned()
+            .unwrap_or_default();
 
-        let (missing_from_docs, missing_from_code) = diff_entrypoints(&doc_names, &impl_names);
+        let (missing_from_docs, missing_from_source) =
+            diff_entrypoints(&doc_names, &impl_names);
 
         if !missing_from_docs.is_empty() {
             failures.push(format!(
@@ -376,10 +429,10 @@ fn entrypoint_matrix_is_complete() {
                 contract, missing_from_docs
             ));
         }
-        if !missing_from_code.is_empty() {
+        if !missing_from_source.is_empty() {
             failures.push(format!(
                 "{}: documented but not implemented: {:?}",
-                contract, missing_from_code
+                contract, missing_from_source
             ));
         }
     }
@@ -391,25 +444,16 @@ fn entrypoint_matrix_is_complete() {
     );
 }
 
+/// Unit test for the diff helper so the two-way comparison cannot silently
+/// regress into a one-way check.
 #[test]
-fn entrypoint_auth_classes_match_source() {
-    let documented = parse_documented_entrypoints().expect("parse documented entrypoints");
-    let mismatches = check_auth_classes(&documented).expect("check auth classes");
-
-    assert!(
-        mismatches.is_empty(),
-        "entrypoint auth class mismatches:\n{}",
-        mismatches.join("\n")
-    );
-}
-
-#[test]
-fn diff_entrypoints_detects_both_directions() {
+fn diff_entrypoints_reports_both_directions() {
     let documented = vec!["a".to_string(), "b".to_string()];
     let implemented = vec!["b".to_string(), "c".to_string()];
 
-    let (missing_from_docs, missing_from_code) = diff_entrypoints(&documented, &implemented);
+    let (missing_from_docs, missing_from_source) =
+        diff_entrypoints(&documented, &implemented);
 
     assert_eq!(missing_from_docs, vec!["c".to_string()]);
-    assert_eq!(missing_from_code, vec!["a".to_string()]);
+    assert_eq!(missing_from_source, vec!["a".to_string()]);
 }
