@@ -34,8 +34,9 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import { fileURLToPath } from "node:url";
 
-const REPO_ROOT = path.resolve(__dirname, "..");
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ADDRESSES_JSON = path.join(REPO_ROOT, "config", "addresses.json");
 const ADDRESSES_CONFIG_TS = path.join(
   REPO_ROOT,
@@ -86,6 +87,37 @@ function parseArgs(argv: string[]): { dryRun: boolean } {
     }
   }
   return { dryRun };
+}
+
+// ── Validation ─────────────────────────────────────────────────────────────────
+
+// Fail-closed: the generator refuses to emit an addresses block when a required
+// network is missing or malformed, or when any contract address is empty. This
+// mirrors the repo's fail-closed stance for address lookups downstream.
+//
+// Throws (rather than exiting) so the check is unit-testable; `main()` turns
+// the throw into a `die()` call with a non-zero exit.
+export function validateAddresses(data: AddressesJson): void {
+  const requiredNetworks = ["localnet", "testnet", "mainnet"] as const;
+
+  for (const network of requiredNetworks) {
+    const value = data[network];
+
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw new Error(
+        `Missing or invalid network '${network}' in addresses.json: expected an object of contract addresses`,
+      );
+    }
+
+    const book = value as AddressBook;
+    for (const [key, val] of Object.entries(book)) {
+      if (typeof val !== "string" || val.trim().length === 0) {
+        throw new Error(
+          `Missing or empty address for contract '${key}' on network '${network}' in addresses.json`,
+        );
+      }
+    }
+  }
 }
 
 /** Format a single network's address map as TypeScript source. */
@@ -159,6 +191,16 @@ function main(): void {
     die(`Failed to parse addresses.json: ${String(err)}`);
   }
 
+  // Fail-closed validation: abort before generating any output when a required
+  // network is missing/malformed or any contract address is empty. This runs
+  // for both write and --dry-run modes so dry-run reports the same error
+  // without writing.
+  try {
+    validateAddresses(data);
+  } catch (err) {
+    die(String(err));
+  }
+
   const block = buildBlock(data);
 
   if (dryRun) {
@@ -187,4 +229,8 @@ function main(): void {
   );
 }
 
-main();
+// Only run the CLI entry point when executed directly, not when imported as a
+// module (e.g. by unit tests).
+if (import.meta.main) {
+  main();
+}

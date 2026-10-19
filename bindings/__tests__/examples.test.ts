@@ -35,12 +35,22 @@ describe("frontend-usage example module", () => {
     expect(typeof frontendUsage.REACT_HOOK_EXAMPLE).toBe("string");
   });
 
-  it("bootstrapNetwork throws when addresses are not configured", () => {
-    // Default addresses are empty strings; validation should reject them.
+  it("bootstrapNetwork throws when mainnet addresses are not review-approved", () => {
+    // Mainnet resolution is fail-closed: without the review marker,
+    // bootstrapNetwork must throw instead of returning unreviewed addresses.
     const originalNetwork = process.env.SOROBAN_NETWORK;
-    process.env.SOROBAN_NETWORK = "testnet";
-    expect(() => frontendUsage.bootstrapNetwork()).toThrow();
+    const originalReview = process.env.MAINNET_ADDRESS_REVIEW_APPROVED;
+    process.env.SOROBAN_NETWORK = "mainnet";
+    delete process.env.MAINNET_ADDRESS_REVIEW_APPROVED;
+    expect(() => frontendUsage.bootstrapNetwork()).toThrow(
+      /Mainnet address change requires review approval/
+    );
     process.env.SOROBAN_NETWORK = originalNetwork;
+    if (originalReview === undefined) {
+      delete process.env.MAINNET_ADDRESS_REVIEW_APPROVED;
+    } else {
+      process.env.MAINNET_ADDRESS_REVIEW_APPROVED = originalReview;
+    }
   });
 
   it("includes the wallet registry invoke example file", () => {

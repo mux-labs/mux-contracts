@@ -42,6 +42,31 @@ const PASSPHRASES: Record<string, string> = {
   mainnet: Networks.PUBLIC,
 };
 
+/**
+ * Validate that an environment variable holds a well-formed contract StrKey
+ * (C...).  `Address.fromString` throws on malformed input, so we wrap it and
+ * exit with the example's own `console.error` + `process.exit(1)` pattern.
+ */
+function assertContractId(name: string, value: string | undefined): string {
+  if (!value) {
+    console.error(`${name} is required`);
+    process.exit(1);
+  }
+  try {
+    const address = Address.fromString(value);
+    // Contract IDs must be contract StrKey (`C...`), not account addresses (`G...`).
+    if (!value.startsWith("C")) {
+      throw new Error(`${value} is not a contract address`);
+    }
+    return address.toString();
+  } catch {
+    console.error(
+      `Invalid ${name}: ${value} is not a valid contract address (C... StrKey)`,
+    );
+    process.exit(1);
+  }
+}
+
 if (!SECRET_KEY) {
   console.error("SECRET_KEY is required");
   process.exit(1);
@@ -61,6 +86,12 @@ if (!networkPassphrase) {
   process.exit(1);
 }
 
+// Fail fast on malformed contract IDs before building the client or any
+// Address, so a typo in an env var yields a clear error instead of a raw
+// SDK stack trace.
+const BATCHER = assertContractId("BATCHER_CONTRACT_ID", BATCHER_CONTRACT_ID);
+const TARGET = assertContractId("TARGET_CONTRACT_ID", TARGET_CONTRACT_ID);
+
 // ── Setup ────────────────────────────────────────────────────────────────────
 
 const signer = Keypair.fromSecret(SECRET_KEY);
@@ -68,12 +99,12 @@ const callerAddress = Address.fromString(signer.publicKey());
 
 console.log(`Network:          ${NETWORK}`);
 console.log(`RPC URL:          ${RPC_URL}`);
-console.log(`Batcher contract: ${BATCHER_CONTRACT_ID}`);
-console.log(`Target contract:  ${TARGET_CONTRACT_ID}`);
+console.log(`Batcher contract: ${BATCHER}`);
+console.log(`Target contract:  ${TARGET}`);
 console.log(`Caller:           ${signer.publicKey()}`);
 
 const client = new MuxBatcherClient({
-  contractId: BATCHER_CONTRACT_ID,
+  contractId: BATCHER,
   networkPassphrase,
   rpcUrl: RPC_URL,
 });
@@ -82,14 +113,14 @@ const client = new MuxBatcherClient({
 
 const operations: Operation[] = [
   {
-    target: Address.fromString(TARGET_CONTRACT_ID),
+    target: Address.fromString(TARGET),
     fnName: "owner",
     args: [],
     requireSuccess: false,
     kind: "Invoke",
   },
   {
-    target: Address.fromString(TARGET_CONTRACT_ID),
+    target: Address.fromString(TARGET),
     fnName: "max_batch_size",
     args: [],
     requireSuccess: false,

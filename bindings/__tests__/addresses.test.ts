@@ -4,8 +4,21 @@ import {
   getValidatedAddresses,
 } from "../src/addresses";
 import { DEFAULT_ADDRESSES } from "../src/addresses-config";
+import { validateAddresses as validateGeneratorAddresses } from "../../scripts/generate-addresses";
 
 describe("Contract Address Configuration", () => {
+  // Mainnet address resolution is fail-closed: it requires the mainnet PR
+  // review marker (`MAINNET_ADDRESS_REVIEW_APPROVED=true`). Approve it here
+  // so tests that resolve mainnet addresses exercise the loader/validation
+  // logic instead of being rejected by the review gate.
+  beforeAll(() => {
+    process.env.MAINNET_ADDRESS_REVIEW_APPROVED = "true";
+  });
+
+  afterAll(() => {
+    delete process.env.MAINNET_ADDRESS_REVIEW_APPROVED;
+  });
+
   describe("loadContractAddresses", () => {
     it("loads addresses for localnet from config", () => {
       const addresses = loadContractAddresses("localnet", DEFAULT_ADDRESSES);
@@ -171,8 +184,22 @@ describe("Contract Address Configuration", () => {
     });
 
     it("throws if validation fails", () => {
+      // testnet is not mainnet, so the mainnet review gate is skipped and the
+      // missing-address check runs. DEFAULT_ADDRESSES now carries non-empty
+      // placeholders, so assert against an explicitly incomplete testnet book.
+      const incomplete = {
+        localnet: DEFAULT_ADDRESSES.localnet,
+        testnet: {
+          muxAccount: "",
+          muxBatcher: "",
+          muxDelegation: "",
+          muxPermissions: "",
+          muxWalletRegistry: "",
+        },
+        mainnet: DEFAULT_ADDRESSES.mainnet,
+      };
       expect(() => {
-        getValidatedAddresses("mainnet", DEFAULT_ADDRESSES);
+        getValidatedAddresses("testnet", incomplete);
       }).toThrow("Missing contract addresses");
     });
   });
@@ -192,6 +219,45 @@ describe("Contract Address Configuration", () => {
         expect(networkAddresses).toHaveProperty("muxPermissions");
         expect(networkAddresses).toHaveProperty("muxWalletRegistry");
       });
+    });
+  });
+
+  describe("scripts/generate-addresses fail-closed validation", () => {
+    const fullBook = {
+      muxAccount: "CAcc1",
+      muxBatcher: "CB1",
+      muxDelegation: "CD1",
+      muxPermissions: "CP1",
+      muxWalletRegistry: "CW1",
+    };
+
+    it("throws when a required network is missing", () => {
+      const data: any = {
+        localnet: fullBook,
+        // testnet intentionally absent
+        mainnet: fullBook,
+      };
+      expect(() => validateGeneratorAddresses(data)).toThrow("testnet");
+    });
+
+    it("throws when a network is present but not an object", () => {
+      const data: any = {
+        localnet: fullBook,
+        testnet: null,
+        mainnet: fullBook,
+      };
+      expect(() => validateGeneratorAddresses(data)).toThrow("testnet");
+    });
+
+    it("throws when a contract address is empty", () => {
+      const data: any = {
+        localnet: fullBook,
+        testnet: { ...fullBook, muxAccount: "" },
+        mainnet: fullBook,
+      };
+      const fn = () => validateGeneratorAddresses(data);
+      expect(fn).toThrow("testnet");
+      expect(fn).toThrow("muxAccount");
     });
   });
 });
