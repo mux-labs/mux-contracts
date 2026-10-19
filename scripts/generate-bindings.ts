@@ -50,12 +50,15 @@ const ALL_CONTRACTS = [
   "mux-wallet-registry",
 ] as const;
 
+const SUPPORTED_NETWORKS = ["testnet", "mainnet", "localnet"] as const;
+
 type ContractName = (typeof ALL_CONTRACTS)[number];
+type NetworkName = (typeof SUPPORTED_NETWORKS)[number];
 
 // ── CLI argument parsing ──────────────────────────────────────────────────────
 
 interface Options {
-  network: string;
+  network: NetworkName;
   skipBuild: boolean;
   contract: ContractName | null;
   dryRun: boolean;
@@ -73,7 +76,15 @@ function parseArgs(argv: string[]): Options {
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
       case "--network":
-        opts.network = args[++i] ?? die("--network requires a value");
+        {
+          const network = args[++i] ?? die("--network requires a value");
+          if (!(SUPPORTED_NETWORKS as readonly string[]).includes(network)) {
+            die(
+              `Unknown network: ${network}. Valid: ${SUPPORTED_NETWORKS.join(", ")}`,
+            );
+          }
+          opts.network = network as NetworkName;
+        }
         break;
       case "--skip-build":
         opts.skipBuild = true;
