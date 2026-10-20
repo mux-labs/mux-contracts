@@ -8,9 +8,11 @@ skip require_auth calls.
 
 Function bodies are delimited with a brace-matching scanner (not a regex),
 so nested blocks, `match` arms, and braces inside strings/comments cannot
-mis-delimit a `pub fn` body (issue #927). Comments and string literals are
-masked before analysis, so `pub fn` mentions in docs and `require_auth`
-messages are not mistaken for code.
+mis-delimit a `pub fn` body (issue #927). Session-key entrypoints are
+validated per-function (issue #929): each `execute_with_session*` /
+`register_session_key` / `revoke_session_key` / `is_session_key_valid`
+body is checked for its own auth call and empty-scope guard, so a guard
+string living elsewhere in the file cannot mask a missing one.
 
 Usage: python scripts/validate_auth_patterns.py
 """
@@ -204,7 +206,31 @@ def iter_pub_fns(content: str) -> Iterator[Tuple[str, str]]:
         yield name, body
 
 
+# ── Session-key entrypoint policy (issue #929) ────────────────────────────────
+
+# name -> (auth required in own body, empty-scope guard required in own body).
+#
+# An empty-scope guard counts when the body checks `scopes.is_empty()`
+# directly OR delegates to `authorize_session`, the helper that enforces it
+# (T-40). `register_session_key` / `revoke_session_key` are owner/admin
+# gated; `is_session_key_valid` is intentionally a public read.
+SESSION_ENTRYPOINT_POLICY: Dict[str, Tuple[bool, bool]] = {
+    "execute_with_session": (True, True),
+    "execute_with_session_sponsored": (True, True),
+    "register_session_key": (True, False),
+    "revoke_session_key": (True, False),
+    "is_session_key_valid": (False, False),
+}
+
 _AUTH_CALL_MARKERS = ("require_auth(", "require_owner(", "require_admin(")
+
+
+def _body_has_auth(body: str) -> bool:
+    return any(marker in body for marker in _AUTH_CALL_MARKERS)
+
+
+def _body_has_scope_guard(body: str) -> bool:
+    return "scopes.is_empty()" in body or "authorize_session" in body
 
 
 def find_contract_files() -> List[Path]:
@@ -280,6 +306,42 @@ def validate_session_key_patterns(file_path: Path) -> Dict[str, object]:
         if 'session_key.require_auth()' in content:
             results['session_auth_required'] = True
 
+    # Per-entrypoint body checks (issue #929): a guard string elsewhere in
+    # the file cannot mask a missing guard in the specific session fn.
+    entrypoint_lines: List[str] = results['entrypoint_lines']  # type: ignore[assignment]
+    violations: List[str] = results['violations']  # type: ignore[assignment]
+
+    for func_name, body in iter_pub_fns(content):
+        if func_name not in SESSION_ENTRYPOINT_POLICY:
+            continue
+        need_auth, need_scope = SESSION_ENTRYPOINT_POLICY[func_name]
+
+        has_auth = _body_has_auth(body)
+        has_scope = _body_has_scope_guard(body)
+
+        if need_auth:
+            auth_state = "ok" if has_auth else "MISSING"
+        else:
+            auth_state = "not-required"
+
+        if need_scope:
+            scope_state = "ok" if has_scope else "MISSING"
+        else:
+            scope_state = "not-required"
+
+        entrypoint_lines.append(
+            f"session {func_name}: auth={auth_state} scope_guard={scope_state}"
+        )
+
+        if need_auth and not has_auth:
+            violations.append(
+                f"Session entrypoint {func_name} is missing a require_auth call"
+            )
+        if need_scope and not has_scope:
+            violations.append(
+                f"Session entrypoint {func_name} is missing an empty-scope guard"
+            )
+
     return results
 
 
@@ -323,6 +385,7 @@ def main():
     contract_files = find_contract_files()
 
     total_issues = 0
+    total_session_violations = 0
     all_results = {}
 
     for file_path in contract_files:
@@ -353,6 +416,10 @@ def main():
         if session_results['has_session_keys'] and not session_results['fail_closed_validation']:
             issues.append("❌ Session keys without fail-closed validation")
 
+        for violation in session_results['violations']:  # type: ignore[union-attr]
+            issues.append(f"❌ {violation}")
+        total_session_violations += len(session_results['violations'])  # type: ignore[arg-type]
+
         if admin_results['admin_functions']:
             auth_ok = len(admin_results['auth_before_mutation'])
             total_admin = len(admin_results['admin_functions'])
@@ -369,10 +436,13 @@ def main():
         # Informational listings (not issues).
         public = auth_results['public_entrypoints']
         print(f"  public_entrypoints: {', '.join(public) if public else '(none)'}")
+        for line in session_results['entrypoint_lines']:  # type: ignore[union-attr]
+            print(f"  {line}")
 
     print(f"\n📊 Summary:")
     print(f"   Contracts analyzed: {len(contract_files)}")
     print(f"   Issues found: {total_issues}")
+    print(f"   Session entrypoint violations: {total_session_violations}")
 
     # Specific validations for known implementations
     print(f"\n🎯 Known Security Implementations:")
