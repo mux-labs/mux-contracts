@@ -125,5 +125,28 @@ export function assertSameNetwork(
     );
   }
 
+  // (#989) The passphrase alone only proves the two configs target the same
+  // chain — it says nothing about *which* contracts are being invoked on
+  // that chain. A stale/misconfigured address for the same network would
+  // pass the check above while silently pointing at the wrong contract, so
+  // also require every resolved contract id to match between the target and
+  // configured network config.
+  const contractKeys = new Set<string>([
+    ...Object.keys(target.contracts),
+    ...Object.keys(configured.contracts),
+  ]);
+  for (const key of contractKeys) {
+    const targetId = (target.contracts as Record<string, string | undefined>)[key];
+    const configuredId = (configured.contracts as Record<string, string | undefined>)[key];
+    if (targetId !== configuredId) {
+      throw new MuxError(
+        MuxErrorCode.CROSS_NETWORK_BLOCKED,
+        `Cross-network invoke blocked: resolved contract "${key}" differs between ` +
+          `target "${targetNetwork}" (${targetId ?? "<unset>"}) and configured ` +
+          `"${configuredNetwork}" (${configuredId ?? "<unset>"})`
+      );
+    }
+  }
+
   return target;
 }
