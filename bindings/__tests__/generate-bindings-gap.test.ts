@@ -23,16 +23,30 @@ import * as path from 'path';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 
+/**
+ * Read a file relative to the repo root, failing with a clear, actionable
+ * error message rather than letting a bare ENOENT from fs.readFileSync
+ * bubble up when the file has moved or been renamed (#1006).
+ */
+function readRepoFile(relPath: string): string {
+  const fullPath = path.join(REPO_ROOT, relPath);
+  if (!fs.existsSync(fullPath)) {
+    throw new Error(
+      `generate-bindings-gap.test.ts: expected file not found at "${relPath}" ` +
+        `(resolved to ${fullPath}). The file may have moved or been renamed — ` +
+        `update the path in this test.`
+    );
+  }
+  return fs.readFileSync(fullPath, 'utf8');
+}
+
 // ---------------------------------------------------------------------------
 // Gap 1: generate-bindings.sh must fail on missing WASM, not silently skip
 // ---------------------------------------------------------------------------
 
 describe('generate-bindings.sh — fail-closed WASM check (#630 #627)', () => {
   it('generate-bindings.sh should exit non-zero when a WASM is missing', () => {
-    const script = fs.readFileSync(
-      path.join(REPO_ROOT, 'scripts/generate-bindings.sh'),
-      'utf8'
-    );
+    const script = readRepoFile('scripts/generate-bindings.sh');
 
     // The current script has: echo "[WARN] WASM not found... skipping"
     // It should instead: echo "[ERROR] WASM not found..." >&2 && exit 1
@@ -46,10 +60,7 @@ describe('generate-bindings.sh — fail-closed WASM check (#630 #627)', () => {
   });
 
   it('generate-bindings.sh should not use silent continue on missing WASM', () => {
-    const script = fs.readFileSync(
-      path.join(REPO_ROOT, 'scripts/generate-bindings.sh'),
-      'utf8'
-    );
+    const script = readRepoFile('scripts/generate-bindings.sh');
 
     // Currently the script has a WARN + continue pattern — this should be removed
     // This FAILS because the WARN+continue pattern currently exists
@@ -63,10 +74,7 @@ describe('generate-bindings.sh — fail-closed WASM check (#630 #627)', () => {
 
 describe('ci.yml bindings job — contract count assertion (#628)', () => {
   it('ci.yml bindings job should include a step that asserts all expected contracts are generated', () => {
-    const ciYaml = fs.readFileSync(
-      path.join(REPO_ROOT, '.github/workflows/ci.yml'),
-      'utf8'
-    );
+    const ciYaml = readRepoFile('.github/workflows/ci.yml');
 
     // Expect a step like: "Assert all expected contracts generated"
     // or a command that checks the generated directory for all contract names
@@ -86,10 +94,7 @@ describe('ci.yml bindings job — contract count assertion (#628)', () => {
 
 describe('fail-closed auth — mux-batcher require_auth not silently skipped (#626)', () => {
   it('access-control-checklist.md documents batcher upgrade as fail-closed (NotInitialized)', () => {
-    const checklist = fs.readFileSync(
-      path.join(REPO_ROOT, 'docs/access-control-checklist.md'),
-      'utf8'
-    );
+    const checklist = readRepoFile('docs/access-control-checklist.md');
 
     // The checklist should have a passing mark [x] for batcher upgrade fail-closed
     // This checks that the checklist item is marked Pass (not Fail/open)
@@ -102,10 +107,7 @@ describe('fail-closed auth — mux-batcher require_auth not silently skipped (#6
   });
 
   it('access-control-checklist.md documents execute_batch as fail-closed with auth', () => {
-    const checklist = fs.readFileSync(
-      path.join(REPO_ROOT, 'docs/access-control-checklist.md'),
-      'utf8'
-    );
+    const checklist = readRepoFile('docs/access-control-checklist.md');
 
     // execute_batch should be marked [x] Pass in the checklist
     // Currently all checkboxes are [ ] (open), so this FAILS
@@ -113,5 +115,22 @@ describe('fail-closed auth — mux-batcher require_auth not silently skipped (#6
       checklist.match(/\[x\].*execute_batch.*require_auth|\[x\].*bat_start/i) !== null;
 
     expect(executeBatchPass).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Missing-path guard (#1006): a moved/renamed repo file must fail with a
+// clear, actionable error message instead of a bare ENOENT throw.
+// ---------------------------------------------------------------------------
+
+describe('readRepoFile — missing-path guard (#1006)', () => {
+  it('throws a clear, actionable error when the file does not exist', () => {
+    expect(() => readRepoFile('scripts/does-not-exist.sh')).toThrow(
+      /expected file not found at "scripts\/does-not-exist\.sh"/
+    );
+  });
+
+  it('reads the file normally when the path exists', () => {
+    expect(() => readRepoFile('scripts/generate-bindings.sh')).not.toThrow();
   });
 });
