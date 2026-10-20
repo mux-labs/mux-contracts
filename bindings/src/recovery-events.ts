@@ -48,6 +48,8 @@ export const RECOVERY_EVENT_TOPICS = {
   rec_exec: "rec_exec",
   /** Emitted by `approve_recovery_admin`. */
   rec_adm: "rec_adm",
+  /** Emitted by `approve_recovery`. */
+  rec_appr: "rec_appr",
   /** Emitted by `cancel_recovery`. */
   rec_cncl: "rec_cncl",
   /** Emitted by `add_guardian`. */
