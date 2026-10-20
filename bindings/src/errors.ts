@@ -330,6 +330,7 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   LimitNotFound: 404,         // (4)  no daily limit configured for the wallet
   LimitExceeded: 400,         // (5)  spend would exceed the daily limit
   TooManyWallets: 409,        // (8)  wallet cap (256) reached
+  RegistryNotFound: 404,      // (9)  linked registry contract unreachable
 
   // ── MuxRecovery ─────────────────────────────────────────────────────────────
   RecoveryAlreadyPending: 409, // (4)  recovery request already pending
@@ -340,6 +341,9 @@ export const ERROR_HTTP_MAP: Record<string, number> = {
   GuardianNotFound: 404,       // (9)  address is not a registered guardian
   MinGuardiansRequired: 400,   // (10) cannot remove the last guardian
   RecoveryExpired: 400,        // (11) recovery execution window has elapsed
+  QuorumNotReached: 403,       // (12) insufficient guardian approvals collected
+  DuplicateApproval: 409,      // (13) guardian already approved this recovery
+  InvalidQuorumThreshold: 400, // (14) threshold out of valid range
 
   // ── MuxRegistry ─────────────────────────────────────────────────────────────
   ContractNotFound: 404,      // (4)  no contract registered under the given name
