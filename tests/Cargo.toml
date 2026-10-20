@@ -58,3 +58,7 @@ path = "expiry_naming.rs"
 [[test]]
 name = "test_helpers_isolation"
 path = "test_helpers_isolation.rs"
+
+[[test]]
+name = "error_codes_coverage"
+path = "error_codes_coverage.rs"
