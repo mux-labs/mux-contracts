@@ -20,8 +20,10 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
+const GENERATE_BINDINGS_SCRIPT = path.join(REPO_ROOT, 'scripts/generate-bindings.sh');
 
 /**
  * Read a file relative to the repo root, failing with a clear, actionable
@@ -45,26 +47,38 @@ function readRepoFile(relPath: string): string {
 // ---------------------------------------------------------------------------
 
 describe('generate-bindings.sh — fail-closed WASM check (#630 #627)', () => {
-  it('generate-bindings.sh should exit non-zero when a WASM is missing', () => {
-    const script = readRepoFile('scripts/generate-bindings.sh');
+  /**
+   * Actually run the generator with --skip-build against the real repo
+   * layout. No cargo build has produced any WASM artifacts in this test
+   * environment, so the very first contract lookup is guaranteed to miss —
+   * exercising the real fail-closed path end to end instead of grepping the
+   * script's source text for expected strings (#1005).
+   */
+  function runGenerator() {
+    return spawnSync('bash', [GENERATE_BINDINGS_SCRIPT, '--skip-build'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    });
+  }
 
-    // The current script has: echo "[WARN] WASM not found... skipping"
-    // It should instead: echo "[ERROR] WASM not found..." >&2 && exit 1
-    // This FAILS because the script currently continues on missing WASM
-    const hasFailClosedMissingWasm =
-      script.includes('exit 1') &&
-      !script.includes('[WARN] WASM not found') &&
-      script.includes('[ERROR]');
-
-    expect(hasFailClosedMissingWasm).toBe(true);
+  it('exits non-zero when a WASM is missing', () => {
+    const result = runGenerator();
+    expect(result.status).not.toBe(0);
   });
 
-  it('generate-bindings.sh should not use silent continue on missing WASM', () => {
-    const script = readRepoFile('scripts/generate-bindings.sh');
+  it('reports the failure on stderr with an [ERROR] marker, not a silent [WARN]+continue', () => {
+    const result = runGenerator();
+    expect(result.stderr).toContain('[ERROR]');
+    expect(result.stderr).not.toContain('[WARN] WASM not found');
+    expect(result.stdout).not.toContain('[WARN] WASM not found');
+  });
 
-    // Currently the script has a WARN + continue pattern — this should be removed
-    // This FAILS because the WARN+continue pattern currently exists
-    expect(script).not.toContain('[WARN] WASM not found');
+  it('names the missing contract and the expected WASM path in its error output', () => {
+    const result = runGenerator();
+    // The script iterates contracts in declared order, so the first missing
+    // WASM reported should be the first entry in its CONTRACTS array.
+    expect(result.stderr).toMatch(/WASM not found for mux-account at/);
+    expect(result.stderr).toContain('wasm32-unknown-unknown/release/mux_account.wasm');
   });
 });
 
