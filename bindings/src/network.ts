@@ -2,6 +2,7 @@ import { Networks } from "@stellar/stellar-sdk";
 import type { MuxContractIds } from "./types";
 import { DEFAULT_ADDRESSES } from "./addresses-config";
 import { MuxError, MuxErrorCode } from "./errors";
+import { resolveContractAddressesFromEnv } from "./env-resolve";
 
 export interface NetworkConfig {
   rpcUrl: string;
@@ -9,29 +10,30 @@ export interface NetworkConfig {
   contracts: MuxContractIds;
 }
 
+/**
+ * Resolve this network's contract addresses from environment variables,
+ * falling back to `defaults`. Shared with `loadContractAddresses` in
+ * `addresses.ts` via `resolveContractAddressesFromEnv` (issue #988) so the
+ * two call sites can't drift.
+ */
 function getContractAddresses(
   network: string,
   defaults: MuxContractIds
 ): MuxContractIds {
-  const envPrefix = network.toUpperCase();
-  return {
-    muxAccount:
-      process.env[`${envPrefix}_MUX_ACCOUNT_ID`] || defaults.muxAccount,
-    muxBatcher:
-      process.env[`${envPrefix}_MUX_BATCHER_ID`] || defaults.muxBatcher,
-    muxDelegation:
-      process.env[`${envPrefix}_MUX_DELEGATION_ID`] || defaults.muxDelegation,
-    muxPermissions:
-      process.env[`${envPrefix}_MUX_PERMISSIONS_ID`] || defaults.muxPermissions,
-    muxWalletRegistry:
-      process.env[`${envPrefix}_MUX_WALLET_REGISTRY_ID`] || defaults.muxWalletRegistry,
-    muxPolicy:
-      process.env[`${envPrefix}_MUX_POLICY_ID`] || defaults.muxPolicy || "",
-    muxAccountFactory:
-      process.env[`${envPrefix}_MUX_ACCOUNT_FACTORY_ID`] || defaults.muxAccountFactory || "",
-    muxRegistry:
-      process.env[`${envPrefix}_MUX_REGISTRY_ID`] || defaults.muxRegistry || "",
-  };
+  // Preserve the original field set this function has always returned
+  // (it intentionally omits muxRecovery/muxSpendingPolicy, unlike
+  // loadContractAddresses in addresses.ts) by only resolving those keys.
+  const { muxAccount, muxBatcher, muxDelegation, muxPermissions, muxWalletRegistry, muxPolicy, muxAccountFactory, muxRegistry } = defaults;
+  return resolveContractAddressesFromEnv(network, {
+    muxAccount,
+    muxBatcher,
+    muxDelegation,
+    muxPermissions,
+    muxWalletRegistry,
+    muxPolicy: muxPolicy || "",
+    muxAccountFactory: muxAccountFactory || "",
+    muxRegistry: muxRegistry || "",
+  });
 }
 
 /** Well-known Mux Protocol contract deployments. */
