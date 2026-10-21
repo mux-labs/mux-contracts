@@ -18,7 +18,17 @@ export const AddressErrorCode = {
   NETWORK_NOT_FOUND: "ADDR_NETWORK_NOT_FOUND",
   MISSING_ADDRESSES: "ADDR_MISSING_ADDRESSES",
   MAINNET_REVIEW_REQUIRED: "ADDR_MAINNET_REVIEW_REQUIRED",
+  MALFORMED_ADDRESS: "ADDR_MALFORMED_CONTRACT_ID",
 } as const;
+
+/**
+ * Strkey contract-ID format: a leading "C" followed by 55 base32 characters
+ * (RFC 4648 alphabet without padding), 56 characters total. Matches the
+ * `ADDRESS_RE` convention already used for decoding event addresses in
+ * `event-decode.ts` / `batcher-events.ts`, narrowed to contract ("C") ids
+ * since only contract addresses are configured here.
+ */
+export const CONTRACT_ID_RE = /^C[A-Z2-7]{55}$/;
 
 export type AddressErrorCode =
   (typeof AddressErrorCode)[keyof typeof AddressErrorCode];
@@ -163,6 +173,33 @@ export function validateAddresses(
       AddressErrorCode.MISSING_ADDRESSES,
       `Missing contract addresses for network "${network}": ${missing.join(", ")}. ` +
       `Set environment variables (e.g., ${network.toUpperCase()}_MUX_ACCOUNT_ID) or update config/addresses.json.`
+    );
+  }
+
+  // Required addresses are present; also confirm each one is a well-formed
+  // contract-ID strkey (56 chars, leading "C"). A typo'd or truncated
+  // address would otherwise pass validation and only fail later, opaquely,
+  // at the RPC layer.
+  const malformed: string[] = [];
+  const requiredKeys: Array<keyof MuxContractIds> = [
+    "muxAccount",
+    "muxBatcher",
+    "muxDelegation",
+    "muxPermissions",
+    "muxWalletRegistry",
+  ];
+  for (const key of requiredKeys) {
+    const value = addresses[key];
+    if (value && !CONTRACT_ID_RE.test(value)) {
+      malformed.push(key);
+    }
+  }
+
+  if (malformed.length > 0) {
+    throw new AddressConfigError(
+      AddressErrorCode.MALFORMED_ADDRESS,
+      `Malformed contract address for network "${network}": ${malformed.join(", ")}. ` +
+      `Contract IDs must be 56-character strkey values starting with "C" (e.g., ${network.toUpperCase()}_MUX_ACCOUNT_ID).`
     );
   }
 }

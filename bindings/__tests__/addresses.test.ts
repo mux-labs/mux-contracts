@@ -86,27 +86,26 @@ describe("Contract Address Configuration", () => {
   });
 
   describe("validateAddresses", () => {
-    it("passes when all addresses are present", () => {
-      const addresses = {
-        muxAccount: "CAcc1",
-        muxBatcher: "CBatch1",
-        muxDelegation: "CDel1",
-        muxPermissions: "CPerms1",
-        muxWalletRegistry: "CWReg1",
-      };
+    // Well-formed strkey contract IDs (56 chars, leading "C") for fixtures
+    // that must pass the format check.
+    const wellFormed = {
+      muxAccount: "C" + "A".repeat(55),
+      muxBatcher: "C" + "B".repeat(55),
+      muxDelegation: "C" + "D".repeat(55),
+      muxPermissions: "C" + "E".repeat(55),
+      muxWalletRegistry: "C" + "F".repeat(55),
+    };
 
+    it("passes when all addresses are present and well-formed", () => {
       expect(() => {
-        validateAddresses("testnet", addresses);
+        validateAddresses("testnet", wellFormed);
       }).not.toThrow();
     });
 
     it("throws when muxAccount is missing", () => {
       const addresses = {
+        ...wellFormed,
         muxAccount: "",
-        muxBatcher: "CBatch1",
-        muxDelegation: "CDel1",
-        muxPermissions: "CPerms1",
-        muxWalletRegistry: "CWReg1",
       };
 
       expect(() => {
@@ -119,11 +118,9 @@ describe("Contract Address Configuration", () => {
 
     it("throws when multiple addresses are missing", () => {
       const addresses = {
+        ...wellFormed,
         muxAccount: "",
         muxBatcher: "",
-        muxDelegation: "CDel1",
-        muxPermissions: "CPerms1",
-        muxWalletRegistry: "CWReg1",
       };
 
       expect(() => {
@@ -147,25 +144,66 @@ describe("Contract Address Configuration", () => {
         validateAddresses("localnet", addresses);
       }).toThrow("LOCALNET_MUX");
     });
+
+    it("throws when an address is present but not a well-formed contract ID (#993)", () => {
+      const addresses = {
+        ...wellFormed,
+        muxAccount: "CAcc1", // too short, not a valid strkey contract ID
+      };
+
+      expect(() => {
+        validateAddresses("testnet", addresses);
+      }).toThrow("Malformed contract address");
+      expect(() => {
+        validateAddresses("testnet", addresses);
+      }).toThrow("muxAccount");
+    });
+
+    it("throws when an address does not start with the contract prefix 'C' (#993)", () => {
+      const addresses = {
+        ...wellFormed,
+        // Valid-length strkey but a "G" (account, not contract) prefix.
+        muxBatcher: "G" + "B".repeat(55),
+      };
+
+      expect(() => {
+        validateAddresses("testnet", addresses);
+      }).toThrow("Malformed contract address");
+      expect(() => {
+        validateAddresses("testnet", addresses);
+      }).toThrow("muxBatcher");
+    });
+
+    it("flags every malformed address when more than one is invalid (#993)", () => {
+      const addresses = {
+        ...wellFormed,
+        muxAccount: "not-a-contract-id",
+        muxPermissions: "short",
+      };
+
+      const fn = () => validateAddresses("testnet", addresses);
+      expect(fn).toThrow("muxAccount");
+      expect(fn).toThrow("muxPermissions");
+    });
   });
 
   describe("getValidatedAddresses", () => {
     it("loads and validates addresses in one call", () => {
       const addresses = getValidatedAddresses("testnet", {
         localnet: {
-          muxAccount: "CLoc1",
-          muxBatcher: "CLoc2",
-          muxDelegation: "CLoc3",
-          muxPermissions: "CLoc4",
-          muxWalletRegistry: "CLoc5",
+          muxAccount: "C" + "1".repeat(55),
+          muxBatcher: "C" + "2".repeat(55),
+          muxDelegation: "C" + "3".repeat(55),
+          muxPermissions: "C" + "4".repeat(55),
+          muxWalletRegistry: "C" + "5".repeat(55),
         },
         testnet: {
-          muxAccount: "CTest1",
-          muxBatcher: "CTest2",
-          muxDelegation: "CTest3",
-          muxPermissions: "CTest4",
-          muxWalletRegistry: "CTest5",
-          muxPolicy: "CTest5",
+          muxAccount: "C" + "6".repeat(55),
+          muxBatcher: "C" + "7".repeat(55),
+          muxDelegation: "C" + "A".repeat(55),
+          muxPermissions: "C" + "B".repeat(55),
+          muxWalletRegistry: "C" + "D".repeat(55),
+          muxPolicy: "C" + "D".repeat(55),
         },
         mainnet: {
           muxAccount: "",
@@ -176,11 +214,11 @@ describe("Contract Address Configuration", () => {
         },
       });
 
-      expect(addresses.muxAccount).toBe("CTest1");
-      expect(addresses.muxBatcher).toBe("CTest2");
-      expect(addresses.muxDelegation).toBe("CTest3");
-      expect(addresses.muxPermissions).toBe("CTest4");
-      expect(addresses.muxPolicy).toBe("CTest5");
+      expect(addresses.muxAccount).toBe("C" + "6".repeat(55));
+      expect(addresses.muxBatcher).toBe("C" + "7".repeat(55));
+      expect(addresses.muxDelegation).toBe("C" + "A".repeat(55));
+      expect(addresses.muxPermissions).toBe("C" + "B".repeat(55));
+      expect(addresses.muxPolicy).toBe("C" + "D".repeat(55));
     });
 
     it("throws if validation fails", () => {
