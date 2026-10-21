@@ -70,6 +70,34 @@ describe("parseRegistryEvent — regmeta", () => {
   });
 });
 
+describe("parseRegistryEvent — symbol_short 8-character limit", () => {
+  it("rejects a reg event whose name exceeds 8 characters", () => {
+    const event = makeRawEvent(REGISTRY_CONTRACT_TAG, REGISTRY_EVENT_TOPICS.reg, [
+      "waytoolongname",
+      VERSION,
+    ]);
+    expect(parseRegistryEvent(event)).toBeNull();
+  });
+
+  it("rejects a regmeta event whose name exceeds 8 characters", () => {
+    const event = makeRawEvent(REGISTRY_CONTRACT_TAG, REGISTRY_EVENT_TOPICS.regmeta, [
+      "waytoolongname",
+      VERSION,
+    ]);
+    expect(parseRegistryEvent(event)).toBeNull();
+  });
+
+  it("accepts a reg event whose name is exactly 8 characters", () => {
+    const event = makeRawEvent(REGISTRY_CONTRACT_TAG, REGISTRY_EVENT_TOPICS.reg, [
+      "exact8ch",
+      VERSION,
+    ]);
+    const result = parseRegistryEvent(event);
+    expect(result).not.toBeNull();
+    expect((result as any)?.name).toBe("exact8ch");
+  });
+});
+
 describe("parseRegistryEvent — returns null for non-registry events", () => {
   it("returns null for different contract tag", () => {
     const event = makeRawEvent("mux_other", REGISTRY_EVENT_TOPICS.init, [ADMIN]);

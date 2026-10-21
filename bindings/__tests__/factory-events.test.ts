@@ -352,6 +352,40 @@ describe("schema freeze — decode round-trips", () => {
   });
 });
 
+// ── Field order: position-sensitive decoding ─────────────────────────────────
+
+describe("parseFactoryEvent — deployed field order", () => {
+  const ADDR_A = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4";
+  const ADDR_B = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M";
+
+  it("maps data[0] to owner and data[1] to accountAddress (exact tuple position)", () => {
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.deployed, [
+      ADDR_A,
+      ADDR_B,
+    ]);
+    const result = parseFactoryEvent(e) as FactoryDeployedEvent;
+    expect(result.owner).toBe(ADDR_A);
+    expect(result.accountAddress).toBe(ADDR_B);
+  });
+
+  it("detects a swapped payload: swapping field order swaps the decoded output rather than being silently absorbed", () => {
+    const forward = parseFactoryEvent(
+      makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.deployed, [ADDR_A, ADDR_B]),
+    ) as FactoryDeployedEvent;
+    const swapped = parseFactoryEvent(
+      makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.deployed, [ADDR_B, ADDR_A]),
+    ) as FactoryDeployedEvent;
+
+    // A swapped payload must NOT decode to the same owner/accountAddress pair
+    // as the forward payload — the parser must reflect field position exactly,
+    // never normalise or ignore the order.
+    expect(swapped.owner).toBe(ADDR_B);
+    expect(swapped.accountAddress).toBe(ADDR_A);
+    expect(swapped.owner).not.toBe(forward.owner);
+    expect(swapped.accountAddress).not.toBe(forward.accountAddress);
+  });
+});
+
 // ── Event catalog completeness ────────────────────────────────────────────────
 
 describe("event catalog completeness", () => {

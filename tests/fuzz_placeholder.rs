@@ -476,15 +476,14 @@ mod fuzz_batcher {
 /// mux-policy: daily spend window boundary and reset invariants.
 #[cfg(test)]
 mod fuzz_policy {
+    use mux_contract_tests::mock_env::{advance_ledger, make_env};
     use mux_policy::{MuxPolicy, MuxPolicyClient, MuxPolicyError};
-    use soroban_sdk::{
-        testutils::{Address as _, Ledger as _},
-        Address, Env,
-    };
+    use soroban_sdk::{testutils::Address as _, Address, Env};
 
     fn setup() -> (Env, MuxPolicyClient<'static>, Address) {
-        let env = Env::default();
-        env.mock_all_auths();
+        // Shared helper (issue #919): imported from the crate's library
+        // target instead of re-implementing the setup dance inline.
+        let env = make_env();
         let contract_id = env.register_contract(None, MuxPolicy);
         let client = MuxPolicyClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
@@ -540,7 +539,7 @@ mod fuzz_policy {
 
             // One ledger before the window elapses: spend still accumulates
             // in the same window, so a further 500 would exceed the limit.
-            env.ledger().with_mut(|l| l.sequence_number += day_ledgers - 1);
+            advance_ledger(&env, day_ledgers - 1);
             assert_eq!(
                 client.try_record_spend(&wallet, &500_i128),
                 Err(Ok(MuxPolicyError::LimitExceeded)),
@@ -548,7 +547,7 @@ mod fuzz_policy {
             );
 
             // At the window boundary: counter resets, so the same spend now succeeds.
-            env.ledger().with_mut(|l| l.sequence_number += 1);
+            advance_ledger(&env, 1);
             let result = client.try_record_spend(&wallet, &500_i128);
             assert!(
                 result.is_ok(),

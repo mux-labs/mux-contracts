@@ -57,17 +57,32 @@ export function resolveAddress(raw: unknown): string | null {
 }
 
 /**
+ * Soroban `Symbol` (symbol_short) values are hard-capped at 8 characters by
+ * the Stellar protocol. Any decoded value longer than this cannot have been
+ * emitted by a conforming contract and must be rejected fail-closed.
+ */
+export const SYMBOL_SHORT_MAX_LENGTH = 8 as const;
+
+/**
  * Resolve a Soroban Symbol from a raw event value. Accepts a plain string or
  * a `{ symbol: "…" }` / `{ sym: "…" }` object (both SDK shapes are handled).
+ * Returns `null` when the resolved value exceeds the {@link SYMBOL_SHORT_MAX_LENGTH}
+ * 8-character `symbol_short` limit, rather than silently accepting an
+ * oversized name.
  */
 export function resolveSymbol(raw: unknown): string | null {
-  if (typeof raw === "string") return raw;
-  if (raw && typeof raw === "object") {
+  let value: string | null = null;
+  if (typeof raw === "string") {
+    value = raw;
+  } else if (raw && typeof raw === "object") {
     const obj = raw as Record<string, unknown>;
-    if (typeof obj["symbol"] === "string") return obj["symbol"];
-    if (typeof obj["sym"] === "string") return obj["sym"];
+    if (typeof obj["symbol"] === "string") value = obj["symbol"];
+    else if (typeof obj["sym"] === "string") value = obj["sym"];
   }
-  return null;
+
+  if (value === null) return null;
+  if (value.length > SYMBOL_SHORT_MAX_LENGTH) return null;
+  return value;
 }
 
 /**

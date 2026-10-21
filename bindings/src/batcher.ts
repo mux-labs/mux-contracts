@@ -82,18 +82,33 @@ export type BatchCapErrorCode =
  * Thrown by {@link assertBatchWithinCaps} when a batch violates an on-chain cap.
  * Carries a stable {@link BatchCapErrorCode} so callers can handle cap failures
  * deterministically (deny-by-default) without string matching.
+ *
+ * Also carries an optional `correlationId` (issue #990) — when the caller
+ * passes one through to {@link assertBatchWithinCaps}, it is attached here so
+ * the cap failure can be tied back to the request that caused it (e.g. in
+ * logs/traces that key off the same correlation id).
  */
 export class BatchCapError extends Error {
   readonly code: BatchCapErrorCode;
   readonly limit: number;
   readonly actual: number;
+  readonly correlationId?: string;
 
-  constructor(code: BatchCapErrorCode, limit: number, actual: number) {
-    super(`${code}: limit=${limit} actual=${actual}`);
+  constructor(
+    code: BatchCapErrorCode,
+    limit: number,
+    actual: number,
+    correlationId?: string,
+  ) {
+    super(
+      `${code}: limit=${limit} actual=${actual}` +
+        (correlationId ? ` correlationId=${correlationId}` : ""),
+    );
     this.name = "BatchCapError";
     this.code = code;
     this.limit = limit;
     this.actual = actual;
+    this.correlationId = correlationId;
   }
 }
 
@@ -106,29 +121,36 @@ export class BatchCapError extends Error {
  *
  * @param operations Operations about to be batched.
  * @param caps Optional cap overrides (e.g. testnet vs mainnet config).
+ * @param correlationId Optional id identifying the request that produced
+ *   `operations` (issue #990). When provided, it is attached to the thrown
+ *   {@link BatchCapError} so the cap failure can be tied back to the request
+ *   that caused it.
  * @throws {BatchCapError} when the batch exceeds a cap.
  */
 export function assertBatchWithinCaps(
   operations: readonly Operation[],
   caps: BatchCaps = BATCH_CAPS,
+  correlationId?: string,
 ): void {
   if (operations.length > caps.maxBatchSize) {
     throw new BatchCapError(
       BatchCapErrorCode.BatchTooLarge,
       caps.maxBatchSize,
       operations.length,
+      correlationId,
     );
   }
 
-  const aggregate = operations.reduce(
-    (sum) => sum + 1,
-    0,
-  );
+  // Sum each operation's weight (defaulting to 1 when unset) rather than
+  // just counting operations, so a batch of a few high-weight operations is
+  // rejected even when it stays under maxBatchSize.
+  const aggregate = operations.reduce((sum, op) => sum + (op.weight ?? 1), 0);
   if (aggregate > caps.maxAggregateOps) {
     throw new BatchCapError(
       BatchCapErrorCode.AggregateLimitExceeded,
       caps.maxAggregateOps,
       aggregate,
+      correlationId,
     );
   }
 }

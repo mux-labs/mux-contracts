@@ -48,8 +48,8 @@ const ADDRESSES_CONFIG_TS = path.join(
 // Sentinels that delimit the generated DEFAULT_ADDRESSES block in
 // addresses-config.ts.  The generator rewrites everything between
 // (and including) these two lines.
-const BEGIN_SENTINEL = "// [codegen:begin] DEFAULT_ADDRESSES — generated from config/addresses.json";
-const END_SENTINEL = "// [codegen:end] DEFAULT_ADDRESSES";
+export const BEGIN_SENTINEL = "// [codegen:begin] DEFAULT_ADDRESSES — generated from config/addresses.json";
+export const END_SENTINEL = "// [codegen:end] DEFAULT_ADDRESSES";
 
 interface AddressBook {
   [key: string]: string;
@@ -131,7 +131,7 @@ function formatNetwork(name: string, addresses: AddressBook, indent: string): st
 }
 
 /** Build the full generated block (including sentinels). */
-function buildBlock(data: AddressesJson): string {
+export function buildBlock(data: AddressesJson): string {
   const networks = ["localnet", "testnet", "mainnet"].filter(
     (n) => typeof data[n] === "object" && data[n] !== null
   );
@@ -151,7 +151,7 @@ function buildBlock(data: AddressesJson): string {
 }
 
 /** Splice the generated block into the existing file content. */
-function spliceBlock(existing: string, block: string): string {
+export function spliceBlock(existing: string, block: string): string {
   const beginIdx = existing.indexOf(BEGIN_SENTINEL);
   const endIdx = existing.indexOf(END_SENTINEL);
 

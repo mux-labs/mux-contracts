@@ -27,6 +27,21 @@ const GENERATED_DIR = path.resolve(__dirname, '..', 'src', 'generated');
 const DOCS_PATH = path.resolve(__dirname, '..', '..', 'docs', 'access-control-checklist.md');
 
 /**
+ * Read a file by its absolute path, failing with a clear, actionable error
+ * message rather than letting a bare ENOENT from fs.readFileSync bubble up
+ * when the file has moved or been renamed (#1006).
+ */
+function readFileOrThrow(fullPath: string): string {
+  if (!fs.existsSync(fullPath)) {
+    throw new Error(
+      `access-control-checklist.test.ts: expected file not found at ${fullPath}. ` +
+        `The file may have moved or been renamed — update the path in this test.`
+    );
+  }
+  return fs.readFileSync(fullPath, 'utf8');
+}
+
+/**
  * Documented authorization mapping for every mutating entrypoint.
  *
  * Key: `<module>#<entrypoint>` where `<module>` is the generated bindings file
@@ -186,7 +201,7 @@ function collectMutatingEntrypoints(): Entrypoint[] {
   const entrypoints: Entrypoint[] = [];
   for (const module of listGeneratedModules()) {
     const file = path.join(GENERATED_DIR, `${module}.ts`);
-    const source = fs.readFileSync(file, 'utf8');
+    const source = readFileOrThrow(file);
     for (const name of extractExportedFunctions(source)) {
       if (isMutating(name)) {
         entrypoints.push({ module, name, key: `${module}#${name}` });
@@ -204,6 +219,17 @@ function collectMutatingEntrypoints(): Entrypoint[] {
   }
   return entrypoints;
 }
+
+describe('readFileOrThrow — missing-path guard (#1006)', () => {
+  it('throws a clear, actionable error when the file does not exist', () => {
+    const missing = path.join(GENERATED_DIR, 'does-not-exist.ts');
+    expect(() => readFileOrThrow(missing)).toThrow(/expected file not found/);
+  });
+
+  it('reads the file normally when the path exists', () => {
+    expect(() => readFileOrThrow(DOCS_PATH)).not.toThrow();
+  });
+});
 
 describe('access-control checklist for mutating entrypoints', () => {
   const entrypoints = collectMutatingEntrypoints();
@@ -311,7 +337,7 @@ describe('MUX_ACCOUNT_MUTATING_AUTHZ covers every mutating client method (#938)'
   });
 
   it('documents every mux-account entrypoint in docs/access-control-checklist.md', () => {
-    const doc = fs.readFileSync(DOCS_PATH, 'utf8');
+    const doc = readFileOrThrow(DOCS_PATH);
     const undocumented = mappedEntrypoints.filter(
       (entrypoint) => !doc.includes(`| \`${entrypoint}\` | mux-account |`)
     );
