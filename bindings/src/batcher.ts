@@ -141,10 +141,10 @@ export function assertBatchWithinCaps(
     );
   }
 
-  const aggregate = operations.reduce(
-    (sum) => sum + 1,
-    0,
-  );
+  // Sum each operation's weight (defaulting to 1 when unset) rather than
+  // just counting operations, so a batch of a few high-weight operations is
+  // rejected even when it stays under maxBatchSize.
+  const aggregate = operations.reduce((sum, op) => sum + (op.weight ?? 1), 0);
   if (aggregate > caps.maxAggregateOps) {
     throw new BatchCapError(
       BatchCapErrorCode.AggregateLimitExceeded,

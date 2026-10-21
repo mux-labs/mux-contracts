@@ -105,6 +105,80 @@ function parseJsonValue(value: unknown): xdr.ScVal {
 const I64_MIN = -(2n ** 63n);
 const I64_MAX = 2n ** 63n - 1n;
 const U64_MAX = 2n ** 64n - 1n;
+/** Inclusive bounds for the signed 128-bit contract argument type. */
+const I128_MIN = -(2n ** 127n);
+const I128_MAX = 2n ** 127n - 1n;
+
+/**
+ * Quote unquoted JSON integer literals with more than 15 digits so that
+ * `JSON.parse` never has a chance to round them through an IEEE-754 double.
+ * Strings, floats/exponents, and numbers already inside string literals are
+ * left untouched. This lets {@link parseRawArgument}'s own BigInt-based
+ * decimal parsing (which has full 64/128-bit precision) handle the value
+ * once JSON.parse hands it back as a string.
+ */
+function quoteBigIntegers(jsonText: string): string {
+  let result = "";
+  let inString = false;
+  let escape = false;
+
+  for (let i = 0; i < jsonText.length; i += 1) {
+    const ch = jsonText[i];
+
+    if (inString) {
+      result += ch;
+      if (escape) {
+        escape = false;
+      } else if (ch === "\\") {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      result += ch;
+      continue;
+    }
+
+    if (ch === "-" || (ch >= "0" && ch <= "9")) {
+      let j = i;
+      let numStr = "";
+      if (jsonText[j] === "-") {
+        numStr += "-";
+        j += 1;
+      }
+      while (j < jsonText.length && jsonText[j] >= "0" && jsonText[j] <= "9") {
+        numStr += jsonText[j];
+        j += 1;
+      }
+
+      // Floats/exponents are copied through unchanged; precision loss there
+      // is an existing, separate concern from integer misclassification.
+      if (jsonText[j] === "." || jsonText[j] === "e" || jsonText[j] === "E") {
+        let full = numStr;
+        while (j < jsonText.length && /[0-9+\-.eE]/.test(jsonText[j])) {
+          full += jsonText[j];
+          j += 1;
+        }
+        result += full;
+        i = j - 1;
+        continue;
+      }
+
+      const digits = numStr.startsWith("-") ? numStr.slice(1) : numStr;
+      result += digits.length > 15 ? `"${numStr}"` : numStr;
+      i = j - 1;
+      continue;
+    }
+
+    result += ch;
+  }
+
+  return result;
+}
 
 /**
  * Convert a raw value to a 64-bit ScVal via BigInt, rejecting values outside
@@ -184,16 +258,25 @@ export function parseRawArgument(raw: string): xdr.ScVal {
 
   if (/^-?\d+$/.test(trimmed)) {
     const value = BigInt(trimmed);
-    if (value >= BigInt(Number.MIN_SAFE_INTEGER) && value <= BigInt(Number.MAX_SAFE_INTEGER)) {
+    // The full i64 range (~9.2e18) is far larger than Number.MAX_SAFE_INTEGER
+    // (~9e15); classifying against the safe-integer bound reclassified
+    // perfectly valid i64 values as i128. Classify against the real i64
+    // bounds instead, and reject anything that doesn't even fit in i128.
+    if (value >= I64_MIN && value <= I64_MAX) {
       return nativeToScVal(value, { type: "i64" });
     }
-    return nativeToScVal(value, { type: "i128" });
+    if (value >= I128_MIN && value <= I128_MAX) {
+      return nativeToScVal(value, { type: "i128" });
+    }
+    throw new Error(
+      `Integer argument out of i128 range: ${trimmed} (valid range ${I128_MIN} to ${I128_MAX})`
+    );
   }
 
   if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
     let parsed: unknown;
     try {
-      parsed = JSON.parse(trimmed);
+      parsed = JSON.parse(quoteBigIntegers(trimmed));
     } catch {
       return nativeToScVal(trimmed, { type: "string" });
     }

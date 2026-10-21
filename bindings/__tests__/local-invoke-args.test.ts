@@ -115,9 +115,17 @@ describe("parseRawArgument — explicit u64 form (#935)", () => {
       nativeToScVal(42, { type: "i64" }).toXDR("base64")
     );
 
-    const large = parseRawArgument("9223372036854775807");
+    // 9223372036854775807 is exactly i64::MAX, so it must classify as i64
+    // (see #987 regression suite below) — only values beyond the real i64
+    // range should ever be promoted to i128.
+    const atI64Max = parseRawArgument("9223372036854775807");
+    expect(atI64Max.toXDR("base64")).toBe(
+      nativeToScVal(9223372036854775807n, { type: "i64" }).toXDR("base64")
+    );
+
+    const large = parseRawArgument("9223372036854775808");
     expect(large.toXDR("base64")).toBe(
-      nativeToScVal(9223372036854775807n, { type: "i128" }).toXDR("base64")
+      nativeToScVal(9223372036854775808n, { type: "i128" }).toXDR("base64")
     );
   });
 

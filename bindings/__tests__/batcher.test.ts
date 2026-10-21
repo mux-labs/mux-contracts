@@ -111,6 +111,65 @@ describe("batching DoS caps", () => {
     expect(() => assertBatchWithinCaps([])).not.toThrow();
   });
 
+  /**
+   * Regression suite for #985: `assertBatchWithinCaps` must sum per-operation
+   * `weight` and reject once the aggregate exceeds `maxAggregateOps`, not
+   * just count operations (which made the aggregate check unreachable for
+   * any batch within `maxBatchSize`, since count <= maxBatchSize <=
+   * maxAggregateOps in practice).
+   */
+  describe("per-operation weight (#985)", () => {
+    function makeWeightedOps(weights: number[]): Operation[] {
+      return weights.map((weight) => ({ kind: "Transfer", weight })) as unknown as Operation[];
+    }
+
+    it("rejects a small batch whose aggregate weight exceeds maxAggregateOps", () => {
+      // Only 4 operations (well under maxBatchSize), but weight 100 each.
+      const caps = { maxBatchSize: 10, maxAggregateOps: 256 };
+      const ops = makeWeightedOps([100, 100, 100, 100]);
+      let caught: unknown;
+      try {
+        assertBatchWithinCaps(ops, caps);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(BatchCapError);
+      const err = caught as BatchCapError;
+      expect(err.code).toBe(BatchCapErrorCode.AggregateLimitExceeded);
+      expect(err.limit).toBe(256);
+      expect(err.actual).toBe(400);
+    });
+
+    it("accepts a batch whose weighted aggregate sits exactly at the cap", () => {
+      const caps = { maxBatchSize: 10, maxAggregateOps: 10 };
+      const ops = makeWeightedOps([5, 5]);
+      expect(() => assertBatchWithinCaps(ops, caps)).not.toThrow();
+    });
+
+    it("treats operations with no weight field as weight 1 (backward compatible)", () => {
+      // makeOps() produces operations with no `weight` property at all.
+      const caps = { maxBatchSize: 10, maxAggregateOps: 5 };
+      expect(() => assertBatchWithinCaps(makeOps(5), caps)).not.toThrow();
+      expect(() => assertBatchWithinCaps(makeOps(6), caps)).toThrow(BatchCapError);
+    });
+
+    it("mixes weighted and unweighted operations when computing the aggregate", () => {
+      const caps = { maxBatchSize: 10, maxAggregateOps: 10 };
+      const ops = [
+        { kind: "Transfer", weight: 8 },
+        { kind: "Transfer" }, // defaults to weight 1
+      ] as unknown as Operation[];
+      expect(() => assertBatchWithinCaps(ops, caps)).not.toThrow();
+
+      const overLimitOps = [
+        { kind: "Transfer", weight: 9 },
+        { kind: "Transfer" }, // defaults to weight 1, total = 10, still within cap
+        { kind: "Transfer" }, // total = 11, now over cap
+      ] as unknown as Operation[];
+      expect(() => assertBatchWithinCaps(overLimitOps, caps)).toThrow(BatchCapError);
+    });
+  });
+
   it("surfaces cap violations as BatchCapError instances", () => {
     expect(() => assertBatchWithinCaps(makeOps(MAX_BATCH_SIZE + 1))).toThrow(
       BatchCapError,
