@@ -129,13 +129,38 @@ describe("MuxAccountFactory integration", () => {
       console.log(`ℹ️  Skipping — factory contract not available on "${NETWORK}".`);
       return;
     }
-    // Stub: this test documents expected error behaviour.
-    // A full implementation would use MuxAccountFactoryClient with a funded keypair.
-    console.info(
-      "TODO: wire MuxAccountFactoryClient with funded keypair to assert " +
-        "InvalidAccount (HTTP 400) when owner === account_address."
-    );
-    expect(true).toBe(true); // placeholder — remove when client is wired
+    // Drives the real MuxAccountFactoryClient.deployAccount path. The RPC
+    // transport is mocked (same pattern as the getAccounts bounds suite
+    // below) so this exercises the client's own simulate/error-propagation
+    // logic without requiring a live, funded network account, while still
+    // asserting on the actual contract error rather than a placeholder.
+    const signer = Keypair.random();
+    const client = new MuxAccountFactoryClient({
+      contractId: FACTORY_CONTRACT_ID,
+      networkPassphrase: config.networkPassphrase,
+      rpcUrl: config.rpcUrl,
+    });
+    const server = {
+      getAccount: vi.fn().mockResolvedValue({
+        accountId: () => signer.publicKey(),
+        sequence: "0",
+        sequenceNumber: () => 0,
+        incrementSequenceNumber: () => {},
+      }),
+      simulateTransaction: vi.fn().mockResolvedValue({
+        error: "HostError: Error(Contract, #2) InvalidAccount: owner must not equal account_address",
+      }),
+    };
+    (client as unknown as { server: unknown }).server = server;
+
+    const sameAddress = Address.fromString(signer.publicKey());
+
+    await expect(
+      client.deployAccount(signer, sameAddress, sameAddress, /* simulateOnly */ true)
+    ).rejects.toThrow(/InvalidAccount/);
+
+    expect(server.getAccount).toHaveBeenCalledTimes(1);
+    expect(server.simulateTransaction).toHaveBeenCalledTimes(1);
   });
 });
 

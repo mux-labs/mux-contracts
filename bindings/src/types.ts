@@ -79,6 +79,9 @@ export type MuxRecoveryError =
   | "GuardianNotFound"
   | "MinGuardiansRequired"
   | "RecoveryExpired"
+  | "QuorumNotReached"
+  | "DuplicateApproval"
+  | "InvalidQuorumThreshold"
   | "RegistryNotFound";
 
 // ── Recovery timelock constants ───────────────────────────────────────────────
@@ -337,6 +340,9 @@ export function muxRecoveryErrorMessage(
     9: "address is not a registered guardian",
     10: "cannot remove the last remaining guardian",
     11: "recovery execution window has elapsed",
+    12: "insufficient guardian approvals collected",
+    13: "guardian already approved this recovery",
+    14: "quorum threshold out of valid range",
     15: "registry contract is not live (list_contracts validation failed)",
   };
 
@@ -352,6 +358,9 @@ export function muxRecoveryErrorMessage(
     GuardianNotFound: 9,
     MinGuardiansRequired: 10,
     RecoveryExpired: 11,
+    QuorumNotReached: 12,
+    DuplicateApproval: 13,
+    InvalidQuorumThreshold: 14,
     RegistryNotFound: 15,
   };
 

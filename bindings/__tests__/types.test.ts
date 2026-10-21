@@ -21,7 +21,7 @@ type _AssertKeysMatch = Equals<AddressKeys, ContractIdsKeys>;
 // have diverged — add or remove the mismatched key in both places.
 const _keysMatch: _AssertKeysMatch = true;
 import { MuxSpendingPolicyClient, MuxWalletRegistryClient } from "../src/index";
-import type { BatchOperationKind, Operation } from "../src/types";
+import type { BatchOperationKind, MuxAccountError, Operation } from "../src/types";
 import { muxAccountErrorMessage } from "../src/types";
 
 describe("NETWORK_CONFIGS", () => {
@@ -135,19 +135,72 @@ describe("Network selection", () => {
 });
 
 describe("muxAccountErrorMessage", () => {
-  it("resolves variant names to descriptions", () => {
-    expect(muxAccountErrorMessage("DelegateNotFound")).toBe("delegate not found");
-    expect(muxAccountErrorMessage("TooManyDelegates")).toBe("too many delegates");
-    expect(muxAccountErrorMessage("SpendLimitExceeded")).toBe("spend limit exceeded");
+  /**
+   * Every variant of the contract's `MuxAccountError` enum
+   * (contracts/mux-account/src/lib.rs codes 1–15), with the description
+   * `muxAccountErrorMessage` must return for both the variant name and the
+   * numeric code (issue #928: a single table covering all codes, so a
+   * missing mapping — notably 12–15 — fails the suite).
+   */
+  const MUX_ACCOUNT_ERRORS: ReadonlyArray<{
+    code: number;
+    name: MuxAccountError;
+    description: string;
+  }> = [
+    { code: 1, name: "NotInitialized", description: "contract not initialized" },
+    { code: 2, name: "AlreadyInitialized", description: "contract already initialized" },
+    { code: 3, name: "Unauthorized", description: "caller is not authorized" },
+    { code: 4, name: "DelegateNotFound", description: "delegate not found" },
+    { code: 5, name: "DelegateExpired", description: "delegate has expired" },
+    { code: 6, name: "SpendLimitExceeded", description: "spend limit exceeded" },
+    { code: 7, name: "InvalidAmount", description: "invalid amount" },
+    { code: 8, name: "InvalidPeriod", description: "invalid period" },
+    { code: 9, name: "TooManyDelegates", description: "too many delegates" },
+    { code: 10, name: "ReentrancyDetected", description: "reentrancy detected" },
+    { code: 11, name: "ArithmeticOverflow", description: "arithmetic overflow" },
+    { code: 12, name: "TooManySessionKeys", description: "too many session keys" },
+    {
+      code: 13,
+      name: "ScopeNotGranted",
+      description: "session key scope does not grant this method",
+    },
+    {
+      code: 14,
+      name: "SponsorNotAuthorized",
+      description: "sponsor is not on the relayer allowlist",
+    },
+    {
+      code: 15,
+      name: "InvalidNonce",
+      description: "nonce does not match the account's current nonce",
+    },
+  ];
+
+  it("covers all 15 mux-account error codes", () => {
+    expect(MUX_ACCOUNT_ERRORS).toHaveLength(15);
+    const codes = MUX_ACCOUNT_ERRORS.map((e) => e.code);
+    const names = MUX_ACCOUNT_ERRORS.map((e) => e.name);
+    // Codes 1..=15 exactly once, no gaps.
+    expect([...codes].sort((a, b) => a - b)).toEqual(
+      Array.from({ length: 15 }, (_, i) => i + 1)
+    );
+    expect(new Set(names).size).toBe(15);
   });
 
-  it("resolves numeric codes to descriptions", () => {
-    expect(muxAccountErrorMessage(4)).toBe("delegate not found");
-    expect(muxAccountErrorMessage(9)).toBe("too many delegates");
-    expect(muxAccountErrorMessage(11)).toBe("arithmetic overflow");
+  it("resolves each variant name and numeric code to the same description", () => {
+    for (const { code, name, description } of MUX_ACCOUNT_ERRORS) {
+      const byName = muxAccountErrorMessage(name);
+      const byCode = muxAccountErrorMessage(code);
+      expect(byName).toBe(description);
+      expect(byCode).toBe(description);
+      expect(byName).not.toBe("unknown error code");
+      expect(byCode).not.toBe("unknown error code");
+    }
   });
 
-  it("returns unknown for unmapped codes", () => {
+  it("returns unknown for out-of-range codes", () => {
+    expect(muxAccountErrorMessage(0)).toBe("unknown error code");
+    expect(muxAccountErrorMessage(16)).toBe("unknown error code");
     expect(muxAccountErrorMessage(99)).toBe("unknown error code");
   });
 });

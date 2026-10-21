@@ -39,8 +39,8 @@ variant without updating this document fails the test.
 | 10 | `ReentrancyDetected` | A reentrant call pattern was detected and rejected. |
 | 11 | `ArithmeticOverflow` | A checked arithmetic operation overflowed. |
 | 12 | `TooManySessionKeys` | The per-owner session-key cap has been reached. |
-| 13 | `ScopeNotGranted` | The session key's `scopes` do not authorize the target contract/method. |
-| 14 | `SponsorNotAuthorized` | The sponsor is not authorized to sponsor this operation. |
+| 13 | `ScopeNotGranted` | The session key's `scopes` do not authorize the target contract/method. `execute_with_session` fails closed with this variant when the target method is not explicitly listed in the session key's scopes (an empty scope list authorizes nothing). |
+| 14 | `SponsorNotAuthorized` | The sponsor is not authorized to sponsor this operation (not on the owner-managed relayer allowlist). |
 | 15 | `InvalidNonce` | The supplied nonce is stale, replayed, or out of order. |
 
 ## mux-account-factory::MuxAccountFactoryError

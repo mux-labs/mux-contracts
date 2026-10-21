@@ -131,6 +131,28 @@ describe("parseRecoveryEvent — rec_init", () => {
     expect(() => parseRecoveryEvent(event)).toThrow(RecoveryEventDecodeError);
   });
 
+  it("throws RecoveryEventDecodeError when guardian is not a well-formed address (regression)", () => {
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_init, [
+      "not-an-address",
+      NEW_OWNER,
+      EXECUTABLE_AT,
+      EXECUTABLE_AT,
+      EXPIRES_AT,
+    ]);
+    expect(() => parseRecoveryEvent(event)).toThrow(RecoveryEventDecodeError);
+  });
+
+  it("throws RecoveryEventDecodeError when newOwner is not a well-formed address (regression)", () => {
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_init, [
+      GUARDIAN,
+      "not-an-address",
+      EXECUTABLE_AT,
+      EXECUTABLE_AT,
+      EXPIRES_AT,
+    ]);
+    expect(() => parseRecoveryEvent(event)).toThrow(RecoveryEventDecodeError);
+  });
+
   it("throws RecoveryEventDecodeError for a missing payload (#937)", () => {
     const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_init, null);
     expect(() => parseRecoveryEvent(event)).toThrow(RecoveryEventDecodeError);
@@ -178,6 +200,22 @@ describe("parseRecoveryEvent — rec_exec", () => {
     const result = parseRecoveryEvent(event);
     expect(result).not.toBeNull();
     expect(result?.action).toBe("rec_exec");
+  });
+
+  it("rejects rec_exec when guardian is not a well-formed address (regression)", () => {
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_exec, [
+      "not-an-address",
+      NEW_OWNER,
+    ]);
+    expect(parseRecoveryEvent(event)).toBeNull();
+  });
+
+  it("rejects rec_exec when newOwner is not a well-formed address (regression)", () => {
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_exec, [
+      GUARDIAN,
+      "not-an-address",
+    ]);
+    expect(parseRecoveryEvent(event)).toBeNull();
   });
 });
 

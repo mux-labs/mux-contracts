@@ -496,6 +496,26 @@ mod tests {
             client.try_set_daily_limit(&wallet, &1000_i128, &0_u32, &None),
             Err(Ok(MuxPolicyError::InvalidPeriod))
         );
+
+        // Issue #930 acceptance: the rejected call must be a pure no-op —
+        // no `lmt_set` audit event may be published for it. (`setup()`
+        // already emitted the `init` event; nothing else may appear.)
+        let events = env.events().all();
+        for idx in 0..events.len() {
+            assert_ne!(
+                topic_action(&env, &events, idx),
+                symbol_short!("lmt_set"),
+                "a rejected set_daily_limit must not emit lmt_set"
+            );
+        }
+
+        // Issue #930 acceptance: no limit was written, so the wallet still
+        // reads back as unconfigured.
+        assert_eq!(
+            client.try_get_daily_limit(&wallet),
+            Err(Ok(MuxPolicyError::LimitNotFound)),
+            "get_daily_limit must still report the wallet as unconfigured"
+        );
     }
 
     #[test]
