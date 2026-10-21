@@ -467,18 +467,6 @@ impl MuxAccountFactory {
         owner: &Address,
         account_address: &Address,
     ) -> Result<(Vec<Address>, bool), MuxAccountFactoryError> {
-
-        let accounts: Vec<Address> = env
-            .storage()
-            .instance()
-            .get(&DataKey::Accounts(owner.clone()))
-            .unwrap_or_else(|| Vec::new(env));
-
-        let already_registered = accounts.contains(account_address);
-        if !already_registered && accounts.len() >= MAX_ACCOUNTS_PER_OWNER {
-            return Err(MuxAccountFactoryError::TooManyAccounts);
-        }
-        Ok((accounts, already_registered))
         let accounts: Vec<Address> = env
             .storage()
             .instance()
@@ -675,17 +663,6 @@ mod tests {
     }
 
     #[test]
-    fn test_deploy_emits_event() {
-        use soroban_sdk::testutils::Events;
-        let (env, client) = setup();
-        let owner = Address::generate(&env);
-        let account_addr = Address::generate(&env);
-        client.deploy_account(&owner, &account_addr);
-        let events = env.events().all();
-        assert_eq!(events.len(), 1);
-        let (_, topics, _) = events.get(0).unwrap();
-        let action = soroban_sdk::Symbol::from_val(&env, &topics.get(1).unwrap());
-        assert_eq!
     fn test_deploy_emits_event() {
         use soroban_sdk::testutils::Events;
         let (env, client) = setup();
@@ -1000,6 +977,7 @@ mod tests {
         let description = String::from_str(&env, "Test");
         let author = String::from_str(&env, "test");
 
+        let accounts_before = client.get_accounts(&owner).len();
         let result = client.try_deploy_account_with_metadata(
             &owner,
             &account_addr,
@@ -1008,6 +986,7 @@ mod tests {
             &author,
         );
         assert_eq!(result, Err(Ok(MuxAccountFactoryError::MetadataTooLarge)));
+        assert_eq!(client.get_accounts(&owner).len(), accounts_before);
     }
 
     #[test]
@@ -1020,6 +999,7 @@ mod tests {
         let description = String::from_str(&env, "a".repeat(257).as_str());
         let author = String::from_str(&env, "test");
 
+        let accounts_before = client.get_accounts(&owner).len();
         let result = client.try_deploy_account_with_metadata(
             &owner,
             &account_addr,
@@ -1028,6 +1008,7 @@ mod tests {
             &author,
         );
         assert_eq!(result, Err(Ok(MuxAccountFactoryError::MetadataTooLarge)));
+        assert_eq!(client.get_accounts(&owner).len(), accounts_before);
     }
 
     #[test]
@@ -1040,6 +1021,7 @@ mod tests {
         // Create an author string longer than MAX_AUTHOR_LENGTH (64)
         let author = String::from_str(&env, "a".repeat(65).as_str());
 
+        let accounts_before = client.get_accounts(&owner).len();
         let result = client.try_deploy_account_with_metadata(
             &owner,
             &account_addr,
@@ -1048,6 +1030,7 @@ mod tests {
             &author,
         );
         assert_eq!(result, Err(Ok(MuxAccountFactoryError::MetadataTooLarge)));
+        assert_eq!(client.get_accounts(&owner).len(), accounts_before);
     }
 
     #[test]
@@ -1068,6 +1051,7 @@ mod tests {
             &author,
         );
         assert!(result.is_ok());
+        assert_eq!(client.get_accounts(&owner).len(), 1);
     }
 
     // ── simulate_deploy tests ─────────────────────────────────────────────────
@@ -1276,12 +1260,9 @@ mod tests {
         assert_eq!(client.max_accounts_per_owner(), 64);
     }
 
-    // ── duplicate deploy (no dedup guard) ────────────────────────────────────
+    // ── duplicate deploy is idempotent ───────────────────────────────────────
 
-    /// The factory intentionally does not deduplicate account addresses; the
-    /// same account_address may be registered more than once for the same
-    /// owner (e.g. after a re-deployment). Both entries appear in the vec and
-    /// account_count increments for each.
+    /// Re-registering an existing address for the same owner is idempotent.
     #[test]
     fn test_deploy_same_address_twice_is_allowed() {
         let (env, client) = setup();
@@ -1292,12 +1273,10 @@ mod tests {
         client.deploy_account(&owner, &account_addr);
 
         let accounts = client.get_accounts(&owner);
-        // Both registrations are recorded.
-        assert_eq!(accounts.len(), 2);
-        assert_eq!(client.account_count(), 2);
-        // Both entries point to the same address.
+        // The address remains listed once and the counter does not increase.
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(client.account_count(), 1);
         assert_eq!(accounts.get(0).unwrap(), account_addr);
-        assert_eq!(accounts.get(1).unwrap(), account_addr);
     }
 
     // ── simulate_deploy enforces cap ──────────────────────────────────────────
@@ -1416,6 +1395,7 @@ mod tests {
     /// an event before the real deployment is submitted.
     #[test]
     fn test_simulate_with_metadata_is_read_only() {
+        use soroban_sdk::testutils::Events;
         let (env, client) = setup();
         let owner = Address::generate(&env);
         let account_addr = Address::generate(&env);
@@ -1431,7 +1411,7 @@ mod tests {
             &author,
         );
 
-        assert_eq!(result, Ok(account_addr));
+        assert_eq!(result, account_addr);
         assert_eq!(client.get_accounts(&owner).len(), 0);
         assert_eq!(client.account_count(), 0);
         assert_eq!(
@@ -1793,18 +1773,17 @@ mod tests {
             &author,
         );
 
-        // get_accounts must show both entries.
+        // get_accounts must show the address once.
         let accounts = client.get_accounts(&owner);
-        assert_eq!(accounts.len(), 2);
+        assert_eq!(accounts.len(), 1);
         assert_eq!(accounts.get(0).unwrap(), duplicate_addr);
-        assert_eq!(accounts.get(1).unwrap(), duplicate_addr);
 
         // Metadata query returns the last-written metadata (storage key is
         // (owner, address), so the second deploy overwrites the first).
         let meta = client.get_account_metadata(&owner, &duplicate_addr);
         assert_eq!(meta.version, version_2);
 
-        // account_count increments for both deploys.
-        assert_eq!(client.account_count(), 2);
+        // account_count includes the address only once.
+        assert_eq!(client.account_count(), 1);
     }
 }

@@ -46,6 +46,21 @@ describe("pollTransaction Horizon/RPC reliability", () => {
     expect(server.getTransaction).toHaveBeenCalledTimes(3);
   });
 
+  it("retries an unrecognised transaction status through maxAttempts", async () => {
+    const unexpected = {
+      status: "DUPLICATE",
+    } as unknown as SorobanRpc.Api.GetTransactionResponse;
+    const server = makeServer([unexpected]);
+    const error = await pollTransaction(server, "myhash", {
+      intervalMs: 0,
+      maxAttempts: 3,
+    }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(TransactionTimeoutError);
+    expect(error).toMatchObject({ hash: "myhash", attempts: 3 });
+    expect(server.getTransaction).toHaveBeenCalledTimes(3);
+  });
+
   it("retries a transient RPC exception", async () => {
     const server = makeServer([new Error("gateway unavailable"), success]);
     await expect(

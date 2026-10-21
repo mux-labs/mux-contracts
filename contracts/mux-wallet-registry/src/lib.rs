@@ -461,6 +461,11 @@ mod tests {
         assert_eq!(events.len(), 2, "expected init + wlt_reg events");
         assert_eq!(topic_tag(&env, &events, 1), symbol_short!("mux_wreg"));
         assert_eq!(topic_action(&env, &events, 1), symbol_short!("wlt_reg"));
+        let (_, _, data) = events.get(1).unwrap();
+        let (event_name, event_wallet): (soroban_sdk::Symbol, Address) =
+            FromVal::from_val(&env, &data);
+        assert_eq!(event_name, name);
+        assert_eq!(event_wallet, wallet);
     }
 
     #[test]
@@ -697,9 +702,9 @@ mod tests {
         let wallet = Address::generate(&env);
         let label = String::from_str(&env, "overflow label");
         let desc = String::from_str(&env, "overflow desc");
-        let result =
-            client.try_register_wallet_with_metadata(&overflow, &wallet, &label, &desc);
+        let result = client.try_register_wallet_with_metadata(&overflow, &wallet, &label, &desc);
         assert_eq!(result, Err(Ok(WalletRegistryError::TooManyWallets)));
+        assert_eq!(env.events().all().len(), 1 + MAX_WALLETS);
     }
 
     /// register_wallet_with_metadata on an existing name must not duplicate
@@ -783,6 +788,7 @@ mod tests {
             0,
             "names list must remain empty after a rejected register_wallet"
         );
+        assert_eq!(env.events().all().len(), 0);
     }
 
     /// `register_wallet_with_metadata` without any authorised signer must be
@@ -823,6 +829,7 @@ mod tests {
             0,
             "names list must remain empty after a rejected register_wallet_with_metadata"
         );
+        assert_eq!(env.events().all().len(), 0);
     }
 
     /// A non-owner caller must not be able to register wallets.
