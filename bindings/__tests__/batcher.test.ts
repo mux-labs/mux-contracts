@@ -11,8 +11,12 @@ import {
 import {
   MuxBatcherClient,
   MAX_BATCH_SIZE as CLIENT_MAX_BATCH_SIZE,
+  MAX_BATCH_WEIGHT,
   MUX_BATCHER_ERROR_CODES,
   MuxBatcherCapError,
+  operationWeight,
+  batchWeight,
+  assertBatchWithinCaps as assertBatchWithinWeightCaps,
 } from "../src/generated/mux-batcher";
 import type { Operation } from "../src/types";
 
@@ -205,3 +209,83 @@ describe("MuxBatcherClient.estimateFees bounds", () => {
   });
 });
 
+
+/**
+ * batchWeight / operationWeight boundary coverage against MAX_BATCH_WEIGHT
+ * (issue #943).
+ *
+ * The weight arithmetic is the only thing standing between a client and a
+ * wasted round-trip that the contract will reject, so the exact boundary must
+ * be pinned: `MAX_BATCH_WEIGHT` passes, `MAX_BATCH_WEIGHT + 1` fails with
+ * `BatchWeightExceeded`, and `operationWeight` accounts for `args.length`.
+ *
+ * Batches are sized so the weight — not the op count — is the limiting
+ * factor: `MAX_BATCH_SIZE` (100) ops × weight 100 = exactly MAX_BATCH_WEIGHT.
+ */
+describe("batchWeight / MAX_BATCH_WEIGHT boundaries (issue #943)", () => {
+  /** An op with `argCount` args — only `args.length` feeds the weight. */
+  function makeWeightedOp(argCount: number): Operation {
+    return {
+      kind: "Transfer",
+      args: Array.from({ length: argCount }, () => ({})),
+    } as unknown as Operation;
+  }
+
+  /** `count` ops whose weights sum to exactly `totalWeight` (count | totalWeight). */
+  function makeBatchAtWeight(totalWeight: number, count: number): Operation[] {
+    expect(totalWeight % count).toBe(0);
+    const weightPerOp = totalWeight / count; // = 1 + argsPerOp
+    return Array.from({ length: count }, () => makeWeightedOp(weightPerOp - 1));
+  }
+
+  it("operationWeight is 1 for a zero-arg op and grows by one per argument", () => {
+    expect(operationWeight({ args: [] } as unknown as Operation)).toBe(1);
+    expect(operationWeight(makeWeightedOp(0))).toBe(1);
+    expect(operationWeight(makeWeightedOp(1))).toBe(2);
+    expect(operationWeight(makeWeightedOp(5))).toBe(6);
+    // One more argument → exactly one more weight.
+    for (const n of [0, 1, 2, 10, 99]) {
+      expect(operationWeight(makeWeightedOp(n + 1))).toBe(
+        operationWeight(makeWeightedOp(n)) + 1
+      );
+    }
+  });
+
+  it("batchWeight sums operationWeight across the batch", () => {
+    const ops = [makeWeightedOp(0), makeWeightedOp(3), makeWeightedOp(10)];
+    expect(batchWeight(ops)).toBe(1 + 4 + 11);
+    expect(batchWeight([])).toBe(0);
+  });
+
+  it("accepts a batch whose batchWeight is exactly MAX_BATCH_WEIGHT", () => {
+    // 100 ops × weight 100 (99 args each) = 10_000 = MAX_BATCH_WEIGHT.
+    // The op-count cap (MAX_BATCH_SIZE = 100) is satisfied, so weight is
+    // the limiting factor at the boundary.
+    const ops = makeBatchAtWeight(MAX_BATCH_WEIGHT, 100);
+    expect(ops.length).toBe(CLIENT_MAX_BATCH_SIZE);
+    expect(batchWeight(ops)).toBe(MAX_BATCH_WEIGHT);
+    expect(() => assertBatchWithinWeightCaps(ops)).not.toThrow();
+  });
+
+  it("throws BatchWeightExceeded at MAX_BATCH_WEIGHT + 1", () => {
+    // 99 ops × weight 100 (99 args) + 1 op × weight 101 (100 args)
+    // = 9_900 + 101 = 10_001, still within the 100-op cap.
+    const ops = Array.from({ length: 99 }, () => makeWeightedOp(99));
+    ops.push(makeWeightedOp(100));
+    const expectedWeight = MAX_BATCH_WEIGHT + 1;
+    expect(batchWeight(ops)).toBe(expectedWeight);
+    expect(ops.length).toBeLessThanOrEqual(CLIENT_MAX_BATCH_SIZE);
+
+    let caught: unknown;
+    try {
+      assertBatchWithinWeightCaps(ops);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(MuxBatcherCapError);
+    const err = caught as MuxBatcherCapError;
+    expect(err.code).toBe(MUX_BATCHER_ERROR_CODES.BatchWeightExceeded);
+    expect(err.message).toContain(String(expectedWeight));
+    expect(err.message).toContain(String(MAX_BATCH_WEIGHT));
+  });
+});

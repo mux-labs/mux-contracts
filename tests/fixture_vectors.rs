@@ -159,8 +159,9 @@ fn pay_scope(env: &Env) -> soroban_sdk::Vec<Scope> {
 // ── mux_account: spend_limit vectors (tests/fixtures/test_vectors.json) ───────
 
 fn setup_account() -> (Env, MuxAccountClient<'static>) {
-    let env = Env::default();
-    env.mock_all_auths();
+    // Shared helper (issue #919): same `Env::default() + mock_all_auths`
+    // dance as before, imported from the crate's library target.
+    let env = mux_contract_tests::mock_env::make_env();
     let contract_id = env.register_contract(None, MuxAccount);
     let client = MuxAccountClient::new(&env, &contract_id);
     let owner = Address::generate(&env);

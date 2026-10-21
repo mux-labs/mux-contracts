@@ -5,6 +5,19 @@ edition = "2021"
 publish = false
 description = "Integration / fuzz scaffolding tests for mux-contracts"
 
+# The library target (src/lib.rs) exposes shared helpers — currently
+# `mock_env` — to the integration test binaries below. `soroban-sdk` must be
+# a normal dependency because the lib target is not compiled with
+# `--cfg test` (issue #919: the old `#[cfg(test)]` gate made the helpers
+# unreachable from integration tests). The crate is publish = false, so
+# test-only features in the lib are fine.
+[lib]
+name = "mux_contract_tests"
+path = "src/lib.rs"
+
+[dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
 mux-account = { path = "../contracts/mux-account", features = ["testutils"] }
