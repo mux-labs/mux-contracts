@@ -2,6 +2,7 @@ import { Networks } from "@stellar/stellar-sdk";
 import type { MuxContractIds } from "./types";
 import { DEFAULT_ADDRESSES } from "./addresses-config";
 import { MuxError, MuxErrorCode } from "./errors";
+import { resolveContractAddressesFromEnv } from "./env-resolve";
 
 export interface NetworkConfig {
   rpcUrl: string;
@@ -9,29 +10,30 @@ export interface NetworkConfig {
   contracts: MuxContractIds;
 }
 
+/**
+ * Resolve this network's contract addresses from environment variables,
+ * falling back to `defaults`. Shared with `loadContractAddresses` in
+ * `addresses.ts` via `resolveContractAddressesFromEnv` (issue #988) so the
+ * two call sites can't drift.
+ */
 function getContractAddresses(
   network: string,
   defaults: MuxContractIds
 ): MuxContractIds {
-  const envPrefix = network.toUpperCase();
-  return {
-    muxAccount:
-      process.env[`${envPrefix}_MUX_ACCOUNT_ID`] || defaults.muxAccount,
-    muxBatcher:
-      process.env[`${envPrefix}_MUX_BATCHER_ID`] || defaults.muxBatcher,
-    muxDelegation:
-      process.env[`${envPrefix}_MUX_DELEGATION_ID`] || defaults.muxDelegation,
-    muxPermissions:
-      process.env[`${envPrefix}_MUX_PERMISSIONS_ID`] || defaults.muxPermissions,
-    muxWalletRegistry:
-      process.env[`${envPrefix}_MUX_WALLET_REGISTRY_ID`] || defaults.muxWalletRegistry,
-    muxPolicy:
-      process.env[`${envPrefix}_MUX_POLICY_ID`] || defaults.muxPolicy || "",
-    muxAccountFactory:
-      process.env[`${envPrefix}_MUX_ACCOUNT_FACTORY_ID`] || defaults.muxAccountFactory || "",
-    muxRegistry:
-      process.env[`${envPrefix}_MUX_REGISTRY_ID`] || defaults.muxRegistry || "",
-  };
+  // Preserve the original field set this function has always returned
+  // (it intentionally omits muxRecovery/muxSpendingPolicy, unlike
+  // loadContractAddresses in addresses.ts) by only resolving those keys.
+  const { muxAccount, muxBatcher, muxDelegation, muxPermissions, muxWalletRegistry, muxPolicy, muxAccountFactory, muxRegistry } = defaults;
+  return resolveContractAddressesFromEnv(network, {
+    muxAccount,
+    muxBatcher,
+    muxDelegation,
+    muxPermissions,
+    muxWalletRegistry,
+    muxPolicy: muxPolicy || "",
+    muxAccountFactory: muxAccountFactory || "",
+    muxRegistry: muxRegistry || "",
+  });
 }
 
 /** Well-known Mux Protocol contract deployments. */
@@ -123,6 +125,29 @@ export function assertSameNetwork(
       MuxErrorCode.CROSS_NETWORK_BLOCKED,
       `Cross-network invoke blocked: target "${targetNetwork}" does not match configured "${configuredNetwork}"`
     );
+  }
+
+  // (#989) The passphrase alone only proves the two configs target the same
+  // chain — it says nothing about *which* contracts are being invoked on
+  // that chain. A stale/misconfigured address for the same network would
+  // pass the check above while silently pointing at the wrong contract, so
+  // also require every resolved contract id to match between the target and
+  // configured network config.
+  const contractKeys = new Set<string>([
+    ...Object.keys(target.contracts),
+    ...Object.keys(configured.contracts),
+  ]);
+  for (const key of contractKeys) {
+    const targetId = (target.contracts as Record<string, string | undefined>)[key];
+    const configuredId = (configured.contracts as Record<string, string | undefined>)[key];
+    if (targetId !== configuredId) {
+      throw new MuxError(
+        MuxErrorCode.CROSS_NETWORK_BLOCKED,
+        `Cross-network invoke blocked: resolved contract "${key}" differs between ` +
+          `target "${targetNetwork}" (${targetId ?? "<unset>"}) and configured ` +
+          `"${configuredNetwork}" (${configuredId ?? "<unset>"})`
+      );
+    }
   }
 
   return target;

@@ -1,4 +1,5 @@
 import type { MuxContractIds } from "./types";
+import { resolveContractAddressesFromEnv } from "./env-resolve";
 
 /**
  * Contract address configuration keyed by network name.
@@ -112,34 +113,21 @@ export function loadContractAddresses(
   // Mainnet addresses are money-path config: fail closed unless reviewed.
   assertMainnetReviewApproved(network);
 
-  // Load from environment variables with network-specific prefixes
-  const envPrefix = network.toUpperCase();
-  const addresses: MuxContractIds = {
-    muxAccount:
-      process.env[`${envPrefix}_MUX_ACCOUNT_ID`] || networkConfig.muxAccount,
-    muxAccountFactory:
-      process.env[`${envPrefix}_MUX_ACCOUNT_FACTORY_ID`] || networkConfig.muxAccountFactory || "",
-    muxBatcher:
-      process.env[`${envPrefix}_MUX_BATCHER_ID`] || networkConfig.muxBatcher,
-    muxDelegation:
-      process.env[`${envPrefix}_MUX_DELEGATION_ID`] || networkConfig.muxDelegation,
-    muxPermissions:
-      process.env[`${envPrefix}_MUX_PERMISSIONS_ID`] ||
-      networkConfig.muxPermissions,
-    muxPolicy:
-      process.env[`${envPrefix}_MUX_POLICY_ID`] || networkConfig.muxPolicy || "",
-    muxRecovery:
-      process.env[`${envPrefix}_MUX_RECOVERY_ID`] || networkConfig.muxRecovery || "",
-    muxRegistry:
-      process.env[`${envPrefix}_MUX_REGISTRY_ID`] || networkConfig.muxRegistry || "",
-    muxSpendingPolicy:
-      process.env[`${envPrefix}_MUX_SPENDING_POLICY_ID`] || networkConfig.muxSpendingPolicy || "",
-    muxWalletRegistry:
-      process.env[`${envPrefix}_MUX_WALLET_REGISTRY_ID`] ||
-      networkConfig.muxWalletRegistry,
-  };
-
-  return addresses;
+  // Load from environment variables with network-specific prefixes, shared
+  // with network.ts's getContractAddresses via resolveContractAddressesFromEnv
+  // (issue #988) so the two loaders can't drift.
+  return resolveContractAddressesFromEnv(network, {
+    muxAccount: networkConfig.muxAccount,
+    muxAccountFactory: networkConfig.muxAccountFactory || "",
+    muxBatcher: networkConfig.muxBatcher,
+    muxDelegation: networkConfig.muxDelegation,
+    muxPermissions: networkConfig.muxPermissions,
+    muxPolicy: networkConfig.muxPolicy || "",
+    muxRecovery: networkConfig.muxRecovery || "",
+    muxRegistry: networkConfig.muxRegistry || "",
+    muxSpendingPolicy: networkConfig.muxSpendingPolicy || "",
+    muxWalletRegistry: networkConfig.muxWalletRegistry,
+  });
 }
 
 /**

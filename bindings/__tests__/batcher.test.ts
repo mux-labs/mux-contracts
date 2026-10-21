@@ -44,6 +44,34 @@ describe("batching DoS caps", () => {
     expect(() => assertBatchWithinCaps(makeOps(MAX_BATCH_SIZE))).not.toThrow();
   });
 
+  it("attaches the correlationId to BatchCapError when provided (#990)", () => {
+    let caught: unknown;
+    try {
+      assertBatchWithinCaps(
+        makeOps(MAX_BATCH_SIZE + 1),
+        BATCH_CAPS,
+        "req-abc-123",
+      );
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(BatchCapError);
+    const err = caught as BatchCapError;
+    expect(err.correlationId).toBe("req-abc-123");
+    expect(err.message).toContain("req-abc-123");
+  });
+
+  it("leaves correlationId undefined when not provided (#990)", () => {
+    let caught: unknown;
+    try {
+      assertBatchWithinCaps(makeOps(MAX_BATCH_SIZE + 1));
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(BatchCapError);
+    expect((caught as BatchCapError).correlationId).toBeUndefined();
+  });
+
   it("rejects an oversized batch fail-closed with a stable error code", () => {
     let caught: unknown;
     try {

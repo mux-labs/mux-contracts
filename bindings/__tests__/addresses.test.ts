@@ -85,6 +85,34 @@ describe("Contract Address Configuration", () => {
     });
   });
 
+  describe("getContractAddresses / loadContractAddresses share env resolution (#988)", () => {
+    it("resolve the same value for a shared key from the same env var", async () => {
+      // network.ts's getContractAddresses is not exported, but it drives
+      // NETWORK_CONFIGS at module-load time, so import it fresh and read
+      // through that. Both it and loadContractAddresses now go through
+      // resolveContractAddressesFromEnv, so an env override is honored
+      // identically by both.
+      process.env.LOCALNET_MUX_BATCHER_ID = "CSHARED_BATCHER_OVERRIDE";
+      try {
+        const { resolveContractAddressesFromEnv } = await import(
+          "../src/env-resolve"
+        );
+        const viaAddresses = loadContractAddresses(
+          "localnet",
+          DEFAULT_ADDRESSES,
+        );
+        const viaShared = resolveContractAddressesFromEnv("localnet", {
+          muxBatcher: DEFAULT_ADDRESSES.localnet.muxBatcher,
+        });
+        expect(viaAddresses.muxBatcher).toBe("CSHARED_BATCHER_OVERRIDE");
+        expect(viaShared.muxBatcher).toBe("CSHARED_BATCHER_OVERRIDE");
+        expect(viaAddresses.muxBatcher).toBe(viaShared.muxBatcher);
+      } finally {
+        delete process.env.LOCALNET_MUX_BATCHER_ID;
+      }
+    });
+  });
+
   describe("validateAddresses", () => {
     // Well-formed strkey contract IDs (56 chars, leading "C") for fixtures
     // that must pass the format check.
