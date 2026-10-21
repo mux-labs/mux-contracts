@@ -1,9 +1,12 @@
 import { xdr } from "@stellar/stellar-sdk";
 import {
   NETWORK_CONFIGS,
+  assertSameNetwork,
   getActiveNetwork,
   getNetworkConfig,
+  resolveNetworkConfig,
 } from "../src/network";
+import { MuxError, MuxErrorCode } from "../src/errors";
 import type { MuxContractIds } from "../src/types";
 import { DEFAULT_ADDRESSES } from "../src/addresses-config";
 
@@ -131,6 +134,107 @@ describe("Network selection", () => {
     } else {
       delete process.env.SOROBAN_NETWORK;
     }
+  });
+
+  /**
+   * Regression suite for #984: additional coverage for the env-driven
+   * network-selection surface in `../src/network` that this file did not
+   * previously exercise — an empty-string env var, `resolveNetworkConfig`'s
+   * fail-closed (never-defaults) behavior, and `assertSameNetwork`'s
+   * cross-network guard.
+   */
+  it("getActiveNetwork treats an empty-string SOROBAN_NETWORK as falsy and falls back to localnet", () => {
+    const originalEnv = process.env.SOROBAN_NETWORK;
+    process.env.SOROBAN_NETWORK = "";
+
+    expect(getActiveNetwork()).toBe("localnet");
+
+    if (originalEnv) {
+      process.env.SOROBAN_NETWORK = originalEnv;
+    } else {
+      delete process.env.SOROBAN_NETWORK;
+    }
+  });
+
+  describe("resolveNetworkConfig", () => {
+    it("resolves a known network's config", () => {
+      const config = resolveNetworkConfig("testnet");
+      expect(config.rpcUrl).toContain("testnet");
+    });
+
+    it("throws MuxError(NETWORK_NOT_CONFIGURED) for undefined/null/empty input, never defaulting", () => {
+      for (const value of [undefined, null, ""] as const) {
+        let caught: unknown;
+        try {
+          resolveNetworkConfig(value);
+        } catch (err) {
+          caught = err;
+        }
+        expect(caught).toBeInstanceOf(MuxError);
+        expect((caught as MuxError).code).toBe(MuxErrorCode.NETWORK_NOT_CONFIGURED);
+      }
+    });
+
+    it("throws MuxError(NETWORK_UNKNOWN) for an unrecognized network name", () => {
+      let caught: unknown;
+      try {
+        resolveNetworkConfig("not-a-real-network");
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(MuxError);
+      expect((caught as MuxError).code).toBe(MuxErrorCode.NETWORK_UNKNOWN);
+    });
+  });
+
+  describe("assertSameNetwork", () => {
+    it("returns the target config when target and configured networks match", () => {
+      const config = assertSameNetwork("testnet", "testnet");
+      expect(config.rpcUrl).toContain("testnet");
+    });
+
+    it("throws MuxError(CROSS_NETWORK_BLOCKED) when target and configured networks differ", () => {
+      let caught: unknown;
+      try {
+        assertSameNetwork("testnet", "mainnet");
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(MuxError);
+      expect((caught as MuxError).code).toBe(MuxErrorCode.CROSS_NETWORK_BLOCKED);
+    });
+
+    it("defaults configuredNetwork to the active (env-selected) network", () => {
+      const originalEnv = process.env.SOROBAN_NETWORK;
+      process.env.SOROBAN_NETWORK = "mainnet";
+
+      expect(() => assertSameNetwork("mainnet")).not.toThrow();
+      let caught: unknown;
+      try {
+        assertSameNetwork("testnet");
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(MuxError);
+      expect((caught as MuxError).code).toBe(MuxErrorCode.CROSS_NETWORK_BLOCKED);
+
+      if (originalEnv) {
+        process.env.SOROBAN_NETWORK = originalEnv;
+      } else {
+        delete process.env.SOROBAN_NETWORK;
+      }
+    });
+
+    it("fails closed (does not default) when the configured network is unset and no override is given", () => {
+      let caught: unknown;
+      try {
+        assertSameNetwork("testnet", undefined);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(MuxError);
+      expect((caught as MuxError).code).toBe(MuxErrorCode.NETWORK_NOT_CONFIGURED);
+    });
   });
 });
 
