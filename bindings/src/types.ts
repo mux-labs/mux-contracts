@@ -40,6 +40,14 @@ export interface Operation {
   requireSuccess: boolean;
   /** Classifies the operation intent for indexers and UI. */
   kind: BatchOperationKind;
+  /**
+   * Relative execution weight of this operation (e.g. CPU/resource cost),
+   * used to pre-validate the batch's aggregate weight against
+   * `BATCH_CAPS.maxAggregateOps` before submission. Defaults to 1 when
+   * omitted, matching the "one unit per operation" assumption used before
+   * this field existed.
+   */
+  weight?: number;
 }
 
 /** Mirrors the on-chain `BatchOperationKind` enum. */
