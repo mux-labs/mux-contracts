@@ -20,8 +20,45 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
+
+describe('generate-bindings.ts network validation (#955)', () => {
+  const script = path.join(REPO_ROOT, 'scripts/generate-bindings.ts');
+  const tsNode = path.join(REPO_ROOT, 'bindings/node_modules/.bin/ts-node');
+  const tsNodeArgs = ['--compiler-options', '{"module":"CommonJS"}', script];
+
+  it('rejects unsupported networks before running a build or CLI command', () => {
+    const result = spawnSync(
+      tsNode,
+      [...tsNodeArgs, '--network', 'bogus', '--dry-run'],
+      { cwd: REPO_ROOT, encoding: 'utf8' },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('Unknown network: bogus');
+    expect(result.stderr).toContain('testnet, mainnet, localnet');
+    expect(result.stdout).not.toContain('Building Soroban contracts');
+  });
+
+  it.each(['testnet', 'mainnet', 'localnet'])(
+    'accepts %s and passes it to the dry-run command',
+    (network) => {
+      const result = spawnSync(
+        tsNode,
+        [
+          ...tsNodeArgs, '--network', network, '--dry-run', '--skip-build',
+          '--contract', 'mux-account',
+        ],
+        { cwd: REPO_ROOT, encoding: 'utf8' },
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(`--network "${network}"`);
+    },
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Gap 1: generate-bindings.sh must fail on missing WASM, not silently skip
