@@ -172,10 +172,14 @@ export function assertMainnetAddressReview(
     );
   }
 
-  if (!isNonEmptyString(marker.approvedBy) || !isNonEmptyString(marker.pr)) {
+  if (
+    !isNonEmptyString(marker.approvedBy) ||
+    !isNonEmptyString(marker.pr) ||
+    !isNonEmptyString(marker.addressesHash)
+  ) {
     throw new MainnetAddressReviewError(
       MAINNET_REVIEW_ERROR_CODES.INVALID_REVIEW_MARKER,
-      "mainnetReview marker must include non-empty approvedBy and pr fields",
+      "mainnetReview marker must include non-empty approvedBy, pr, and addressesHash fields",
       correlationId,
     );
   }
