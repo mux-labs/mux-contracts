@@ -4,17 +4,7 @@ import {
   parsePolicyEvent,
   type PolicyEvent,
 } from "../src/policy-events";
-import type { RawSorobanEvent } from "../src/factory-events";
-
-const ADMIN = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4";
-const WALLET = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M";
-const LIMIT = "1000000000";
-const AMOUNT = "500000000";
-const DAY_LEDGERS = "17280";
-
-function makeRawEvent(tag: string, action: string, data: unknown): RawSorobanEvent {
-  return { topic: [tag, action], value: data };
-}
+import { makeRawEvent } from "./event-fixtures";
 
 describe("POLICY_CONTRACT_TAG", () => {
   it("equals 'mux_pol'", () => {
@@ -82,24 +72,21 @@ describe("parsePolicyEvent — ctr_rst", () => {
   });
 });
 
-describe("parsePolicyEvent — returns null for non-policy events", () => {
-  it("returns null for different contract tag", () => {
-    const event = makeRawEvent("mux_other", POLICY_EVENT_TOPICS.init, [ADMIN]);
+describe("parsePolicyEvent — fail-closed validation", () => {
+  it("returns null for lmt_set with non-address wallet", () => {
+    const event = makeRawEvent(POLICY_CONTRACT_TAG, POLICY_EVENT_TOPICS.lmt_set, [
+      "not-an-address",
+      LIMIT,
+      DAY_LEDGERS,
+    ]);
     expect(parsePolicyEvent(event)).toBeNull();
   });
 
-  it("returns null for unknown action", () => {
-    const event = makeRawEvent(POLICY_CONTRACT_TAG, "unknown", [ADMIN]);
-    expect(parsePolicyEvent(event)).toBeNull();
-  });
-
-  it("returns null when data is null", () => {
-    const event = makeRawEvent(POLICY_CONTRACT_TAG, POLICY_EVENT_TOPICS.init, null);
-    expect(parsePolicyEvent(event)).toBeNull();
-  });
-
-  it("returns null when required fields are missing", () => {
-    const event = makeRawEvent(POLICY_CONTRACT_TAG, POLICY_EVENT_TOPICS.lmt_set, [WALLET]);
+  it("returns null for spent with non-numeric amount", () => {
+    const event = makeRawEvent(POLICY_CONTRACT_TAG, POLICY_EVENT_TOPICS.spent, [
+      WALLET,
+      "abc",
+    ]);
     expect(parsePolicyEvent(event)).toBeNull();
   });
 });

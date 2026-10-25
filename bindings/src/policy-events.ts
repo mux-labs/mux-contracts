@@ -273,9 +273,12 @@ export function decodePolicyEvent(
  * ```
  */
 export function parsePolicyEvent(event: RawSorobanEvent): PolicyEvent | null {
-  const [tag, action] = event.topic ?? [];
-
+  const topics = event.topic ?? [];
+  const tag = typeof topics[0] === "string" ? topics[0] : null;
   if (tag !== POLICY_CONTRACT_TAG) return null;
+
+  const action = typeof topics[1] === "string" ? topics[1] : null;
+  if (action === null || !KNOWN_POLICY_ACTIONS.has(action)) return null;
 
   const data = normaliseData(event.value);
   if (!data) return null;
@@ -316,23 +319,49 @@ export function parsePolicyEvent(event: RawSorobanEvent): PolicyEvent | null {
 // ── Internal helpers ───────────────────────────────────────────────────────────
 
 function resolveI128(raw: unknown): string | null {
-  if (typeof raw === "string") return raw;
-  if (typeof raw === "number") return String(raw);
+  let value: unknown = raw;
   if (raw && typeof raw === "object") {
     const obj = raw as Record<string, unknown>;
-    if (typeof obj["i128"] === "string") return obj["i128"];
-    if (typeof obj["i128"] === "number") return String(obj["i128"]);
+    if ("i128" in obj) {
+      value = obj["i128"];
+    } else {
+      return null;
+    }
+  }
+  if (typeof value === "string") {
+    if (/^-?\d+$/.test(value)) return value;
+    return null;
+  }
+  if (typeof value === "number") {
+    if (Number.isSafeInteger(value)) return String(value);
+    return null;
   }
   return null;
 }
 
 function resolveU32(raw: unknown): string | null {
-  if (typeof raw === "string") return raw;
-  if (typeof raw === "number") return String(raw);
+  let value: unknown = raw;
   if (raw && typeof raw === "object") {
     const obj = raw as Record<string, unknown>;
-    if (typeof obj["u32"] === "string") return obj["u32"];
-    if (typeof obj["u32"] === "number") return String(obj["u32"]);
+    if ("u32" in obj) {
+      value = obj["u32"];
+    } else {
+      return null;
+    }
+  }
+  if (typeof value === "string") {
+    if (/^\d+$/.test(value)) {
+      // Reject numbers with leading zeros except for "0" itself
+      if (value.length > 1 && value.startsWith("0")) return null;
+      const n = BigInt(value);
+      if (n <= 0xffffffffn) return value;
+      return null;
+    }
+    return null;
+  }
+  if (typeof value === "number") {
+    if (Number.isInteger(value) && value >= 0 && value <= 0xffffffff) return String(value);
+    return null;
   }
   return null;
 }

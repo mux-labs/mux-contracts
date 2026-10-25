@@ -612,7 +612,18 @@ export function decodeBatcherFeeEvent(
 
 function requireAddress(raw: unknown, action: string, field: string, errCtx: ErrCtx): string {
   let value: unknown = raw;
-  if (raw && typeof raw === "object") value = (raw as Record<string, unknown>)["address"];
+  if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    if ("address" in obj) {
+      value = obj["address"];
+    } else {
+      throw new BatcherEventDecodeError(
+        BATCHER_EVENT_DECODE_ERROR_CODES.InvalidAddress,
+        `mux_bat.${action}.${field}: ${describe(raw)} is not a G…/C… strkey Address`,
+        { ...errCtx, action, field },
+      );
+    }
+  }
   if (typeof value === "string" && ADDRESS_RE.test(value)) return value;
   throw new BatcherEventDecodeError(
     BATCHER_EVENT_DECODE_ERROR_CODES.InvalidAddress,
@@ -623,12 +634,52 @@ function requireAddress(raw: unknown, action: string, field: string, errCtx: Err
 
 function requireU32(raw: unknown, action: string, field: string, errCtx: ErrCtx): string {
   let value: unknown = raw;
-  if (raw && typeof raw === "object") value = (raw as Record<string, unknown>)["u32"];
+  if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    if ("u32" in obj) {
+      value = obj["u32"];
+    } else {
+      throw new BatcherEventDecodeError(
+        BATCHER_EVENT_DECODE_ERROR_CODES.InvalidU32,
+        `mux_bat.${action}.${field}: ${describe(raw)} is not a u32`,
+        { ...errCtx, action, field },
+      );
+    }
+  }
 
   let n: number | null = null;
-  if (typeof value === "number" && Number.isInteger(value)) n = value;
-  else if (typeof value === "bigint" && value <= BigInt(U32_MAX)) n = Number(value);
-  else if (typeof value === "string" && /^\d{1,10}$/.test(value)) n = Number(value);
+  if (typeof value === "number") {
+    if (Number.isInteger(value) && value >= 0 && value <= U32_MAX) n = value;
+  } else if (typeof value === "bigint") {
+    if (value >= 0n && value <= BigInt(U32_MAX)) n = Number(value);
+  } else if (typeof value === "string") {
+    // Only accept non-negative integer strings with no leading zeros (except "0")
+    if (/^\d+$/.test(value)) {
+      if (value.length > 1 && value.startsWith("0")) {
+        throw new BatcherEventDecodeError(
+          BATCHER_EVENT_DECODE_ERROR_CODES.InvalidU32,
+          `mux_bat.${action}.${field}: ${describe(raw)} is not a u32`,
+          { ...errCtx, action, field },
+        );
+      }
+      if (value.length > 10) {
+        throw new BatcherEventDecodeError(
+          BATCHER_EVENT_DECODE_ERROR_CODES.InvalidU32,
+          `mux_bat.${action}.${field}: ${describe(raw)} is not a u32`,
+          { ...errCtx, action, field },
+        );
+      }
+      const bigVal = BigInt(value);
+      if (bigVal > BigInt(U32_MAX)) {
+        throw new BatcherEventDecodeError(
+          BATCHER_EVENT_DECODE_ERROR_CODES.InvalidU32,
+          `mux_bat.${action}.${field}: ${describe(raw)} is not a u32`,
+          { ...errCtx, action, field },
+        );
+      }
+      n = Number(bigVal);
+    }
+  }
 
   if (n !== null && n >= 0 && n <= U32_MAX) return String(n);
   throw new BatcherEventDecodeError(
