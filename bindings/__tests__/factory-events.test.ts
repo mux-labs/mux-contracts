@@ -19,21 +19,8 @@ import {
   type FactoryEvent,
   type RawSorobanEvent,
 } from "../src/factory-events";
-
-// ── Fixtures ────────────────────────────────────────────────────────────────
-
-const OWNER = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4";
-const ACCOUNT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M";
-const VERSION = "1.0.0";
-
-/** Helper: build a raw event in plain-array style (SDK v11+). */
-function makeRawEvent(
-  tag: string,
-  action: string,
-  data: unknown,
-): RawSorobanEvent {
-  return { topic: [tag, action], value: data };
-}
+import { makeRawEvent } from "./event-fixtures";
+import { FACTORY_MAX_VERSION_LENGTH } from "../src/generated/mux-account-factory";
 
 /** `deployed` event with array-style data. */
 const DEPLOYED_ARRAY: RawSorobanEvent = makeRawEvent(
@@ -208,9 +195,36 @@ describe("parseFactoryEvent — meta_set (object/XDR-style data)", () => {
   });
 });
 
-// ── parseFactoryEvent: null / unknown inputs ─────────────────────────────────
+describe("parseFactoryEvent — meta_set version validation", () => {
+  it("returns null for missing version", () => {
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.meta_set, [OWNER, ACCOUNT]);
+    expect(parseFactoryEvent(e)).toBeNull();
+  });
 
-describe("parseFactoryEvent — returns null for non-factory events", () => {
+  it("returns null for empty-string version", () => {
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.meta_set, [OWNER, ACCOUNT, ""]);
+    expect(parseFactoryEvent(e)).toBeNull();
+  });
+
+  it("returns null for numeric version", () => {
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.meta_set, [OWNER, ACCOUNT, 42]);
+    expect(parseFactoryEvent(e)).toBeNull();
+  });
+
+  it("returns null for version of FACTORY_MAX_VERSION_LENGTH + 1 characters", () => {
+    const longVersion = "a".repeat(FACTORY_MAX_VERSION_LENGTH + 1);
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.meta_set, [OWNER, ACCOUNT, longVersion]);
+    expect(parseFactoryEvent(e)).toBeNull();
+  });
+
+  it("parses meta_set with version at exactly FACTORY_MAX_VERSION_LENGTH as control", () => {
+    const maxVersion = "a".repeat(FACTORY_MAX_VERSION_LENGTH);
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.meta_set, [OWNER, ACCOUNT, maxVersion]);
+    const result = parseFactoryEvent(e);
+    expect(result).not.toBeNull();
+    expect((result as FactoryMetaSetEvent).version).toBe(maxVersion);
+  });
+});
   it("returns null when topics[0] is a different contract tag", () => {
     const e = makeRawEvent("mux_acct", "init", [OWNER]);
     expect(parseFactoryEvent(e)).toBeNull();

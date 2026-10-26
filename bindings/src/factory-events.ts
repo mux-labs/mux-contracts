@@ -259,7 +259,9 @@ export interface RawSorobanEvent {
   eventIndex?: number;
 }
 
-// ── Parser ─────────────────────────────────────────────────────────────────────
+import {
+  FACTORY_MAX_VERSION_LENGTH,
+} from "./generated/mux-account-factory";
 
 /**
  * Stable, typed error codes emitted by the factory event parser. Indexers can
@@ -381,7 +383,16 @@ export function decodeFactoryEvent(event: RawSorobanEvent): FactoryEventEnvelope
         correlationId,
       );
     }
-    decoded = { action: "deployed", owner: data[0], accountAddress: data[1] };
+    const owner = data[0];
+    const accountAddress = data[1];
+    if (typeof owner !== "string" || owner.length === 0 || typeof accountAddress !== "string" || accountAddress.length === 0) {
+      throw new FactoryEventError(
+        FactoryEventErrorCode.MalformedPayload,
+        "deployed payload contains invalid fields",
+        correlationId,
+      );
+    }
+    decoded = { action: "deployed", owner, accountAddress };
   } else {
     if (data.length !== 3) {
       throw new FactoryEventError(
@@ -390,11 +401,28 @@ export function decodeFactoryEvent(event: RawSorobanEvent): FactoryEventEnvelope
         correlationId,
       );
     }
+    const owner = data[0];
+    const accountAddress = data[1];
+    const version = data[2];
+    if (typeof owner !== "string" || owner.length === 0 || typeof accountAddress !== "string" || accountAddress.length === 0) {
+      throw new FactoryEventError(
+        FactoryEventErrorCode.MalformedPayload,
+        "meta_set payload contains invalid fields",
+        correlationId,
+      );
+    }
+    if (typeof version !== "string" || version.length === 0 || version.length > FACTORY_MAX_VERSION_LENGTH) {
+      throw new FactoryEventError(
+        FactoryEventErrorCode.MalformedPayload,
+        "meta_set payload contains invalid version",
+        correlationId,
+      );
+    }
     decoded = {
       action: "meta_set",
-      owner: data[0],
-      accountAddress: data[1],
-      version: data[2],
+      owner,
+      accountAddress,
+      version,
     };
   }
 
@@ -444,16 +472,30 @@ export function parseFactoryEvent(event: RawSorobanEvent): FactoryEvent | null {
 
   if (action === FACTORY_EVENT_TOPICS.deployed) {
     if (data.length !== 2) return null;
-    return { action: "deployed", owner: data[0], accountAddress: data[1] };
+    const owner = data[0];
+    const accountAddress = data[1];
+    if (typeof owner !== "string" || owner.length === 0 || typeof accountAddress !== "string" || accountAddress.length === 0) {
+      return null;
+    }
+    return { action: "deployed", owner, accountAddress };
   }
 
   if (action === FACTORY_EVENT_TOPICS.meta_set) {
     if (data.length !== 3) return null;
+    const owner = data[0];
+    const accountAddress = data[1];
+    const version = data[2];
+    if (typeof owner !== "string" || owner.length === 0 || typeof accountAddress !== "string" || accountAddress.length === 0) {
+      return null;
+    }
+    if (typeof version !== "string" || version.length === 0 || version.length > FACTORY_MAX_VERSION_LENGTH) {
+      return null;
+    }
     return {
       action: "meta_set",
-      owner: data[0],
-      accountAddress: data[1],
-      version: data[2],
+      owner,
+      accountAddress,
+      version,
     };
   }
 

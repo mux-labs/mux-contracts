@@ -13,17 +13,7 @@ import {
   type BatcherEventDecodeErrorCode,
   type BatcherRawEvent,
 } from "../src/batcher-events";
-import type { RawSorobanEvent } from "../src/factory-events";
-
-const ADMIN = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4";
-const CALLER = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M";
-const OP_COUNT = "5";
-const SUCCESS_COUNT = "4";
-const FAILURE_COUNT = "1";
-
-function makeRawEvent(tag: string, action: string, data: unknown): RawSorobanEvent {
-  return { topic: [tag, action], value: data };
-}
+import { makeRawEvent } from "./event-fixtures";
 
 describe("BATCHER_CONTRACT_TAG", () => {
   it("equals 'mux_bat'", () => {
@@ -118,25 +108,93 @@ describe("parseBatcherEvent — sim_done", () => {
   });
 });
 
-describe("parseBatcherEvent — returns null for non-batcher events", () => {
-  it("returns null for different contract tag", () => {
-    const event = makeRawEvent("mux_other", BATCHER_EVENT_TOPICS.init, [ADMIN]);
-    expect(parseBatcherEvent(event)).toBeNull();
+describe("parseBatcherEvent — fail-closed value validation", () => {
+  describe("bat_start", () => {
+    it("returns null for non-numeric op count", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.bat_start, [CALLER, "abc"]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("returns null for negative op count", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.bat_start, [CALLER, "-1"]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("returns null for empty caller", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.bat_start, ["", OP_COUNT]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("parses valid bat_start event as control", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.bat_start, [CALLER, OP_COUNT]);
+      expect(parseBatcherEvent(event)).not.toBeNull();
+    });
   });
 
-  it("returns null for unknown action", () => {
-    const event = makeRawEvent(BATCHER_CONTRACT_TAG, "unknown", [ADMIN]);
-    expect(parseBatcherEvent(event)).toBeNull();
+  describe("executed", () => {
+    it("returns null for non-numeric success count", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.executed, [CALLER, "abc", FAILURE_COUNT]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("returns null for negative success count", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.executed, [CALLER, "-1", FAILURE_COUNT]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("returns null for empty caller", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.executed, ["", SUCCESS_COUNT, FAILURE_COUNT]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("parses valid executed event as control", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.executed, [CALLER, SUCCESS_COUNT, FAILURE_COUNT]);
+      expect(parseBatcherEvent(event)).not.toBeNull();
+    });
   });
 
-  it("returns null when data is null", () => {
-    const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.init, null);
-    expect(parseBatcherEvent(event)).toBeNull();
+  describe("bat_ok", () => {
+    it("returns null for non-numeric success count", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.bat_ok, [CALLER, "abc"]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("returns null for negative success count", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.bat_ok, [CALLER, "-1"]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("returns null for empty caller", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.bat_ok, ["", SUCCESS_COUNT]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("parses valid bat_ok event as control", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.bat_ok, [CALLER, SUCCESS_COUNT]);
+      expect(parseBatcherEvent(event)).not.toBeNull();
+    });
   });
 
-  it("returns null when required fields are missing", () => {
-    const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.executed, [CALLER]);
-    expect(parseBatcherEvent(event)).toBeNull();
+  describe("sim_done", () => {
+    it("returns null for non-numeric success count", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.sim_done, [CALLER, "abc"]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("returns null for negative success count", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.sim_done, [CALLER, "-1"]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("returns null for empty caller", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.sim_done, ["", SUCCESS_COUNT]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("parses valid sim_done event as control", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.sim_done, [CALLER, SUCCESS_COUNT]);
+      expect(parseBatcherEvent(event)).not.toBeNull();
+    });
   });
 });
 
