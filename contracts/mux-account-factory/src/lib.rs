@@ -1260,6 +1260,33 @@ mod tests {
         assert_eq!(client.max_accounts_per_owner(), 64);
     }
 
+    /// The value returned by `max_accounts_per_owner` must match what the
+    /// deploy path actually enforces: exactly `cap` distinct accounts succeed,
+    /// and the next distinct account is predictably rejected with
+    /// [`MuxAccountFactoryError::TooManyAccounts`]. This locks in the failure
+    /// path the entrypoint's docs tell clients to preflight against.
+    #[test]
+    fn test_max_accounts_per_owner_matches_deploy_failure_path() {
+        let (env, client) = setup();
+        env.budget().reset_unlimited();
+
+        let cap = client.max_accounts_per_owner();
+        assert_eq!(cap, MAX_ACCOUNTS_PER_OWNER);
+        assert_eq!(cap, 64);
+
+        let owner = Address::generate(&env);
+
+        // Deploying exactly `cap` distinct accounts must all succeed.
+        for _ in 0..cap {
+            client.deploy_account(&owner, &Address::generate(&env));
+        }
+        assert_eq!(client.get_accounts(&owner).len(), cap);
+
+        // One more distinct account must hit the named failure path.
+        let result = client.try_deploy_account(&owner, &Address::generate(&env));
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::TooManyAccounts)));
+    }
+
     // ── duplicate deploy is idempotent ───────────────────────────────────────
 
     /// Re-registering an existing address for the same owner is idempotent.
