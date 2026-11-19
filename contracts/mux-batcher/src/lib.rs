@@ -1427,9 +1427,11 @@ mod tests {
         let author = String::from_str(&env, "mux-labs");
 
         client.set_registry_metadata(&description, &author);
-        assert!(client
-            .try_set_registry_metadata(&description, &author)
-            .is_err());
+        // The comment guarantees metadata can only be recorded once: a second
+        // call must fail with the specific `MetadataAlreadySet` error, not just
+        // any error (a dropped/changed guard must not go unobserved).
+        let result = client.try_set_registry_metadata(&description, &author);
+        assert_eq!(result, Err(Ok(MuxBatcherError::MetadataAlreadySet)));
     }
 
     #[test]
