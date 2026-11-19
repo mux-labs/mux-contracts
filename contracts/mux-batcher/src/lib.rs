@@ -1686,6 +1686,48 @@ mod tests {
         );
     }
 
+    /// Oversized batches must be rejected for size before the reentrancy guard is
+    /// set, leaving no `Executing` guard in storage. A batch of exactly
+    /// `MAX_BATCH_SIZE` ops must not be rejected for size. (Issue #1068)
+    #[test]
+    fn test_execute_batch_over_max_rejected_and_leaves_no_guard() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+        let caller = Address::generate(&env);
+
+        // MAX_BATCH_SIZE + 1 (51) ops must fail with the existing size error.
+        let over_ops = make_nop_ops(&env, MAX_BATCH_SIZE + 1);
+        let result = client.try_execute_batch(&caller, &over_ops);
+        assert_eq!(
+            result.unwrap_err(),
+            Ok(MuxBatcherError::BatchTooLarge),
+            "a batch larger than MAX_BATCH_SIZE must return BatchTooLarge"
+        );
+
+        // The size rejection happens before the reentrancy guard is set, so no
+        // Executing flag may remain in storage.
+        env.as_contract(&contract_id, || {
+            let executing = env
+                .storage()
+                .instance()
+                .get::<DataKey, bool>(&DataKey::Executing)
+                .unwrap_or(false);
+            assert!(
+                !executing,
+                "size rejection must leave no reentrancy guard in storage"
+            );
+        });
+
+        // Exactly MAX_BATCH_SIZE (50) ops must not be rejected for size.
+        let at_max_ops = make_nop_ops(&env, MAX_BATCH_SIZE);
+        assert!(
+            client.try_execute_batch(&caller, &at_max_ops).is_ok(),
+            "a batch of exactly MAX_BATCH_SIZE must not be rejected for size"
+        );
+    }
+
     // ── symbol_short length audit (#496) ─────────────────────────────────────
 
     #[test]
