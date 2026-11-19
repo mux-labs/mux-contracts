@@ -753,6 +753,30 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_batch_rejected_before_guard_is_set() {
+        // An empty batch returns EmptyBatch before the reentrancy guard
+        // (DataKey::Executing) is ever written, so no guard key remains in
+        // storage afterward (#1063).
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let caller = Address::generate(&env);
+        let ops: Vec<Operation> = Vec::new(&env);
+        let result = client.try_execute_batch(&caller, &ops);
+        assert_eq!(result.unwrap_err().unwrap(), MuxBatcherError::EmptyBatch);
+
+        let guard_set = env.as_contract(&contract_id, || {
+            env.storage().instance().has(&DataKey::Executing)
+        });
+        assert!(
+            !guard_set,
+            "empty batch must not leave the reentrancy guard set"
+        );
+    }
+
+    #[test]
     fn test_reentrancy_guard_clears_after_success() {
         // Verify the Executing flag is cleared so sequential batch calls work.
         // If the guard were not cleared the second call would return ReentrancyDetected.
@@ -913,6 +937,30 @@ mod tests {
         let ops = make_nop_ops(&env, MAX_BATCH_SIZE + 1);
         let _ = client.try_execute_batch(&caller, &ops);
         assert_eq!(env.events().all().len(), 0);
+    }
+
+    #[test]
+    fn test_batch_too_large_rejected_before_guard_is_set() {
+        // An oversized batch returns BatchTooLarge before the reentrancy guard
+        // (DataKey::Executing) is ever written, so no guard key remains in
+        // storage afterward (#1063).
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let caller = Address::generate(&env);
+        let ops = make_nop_ops(&env, MAX_BATCH_SIZE + 1);
+        let result = client.try_execute_batch(&caller, &ops);
+        assert_eq!(result.unwrap_err().unwrap(), MuxBatcherError::BatchTooLarge);
+
+        let guard_set = env.as_contract(&contract_id, || {
+            env.storage().instance().has(&DataKey::Executing)
+        });
+        assert!(
+            !guard_set,
+            "oversized batch must not leave the reentrancy guard set"
+        );
     }
 
     #[test]
