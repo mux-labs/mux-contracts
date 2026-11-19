@@ -266,21 +266,6 @@ impl MuxAccountFactory {
     ///
     /// | Variant | When |
     /// |---------|------|
-
-    ///
-    /// The caller must be `owner`.  `account_address` must differ from `owner`.
-    /// Metadata strings are individually bounded to prevent storage bloat:
-    ///
-    /// | Field | Max bytes | Constant |
-    /// |-------|-----------|----------|
-    /// | `version` | 32 | `MAX_VERSION_LENGTH` |
-    /// | `description` | 256 | `MAX_DESCRIPTION_LENGTH` |
-    /// | `author` | 64 | `MAX_AUTHOR_LENGTH` |
-    ///
-    /// # Errors
-    ///
-    /// | Variant | When |
-    /// |---------|------|
     /// | [`MuxAccountFactoryError::InvalidAccount`] | `account_address == owner` |
     /// | [`MuxAccountFactoryError::TooManyAccounts`] | owner's Accounts vec is at [`MAX_ACCOUNTS_PER_OWNER`] |
     /// | [`MuxAccountFactoryError::MetadataTooLarge`] | any metadata field exceeds its byte limit |
