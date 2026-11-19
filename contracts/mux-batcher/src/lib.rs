@@ -162,6 +162,17 @@
  * Allows atomically executing a sequence of cross-contract calls in a
  * single transaction, with optional per-operation authorization checks.
  *
+ * # Rollback semantics
+ *
+ * A host-level trap (e.g. `panic!`) rolls back every storage write made
+ * during the invocation — including the reentrancy guard — so no explicit
+ * cleanup is needed on that path. Returning `Err` from a `#[contractimpl]`
+ * entry point is **not** a host trap: storage writes that have already been
+ * made stay committed, so any function that sets the reentrancy guard must
+ * remove it before returning an error or the contract will be permanently
+ * locked. `execute_batch` is the example: it clears `DataKey::Executing`
+ * before returning `Err(RequiredOperationFailed)` on the abort path.
+ *
  * # `no_std` Constraints
  *
  * This crate is `#![no_std]` and does not use `extern crate alloc`.
