@@ -159,7 +159,8 @@ impl MuxAccountFactory {
     /// storage write).  `account_address` must differ from `owner`.
     ///
     /// Appends `account_address` to the owner's `Accounts` vec and increments
-    /// the global `AccountCount`.  Emits a single `deployed` event.
+    /// the global `AccountCount`.  Re-registering an address the owner already
+    /// has is a no-op for both (idempotent).  Emits a single `deployed` event.
     /// Instance storage TTL is extended on every successful call.
     ///
     /// # Errors
