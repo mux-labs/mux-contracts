@@ -1163,6 +1163,24 @@ mod tests {
     }
 
     #[test]
+    fn test_execute_recovery_expiry_boundary() {
+        let (env, client, _, guardian) = setup();
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&guardian, &new_owner);
+        let expires_at = env.ledger().sequence() + RECOVERY_EXPIRY;
+
+        // expires_at itself is too late.
+        env.ledger().with_mut(|l| l.sequence_number = expires_at);
+        let err = client.try_execute_recovery(&guardian).unwrap_err().unwrap();
+        assert_eq!(err, RecoveryError::RecoveryExpired);
+
+        // expires_at - 1 is not rejected for expiry (quorum of 1 is met by the initiator).
+        env.ledger().with_mut(|l| l.sequence_number = expires_at - 1);
+        client.execute_recovery(&guardian);
+        assert_eq!(client.recovery_status(), RecoveryStatus::Executed);
+    }
+
+    #[test]
     fn test_expired_pending_recovery_can_be_reinitiated() {
         let (env, client, _, guardian) = setup();
         let first_owner = Address::generate(&env);
