@@ -860,6 +860,64 @@ mod tests {
         assert_eq!(client.list_wallets().len(), 0);
     }
 
+    /// `register_wallet` must demand auth from the recorded owner specifically:
+    /// a valid auth entry for a different address is rejected, while one for
+    /// the owner succeeds and an existing name is silently overwritten.
+    #[test]
+    fn test_register_wallet_auth_is_bound_to_owner() {
+        use soroban_sdk::{
+            testutils::{MockAuth, MockAuthInvoke},
+            IntoVal,
+        };
+
+        let env = Env::default();
+        let cid = env.register_contract(None, MuxWalletRegistry);
+        let client = MuxWalletRegistryClient::new(&env, &cid);
+        let owner = Address::generate(&env);
+        let other = Address::generate(&env);
+        env.as_contract(&cid, || {
+            env.storage().instance().set(&DataKey::Owner, &owner);
+        });
+
+        let name = symbol_short!("alice");
+        let wallet_v1 = Address::generate(&env);
+        let wallet_v2 = Address::generate(&env);
+
+        // Auth supplied by a non-owner must be rejected and write nothing.
+        let args_v1 = (name.clone(), wallet_v1.clone()).into_val(&env);
+        let bad = client
+            .mock_auths(&[MockAuth {
+                address: &other,
+                invoke: &MockAuthInvoke {
+                    contract: &cid,
+                    fn_name: "register_wallet",
+                    args: args_v1,
+                    sub_invokes: &[],
+                },
+            }])
+            .try_register_wallet(&name, &wallet_v1);
+        assert!(bad.is_err(), "non-owner auth must not authorise register_wallet");
+        assert_eq!(client.list_wallets().len(), 0);
+
+        // Owner auth succeeds, then overwrites the same name.
+        for wallet in [&wallet_v1, &wallet_v2] {
+            let args = (name.clone(), wallet.clone()).into_val(&env);
+            client
+                .mock_auths(&[MockAuth {
+                    address: &owner,
+                    invoke: &MockAuthInvoke {
+                        contract: &cid,
+                        fn_name: "register_wallet",
+                        args,
+                        sub_invokes: &[],
+                    },
+                }])
+                .register_wallet(&name, wallet);
+        }
+        assert_eq!(client.get_wallet(&name), wallet_v2);
+        assert_eq!(client.list_wallets().len(), 1);
+    }
+
     /// A non-owner caller must not be able to register wallets with metadata.
     #[test]
     fn test_register_wallet_with_metadata_rejects_non_owner_caller() {
