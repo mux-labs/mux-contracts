@@ -317,11 +317,17 @@ mod tests {
 
     #[test]
     fn test_double_initialize_fails() {
-        let (_, client, admin) = setup();
+        let (env, client, admin) = setup();
+        let other = Address::generate(&env);
         assert_eq!(
-            client.try_initialize(&admin),
+            client.try_initialize(&other),
             Err(Ok(SpendingPolicyError::AlreadyInitialized))
         );
+        // The failed second call must not replace the first admin.
+        let stored: Address = env.as_contract(&client.address, || {
+            env.storage().instance().get(&DataKey::Admin).unwrap()
+        });
+        assert_eq!(stored, admin);
     }
 
     #[test]
