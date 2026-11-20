@@ -555,6 +555,55 @@ mod tests {
     }
 
     #[test]
+    fn test_grant_delegate_limits_and_regrant_at_cap() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.budget().reset_unlimited();
+        let contract_id = env.register_contract(None, MuxDelegation);
+        let client = MuxDelegationClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let delegate = Address::generate(&env);
+
+        // Rejected grants must not leave any state behind.
+        let empty: Vec<Symbol> = Vec::new(&env);
+        assert!(client.try_grant_delegate(&owner, &delegate, &empty).is_err());
+        assert_eq!(client.get_delegates(&owner).len(), 0);
+
+        // Exactly MAX_DELEGATE_PERMS permissions is allowed (limit is exclusive).
+        let mut max_perms: Vec<Symbol> = Vec::new(&env);
+        for _ in 0..MAX_DELEGATE_PERMS {
+            max_perms.push_back(sym(&env, "transfer"));
+        }
+        client.grant_delegate(&owner, &delegate, &max_perms);
+        assert_eq!(
+            client.get_delegate_permissions(&owner, &delegate).len(),
+            MAX_DELEGATE_PERMS
+        );
+
+        // Fill the owner to MAX_DELEGATES_PER_OWNER unique delegates.
+        let p = perms(&env, &["transfer"]);
+        for _ in 1..MAX_DELEGATES_PER_OWNER {
+            client.grant_delegate(&owner, &Address::generate(&env), &p);
+        }
+        assert_eq!(client.get_delegates(&owner).len(), MAX_DELEGATES_PER_OWNER);
+
+        // Re-granting an existing delegate at the cap succeeds, replaces the
+        // permissions and does not add a duplicate entry.
+        let p2 = perms(&env, &["approve"]);
+        assert!(client.try_grant_delegate(&owner, &delegate, &p2).is_ok());
+        assert_eq!(client.get_delegates(&owner).len(), MAX_DELEGATES_PER_OWNER);
+        assert_eq!(client.get_delegate_permissions(&owner, &delegate), p2);
+
+        // A new delegate at the cap is rejected and not stored.
+        let overflow = Address::generate(&env);
+        assert_eq!(
+            client.try_grant_delegate(&owner, &overflow, &p),
+            Err(Ok(MuxDelegationError::TooManyDelegates))
+        );
+        assert!(!client.get_delegates(&owner).contains(&overflow));
+    }
+
+    #[test]
     fn test_grant_delegate_requires_owner_auth() {
         let env = Env::default(); // no mock_all_auths
         let contract_id = env.register_contract(None, MuxDelegation);
