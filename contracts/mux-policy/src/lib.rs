@@ -406,6 +406,40 @@ mod tests {
     }
 
     #[test]
+    fn test_require_admin_fails_closed_when_uninitialized() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxPolicy);
+        let result = env.as_contract(&contract_id, || MuxPolicy::require_admin(&env));
+        assert_eq!(result, Err(MuxPolicyError::NotInitialized));
+    }
+
+    #[test]
+    fn test_require_admin_demands_stored_admin_auth() {
+        let (env, client, admin) = setup();
+        let result = env.as_contract(&client.address, || MuxPolicy::require_admin(&env));
+        assert_eq!(result, Ok(()));
+        // The auth requested must be the stored admin's, not any other address.
+        assert_eq!(env.auths().last().unwrap().0, admin);
+    }
+
+    #[test]
+    fn test_require_admin_rejects_unauthorized_caller() {
+        // No mock_all_auths: admin is stored but has not authorized the call.
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxPolicy);
+        let client = MuxPolicyClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        env.as_contract(&contract_id, || {
+            env.storage().instance().set(&DataKey::Admin, &admin);
+        });
+        let wallet = Address::generate(&env);
+        assert!(client.try_reset_daily_counter(&wallet).is_err());
+        // Guard ran before any other storage access: no limit record was created.
+        assert!(client.try_get_daily_limit(&wallet).is_err());
+    }
+
+    #[test]
     fn test_set_daily_limit_requires_admin_auth() {
         // Deliberately omit mock_all_auths — admin.require_auth() must reject.
         // Seed the Admin key directly via as_contract (mock_all_auths is a
