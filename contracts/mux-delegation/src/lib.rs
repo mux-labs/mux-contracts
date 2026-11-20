@@ -663,6 +663,40 @@ mod tests {
     }
 
     #[test]
+    fn test_is_delegate_read_only_no_auth_no_events() {
+        // No mock_all_auths: any require_auth in is_delegate would panic.
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxDelegation);
+        let client = MuxDelegationClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let delegate = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        // Failure path: no grant for the pair -> false, not an error.
+        assert!(!client.is_delegate(&owner, &delegate, &sym(&env, "transfer")));
+
+        // Seed a grant directly in storage so no grant event is emitted.
+        env.as_contract(&contract_id, || {
+            env.storage().persistent().set(
+                &DataKey::DelegatePerms(owner.clone(), delegate.clone()),
+                &perms(&env, &["transfer"]),
+            );
+        });
+
+        assert!(client.is_delegate(&owner, &delegate, &sym(&env, "transfer")));
+        // Permission absent from the grant, and other pairs, stay false.
+        assert!(!client.is_delegate(&owner, &delegate, &sym(&env, "withdraw")));
+        assert!(!client.is_delegate(&owner, &other, &sym(&env, "transfer")));
+        assert!(!client.is_delegate(&other, &delegate, &sym(&env, "transfer")));
+
+        assert_eq!(env.events().all().len(), 0);
+        assert_eq!(
+            client.get_delegate_permissions(&owner, &delegate),
+            perms(&env, &["transfer"])
+        );
+    }
+
+    #[test]
     fn test_check_delegate_ok_when_granted() {
         let env = Env::default();
         env.mock_all_auths();
