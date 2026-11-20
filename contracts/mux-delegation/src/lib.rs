@@ -789,6 +789,46 @@ mod tests {
     }
 
     #[test]
+    fn test_link_contract_id_auth_is_inline_and_independent_of_stored_admin() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxDelegation);
+        let client = MuxDelegationClient::new(&env, &contract_id);
+        let stored_admin = Address::generate(&env);
+        let other = Address::generate(&env);
+        let linked = Address::generate(&env);
+        client.initialize(&stored_admin);
+
+        // An address other than DataKey::Admin may be the authorizer, and
+        // the auth required is exactly that supplied address's.
+        client.link_contract_id(&other, &linked);
+        let auths = env.auths();
+        assert_eq!(auths.len(), 1);
+        assert_eq!(auths[0].0, other);
+        assert_eq!(client.get_contract_id(), Some(linked.clone()));
+
+        // The authorizer gains no privilege: it is not the stored admin, so
+        // it cannot re-link, and a second call with any admin and a new
+        // address fails without overwriting the write-once value.
+        let another = Address::generate(&env);
+        let result = client.try_link_contract_id(&stored_admin, &another);
+        assert_eq!(result, Err(Ok(MuxDelegationError::ContractIdAlreadySet)));
+        assert_eq!(client.get_contract_id(), Some(linked));
+    }
+
+    #[test]
+    fn test_link_contract_id_works_without_initialize() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxDelegation);
+        let client = MuxDelegationClient::new(&env, &contract_id);
+        let linked = Address::generate(&env);
+
+        client.link_contract_id(&Address::generate(&env), &linked);
+        assert_eq!(client.get_contract_id(), Some(linked));
+    }
+
+    #[test]
     fn test_get_contract_id_returns_none_when_not_set() {
         let env = Env::default();
         let contract_id = env.register_contract(None, MuxDelegation);
