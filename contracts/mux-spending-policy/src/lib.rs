@@ -449,6 +449,50 @@ mod tests {
         assert_eq!(topic_action(&env, &events, 2), symbol_short!("lmt_set"));
     }
 
+    #[test]
+    fn test_set_policy_resets_spent_and_window_on_overwrite() {
+        // Regression: every set_policy call must zero `spent` and restart the
+        // window at the current ledger, so a limit change never inherits usage.
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        client.set_policy(&account, &asset, &1000, &17280);
+        env.as_contract(&client.address, || {
+            let key = DataKey::SpendLimit(account.clone(), asset.clone());
+            let mut policy: SpendLimit = env.storage().instance().get(&key).unwrap();
+            policy.spent = 750;
+            env.storage().instance().set(&key, &policy);
+        });
+        env.ledger().with_mut(|li| li.sequence_number += 100);
+        let seq = env.ledger().sequence();
+        client.set_policy(&account, &asset, &2000, &17280);
+        let policy = client.get_policy(&account, &asset);
+        assert_eq!(policy.limit, 2000);
+        assert_eq!(policy.spent, 0);
+        assert_eq!(policy.reset_ledger, seq);
+    }
+
+    #[test]
+    fn test_set_policy_rejected_update_keeps_existing_policy() {
+        // Validation must run before any write: a rejected call leaves the
+        // previously stored limit, period and spent counter untouched.
+        let (env, client, _) = setup();
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        client.set_policy(&account, &asset, &1000, &17280);
+        let before = client.get_policy(&account, &asset);
+
+        let neg = client.try_set_policy(&account, &asset, &-1, &17280);
+        assert_eq!(neg, Err(Ok(SpendingPolicyError::InvalidInput)));
+        let zero_period = client.try_set_policy(&account, &asset, &5000, &0);
+        assert_eq!(zero_period, Err(Ok(SpendingPolicyError::InvalidPeriod)));
+
+        let after = client.get_policy(&account, &asset);
+        assert_eq!(after.limit, before.limit);
+        assert_eq!(after.period_ledgers, before.period_ledgers);
+        assert_eq!(after.spent, before.spent);
+    }
+
     // ── get_policy ────────────────────────────────────────────────────────────
 
     #[test]
