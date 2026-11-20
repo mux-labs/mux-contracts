@@ -1250,6 +1250,44 @@ mod tests {
         assert_eq!(client.account_count(), 0);
     }
 
+    /// `initialize` is optional: deploys work without it, `upgrade` fails closed
+    /// with `NotInitialized`, and a second `initialize` is `AlreadyInitialized`.
+    #[test]
+    fn test_initialize_is_optional_one_time_and_gates_upgrade() {
+        let (env, client) = setup();
+        let hash = BytesN::from_array(&env, &[0u8; 32]);
+
+        // Not initialized: registration works, upgrade is fail-closed.
+        let owner = Address::generate(&env);
+        let account = Address::generate(&env);
+        assert_eq!(client.deploy_account(&owner, &account), account);
+        assert_eq!(
+            client.try_upgrade(&hash),
+            Err(Ok(MuxAccountFactoryError::NotInitialized))
+        );
+
+        // First initialize succeeds and requires the admin's auth.
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        assert_eq!(env.auths()[0].0, admin);
+
+        // Admin is now stored: upgrade no longer reports NotInitialized.
+        assert_ne!(
+            client.try_upgrade(&hash),
+            Err(Ok(MuxAccountFactoryError::NotInitialized))
+        );
+
+        // Second initialize fails, even with a different admin.
+        assert_eq!(
+            client.try_initialize(&Address::generate(&env)),
+            Err(Ok(MuxAccountFactoryError::AlreadyInitialized))
+        );
+        assert_eq!(
+            client.try_initialize(&admin),
+            Err(Ok(MuxAccountFactoryError::AlreadyInitialized))
+        );
+    }
+
     // ── max_accounts_per_owner query ──────────────────────────────────────────
 
     /// The public `max_accounts_per_owner` entrypoint must return 64.
