@@ -1547,4 +1547,102 @@ mod tests {
         assert_eq!(events.len(), 3);
         assert_eq!(topic_action(&env, &events, 2), symbol_short!("rec_appr"));
     }
+
+    // ── approve_recovery_admin ────────────────────────────────────────────────
+
+    /// Mock auth for `approve_recovery_admin(co_guardian)` from exactly `signer`.
+    fn admin_auth<'a>(
+        env: &'a Env,
+        contract_id: &'a Address,
+        signer: &'a Address,
+        co_guardian: &Address,
+    ) -> MockAuth<'a> {
+        MockAuth {
+            address: signer,
+            invoke: &MockAuthInvoke {
+                contract: contract_id,
+                fn_name: "approve_recovery_admin",
+                args: vec![env, co_guardian.clone().into_val(env)],
+                sub_invokes: &[],
+            },
+        }
+    }
+
+    /// Owner + guardian co-sign executes the pending recovery immediately,
+    /// without waiting for the timelock.
+    #[test]
+    fn test_approve_recovery_admin_executes_immediately_with_both_auths() {
+        let (env, client, owner, guardian) = setup();
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&guardian, &new_owner);
+
+        client.approve_recovery_admin(&guardian);
+
+        assert_eq!(client.owner(), new_owner);
+        assert_ne!(client.owner(), owner);
+        assert_eq!(client.recovery_status(), RecoveryStatus::Executed);
+        let events = env.events().all();
+        assert_eq!(
+            topic_action(&env, &events, events.len() - 1),
+            symbol_short!("rec_adm")
+        );
+    }
+
+    /// The owner alone (no guardian co-sign) must not bypass the timelock.
+    #[test]
+    fn test_approve_recovery_admin_requires_guardian_auth() {
+        let (env, client, owner, guardian) = setup();
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&guardian, &new_owner);
+
+        env.mock_auths(&[admin_auth(&env, &client.address, &owner, &guardian)]);
+        assert!(client.try_approve_recovery_admin(&guardian).is_err());
+
+        assert_eq!(client.owner(), owner);
+        assert_eq!(client.recovery_status(), RecoveryStatus::Pending);
+    }
+
+    /// A guardian alone (no owner auth) must not be able to execute either.
+    #[test]
+    fn test_approve_recovery_admin_requires_owner_auth() {
+        let (env, client, owner, guardian) = setup();
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&guardian, &new_owner);
+
+        env.mock_auths(&[admin_auth(&env, &client.address, &guardian, &guardian)]);
+        assert!(client.try_approve_recovery_admin(&guardian).is_err());
+
+        assert_eq!(client.owner(), owner);
+        assert_eq!(client.recovery_status(), RecoveryStatus::Pending);
+    }
+
+    /// A co-signer that is not a registered guardian is rejected even if it
+    /// authorizes the call.
+    #[test]
+    fn test_approve_recovery_admin_non_guardian_rejected() {
+        let (env, client, owner, guardian) = setup();
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&guardian, &new_owner);
+
+        let stranger = Address::generate(&env);
+        let err = client
+            .try_approve_recovery_admin(&stranger)
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, RecoveryError::Unauthorized);
+        assert_eq!(client.owner(), owner);
+        assert_eq!(client.recovery_status(), RecoveryStatus::Pending);
+    }
+
+    /// With no pending recovery there is nothing to approve.
+    #[test]
+    fn test_approve_recovery_admin_without_pending_recovery_rejected() {
+        let (_env, client, owner, guardian) = setup();
+        let err = client
+            .try_approve_recovery_admin(&guardian)
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, RecoveryError::NoActiveRecovery);
+        assert_eq!(client.owner(), owner);
+    }
 }
