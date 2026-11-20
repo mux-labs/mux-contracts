@@ -419,6 +419,35 @@ mod tests {
         assert_eq!(client.get_wallet(&name), wallet);
     }
 
+    /// `initialize` must require the owner's authorisation and, on success,
+    /// record that owner with an empty names list.
+    #[test]
+    fn test_initialize_requires_owner_auth_and_records_owner() {
+        // No auths mocked: the call must fail and leave the registry uninitialised.
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxWalletRegistry);
+        let client = MuxWalletRegistryClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        assert!(client.try_initialize(&owner).is_err());
+        env.as_contract(&contract_id, || {
+            assert!(!env.storage().instance().has(&DataKey::Owner));
+        });
+
+        // Auths mocked: the owner is the address that authorised, and is stored.
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxWalletRegistry);
+        let client = MuxWalletRegistryClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        client.initialize(&owner);
+        assert_eq!(env.auths()[0].0, owner);
+        env.as_contract(&contract_id, || {
+            let stored: Address = env.storage().instance().get(&DataKey::Owner).unwrap();
+            assert_eq!(stored, owner);
+        });
+        assert_eq!(client.list_wallets().len(), 0);
+    }
+
     // ── Event: init ──────────────────────────────────────────────────────────
 
     #[test]
