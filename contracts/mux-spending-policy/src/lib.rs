@@ -448,6 +448,26 @@ mod tests {
     }
 
     #[test]
+    fn test_set_policy_zero_period_non_admin_fails_auth() {
+        // No mock_all_auths — auth must fail before the period check is reached.
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxSpendingPolicy);
+        let client = MuxSpendingPolicyClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        env.as_contract(&contract_id, || {
+            env.storage().instance().set(&DataKey::Admin, &admin);
+        });
+
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        let result = client.try_set_policy(&account, &asset, &1000, &0);
+        assert!(result.is_err());
+        assert_ne!(result, Err(Ok(SpendingPolicyError::InvalidPeriod)));
+        assert!(client.try_get_policy(&account, &asset).is_err());
+        assert_eq!(env.events().all().len(), 0);
+    }
+
+    #[test]
     fn test_check_spend_no_policy() {
         let (env, client, _) = setup();
         let result = client.try_check_spend(&Address::generate(&env), &Address::generate(&env), &1);
