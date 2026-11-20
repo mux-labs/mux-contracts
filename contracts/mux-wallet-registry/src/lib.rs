@@ -230,7 +230,7 @@ impl MuxWalletRegistry {
     /// the owner address must authorise the invocation. Calling this with
     /// an existing `name` silently replaces the previous entry and its metadata.
     ///
-    /// Emits a `wlt_regm` event with `(name, wallet)` as the payload on
+    /// Emits a `wlt_meta` event with `(name, wallet)` as the payload on
     /// successful registration.
     ///
     /// # Errors
