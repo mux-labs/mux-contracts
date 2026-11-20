@@ -1488,4 +1488,34 @@ mod integration_tests {
             _adm_prm, _meta_set,
         ));
     }
+
+    #[test]
+    fn test_check_permission_strict_ok_and_deny_by_default() {
+        let (env, client, _admin) = setup();
+        let user = Address::generate(&env);
+        let role = symbol_short!("editor");
+        let perm = symbol_short!("write");
+        let mut perms: Vec<Symbol> = Vec::new(&env);
+        perms.push_back(perm.clone());
+        client.create_role(&role, &perms);
+
+        // No role yet: deny-by-default with a typed error.
+        assert_eq!(
+            client.try_check_permission_strict(&user, &perm),
+            Err(Ok(MuxPermissionsError::Unauthorized))
+        );
+
+        client.grant_role(&user, &role);
+        let events_before = env.events().all().len();
+
+        // Held permission passes; a permission no role grants is denied.
+        assert_eq!(client.try_check_permission_strict(&user, &perm), Ok(Ok(())));
+        assert_eq!(
+            client.try_check_permission_strict(&user, &symbol_short!("delete")),
+            Err(Ok(MuxPermissionsError::Unauthorized))
+        );
+
+        // Read-only: no events on either path.
+        assert_eq!(env.events().all().len(), events_before);
+    }
 }
