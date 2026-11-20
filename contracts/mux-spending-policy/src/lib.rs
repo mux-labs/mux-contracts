@@ -184,19 +184,22 @@ impl MuxSpendingPolicy {
             .ok_or(SpendingPolicyError::PolicyNotFound)
     }
 
-    /// Check whether `amount` is within the policy limit for `account`/`asset`.
+    /// Record `amount` against the spent counter for `account`/`asset` if it
+    /// keeps the total within the policy limit.
     ///
     /// The check is evaluated against a rolling period window. If the window
     /// has expired (current ledger >= `reset_ledger`), the spent counter is
-    /// reset and the window advanced before checking. The updated record is
-    /// persisted so the reset is durable.
+    /// reset and the window advanced before adding `amount`. On success the
+    /// updated record is persisted, so both the reset and the new spend are
+    /// durable. Matches the spent accounting in `mux-account`.
     ///
     /// Returns `Ok(())` when the spend is allowed, `Err(SpendLimitExceeded)`
-    /// when the spend exceeds the configured limit, `Err(PolicyNotFound)` when
-    /// no policy is configured, and `Err(InvalidInput)` for negative amounts.
+    /// when `spent + amount` would pass the configured limit (or overflows),
+    /// `Err(PolicyNotFound)` when no policy is configured, and
+    /// `Err(InvalidInput)` for zero or negative amounts.
     ///
-    /// Emits `chk_ok` when the spend is within the limit or `chk_ex` when the
-    /// spend exceeds the configured limit (or policy is not found).
+    /// Emits `chk_ok` when the spend is recorded or `chk_ex` when the spend
+    /// is rejected (or policy is not found).
     pub fn check_spend(
         env: Env,
         account: Address,
@@ -206,7 +209,7 @@ impl MuxSpendingPolicy {
         if !env.storage().instance().has(&DataKey::Admin) {
             return Err(SpendingPolicyError::NotInitialized);
         }
-        if amount < 0 {
+        if amount <= 0 {
             return Err(SpendingPolicyError::InvalidInput);
         }
         let key = DataKey::SpendLimit(account.clone(), asset.clone());
@@ -218,20 +221,36 @@ impl MuxSpendingPolicy {
             );
             return Err(SpendingPolicyError::PolicyNotFound);
         }
-        let policy: SpendLimit = env
+        let mut policy: SpendLimit = env
             .storage()
             .instance()
             .get(&key)
             .ok_or(SpendingPolicyError::PolicyNotFound)?;
-        if amount > policy.limit {
-            emit(
-                &env,
-                symbol_short!("chk_ex"),
-                (account, asset, amount, policy.limit),
-            );
-            return Err(SpendingPolicyError::SpendLimitExceeded);
+
+        if env.ledger().sequence() >= policy.reset_ledger {
+            policy.spent = 0;
+            policy.reset_ledger = env
+                .ledger()
+                .sequence()
+                .saturating_add(policy.period_ledgers);
         }
+
+        let new_spent = match policy.spent.checked_add(amount) {
+            Some(total) if total <= policy.limit => total,
+            _ => {
+                emit(
+                    &env,
+                    symbol_short!("chk_ex"),
+                    (account, asset, amount, policy.limit),
+                );
+                return Err(SpendingPolicyError::SpendLimitExceeded);
+            }
+        };
+        policy.spent = new_spent;
+        env.storage().instance().set(&key, &policy);
         emit(&env, symbol_short!("chk_ok"), (account, asset, amount));
+        // T-21: extend instance TTL on every write so the registry stays live.
+        Self::extend_ttl(&env);
         Ok(())
     }
 
