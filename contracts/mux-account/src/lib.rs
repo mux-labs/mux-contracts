@@ -1649,6 +1649,39 @@ mod tests {
     }
 
     #[test]
+    fn test_pause_by_non_owner_fails_and_leaves_account_usable() {
+        let (env, client, _owner) = setup_without_auth();
+        // Only a third party authorizes: pause must fail, set no flag, emit nothing.
+        let attacker = Address::generate(&env);
+        env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &attacker,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "pause",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+        assert!(client.try_pause().is_err());
+        assert!(!client.is_paused());
+        assert_eq!(env.events().all().len(), 0);
+
+        // Owner-authorized pause blocks guarded entrypoints with `Unauthorized`.
+        env.mock_all_auths();
+        client.pause();
+        assert!(client.is_paused());
+        let delegate = Address::generate(&env);
+        assert_eq!(
+            client.try_set_delegate(&delegate, &1000_u64, &true),
+            Err(Ok(MuxAccountError::Unauthorized))
+        );
+
+        // Unpause restores normal operation.
+        client.unpause();
+        client.set_delegate(&delegate, &1000_u64, &true);
+    }
+
+    #[test]
     fn test_unpause_requires_owner_auth() {
         let (_env, client, _owner) = setup_without_auth();
         let result = client.try_unpause();
