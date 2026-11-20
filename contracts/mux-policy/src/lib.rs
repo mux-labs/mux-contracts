@@ -882,4 +882,33 @@ mod tests {
         assert_eq!(ev_limit, limit);
         assert_eq!(ev_day_ledgers, day_ledgers);
     }
+
+    /// Once `MAX_WALLETS` distinct wallets are tracked, `set_daily_limit`
+    /// returns `TooManyWallets` for a new wallet but still allows updating an
+    /// existing one.
+    #[test]
+    fn test_set_daily_limit_too_many_wallets_and_update() {
+        let (env, client, _) = setup();
+        let first = Address::generate(&env);
+        let registry = Address::generate(&env);
+        client.set_daily_limit(&first, &1000_i128, &17280_u32, &None);
+        for _ in 1..MAX_WALLETS {
+            let w = Address::generate(&env);
+            client.set_daily_limit(&w, &1000_i128, &17280_u32, &None);
+        }
+
+        let extra = Address::generate(&env);
+        assert_eq!(
+            client.try_set_daily_limit(&extra, &1000_i128, &17280_u32, &None),
+            Err(Ok(MuxPolicyError::TooManyWallets))
+        );
+        assert!(client.try_get_daily_limit(&extra).is_err());
+
+        // At capacity, updating an already-tracked wallet must still succeed.
+        client.set_daily_limit(&first, &2000_i128, &100_u32, &Some(registry.clone()));
+        let record = client.get_daily_limit(&first);
+        assert_eq!(record.limit, 2000);
+        assert_eq!(record.day_ledgers, 100);
+        assert_eq!(record.registry_id, Some(registry));
+    }
 }
