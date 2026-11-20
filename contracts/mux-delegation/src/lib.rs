@@ -619,6 +619,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_revoke_delegate_removes_grant_and_requires_owner_auth() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxDelegation);
+        let client = MuxDelegationClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let delegate = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        client.grant_delegate(&owner, &delegate, &perms(&env, &["transfer"]));
+        client.grant_delegate(&owner, &other, &perms(&env, &["transfer"]));
+
+        client.revoke_delegate(&owner, &delegate);
+
+        // Owner auth was demanded for the revoke call itself.
+        assert_eq!(env.auths()[0].0, owner);
+        // Only the revoked delegate is gone; permissions are cleared.
+        assert!(!client.is_delegate(&owner, &delegate, &symbol_short!("transfer")));
+        assert!(client.is_delegate(&owner, &other, &symbol_short!("transfer")));
+        assert_eq!(client.get_delegates(&owner), soroban_sdk::vec![&env, other]);
+        // A second revoke finds no grant.
+        assert_eq!(
+            client.try_revoke_delegate(&owner, &delegate),
+            Err(Ok(MuxDelegationError::NotADelegate))
+        );
+    }
+
     // ── get_delegate_permissions / is_delegate / check_delegate ──────────────
 
     #[test]
