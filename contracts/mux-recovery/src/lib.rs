@@ -729,7 +729,7 @@ mod tests {
     use super::*;
     use soroban_sdk::{
         symbol_short,
-        testutils::{Address as _, Events, Ledger, MockAuth, MockAuthInvoke},
+        testutils::{storage::Instance as _, Address as _, Events, Ledger, MockAuth, MockAuthInvoke},
         vec, Env, FromVal, IntoVal,
     };
 
@@ -1382,6 +1382,46 @@ mod tests {
     fn test_symbol_short_reg_link_within_limit() {
         // symbol_short! enforces ≤ 8 chars at compile time.
         let _reg_link = symbol_short!("reg_link");
+    }
+
+    /// Test-only registry that answers the `list_contracts` liveness probe.
+    #[contract]
+    struct MockRegistry;
+
+    #[contractimpl]
+    impl MockRegistry {
+        pub fn list_contracts(env: Env) -> soroban_sdk::Vec<soroban_sdk::Symbol> {
+            soroban_sdk::Vec::new(&env)
+        }
+    }
+
+    #[test]
+    fn test_set_registry_links_live_registry_emits_event_and_extends_ttl() {
+        let (env, client, owner, _) = setup();
+        let registry = env.register_contract(None, MockRegistry);
+        // Drop instance TTL below the threshold so the extension is observable.
+        env.ledger()
+            .with_mut(|l| l.sequence_number += 510_000);
+        client.set_registry(&owner, &registry);
+
+        assert_eq!(client.registry_id(), Some(registry));
+        let events = env.events().all();
+        // init (from setup) + reg_link
+        assert_eq!(events.len(), 2);
+        assert_eq!(topic_action(&env, &events, 1), symbol_short!("reg_link"));
+        let ttl = env.as_contract(&client.address, || env.storage().instance().get_ttl());
+        assert!(ttl >= TTL_EXTEND_TO, "set_registry must extend instance TTL");
+    }
+
+    #[test]
+    fn test_set_registry_requires_owner_auth_before_write() {
+        // Stored-owner check passes (owner matches), but no auth is provided for
+        // `owner`, so `require_auth` must abort before the registry is stored.
+        let (env, client, owner, _) = setup();
+        let registry = env.register_contract(None, MockRegistry);
+        env.mock_auths(&[]);
+        assert!(client.try_set_registry(&owner, &registry).is_err());
+        assert_eq!(client.registry_id(), None);
     }
 
     // ── M-of-N quorum tests (#614) ────────────────────────────────────────────
