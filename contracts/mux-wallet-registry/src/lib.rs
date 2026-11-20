@@ -613,6 +613,27 @@ mod tests {
     }
 
     #[test]
+    fn test_require_owner_without_owner_returns_not_initialized() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxWalletRegistry);
+        let result = env.as_contract(&contract_id, || MuxWalletRegistry::require_owner(&env));
+        assert_eq!(result, Err(WalletRegistryError::NotInitialized));
+        // No owner recorded, so no auth may have been requested.
+        assert!(env.auths().is_empty());
+    }
+
+    #[test]
+    fn test_require_owner_requires_stored_owner_auth() {
+        let (env, client, owner) = setup();
+        let result = env.as_contract(&client.address, || MuxWalletRegistry::require_owner(&env));
+        assert_eq!(result, Ok(()));
+        let auths = env.auths();
+        assert_eq!(auths.len(), 1);
+        assert_eq!(auths[0].0, owner);
+    }
+
+    #[test]
     fn test_get_wallet_on_uninitialised_contract_returns_not_found() {
         // get_wallet does not check auth — it just returns WalletNotFound when
         // nothing is stored, even on a completely fresh contract.
