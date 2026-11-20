@@ -136,7 +136,9 @@ impl MuxSpendingPolicy {
     /// length in ledgers and must be > 0 (≈ 17 280 ledgers ≈ 1 day at 5-second
     /// ledger close) — a zero period is rejected with `InvalidPeriod`.
     ///
-    /// The spent counter is reset to 0 on every call.
+    /// A new policy starts with `spent` 0 and a window ending at
+    /// `current ledger + period_ledgers`. Replacing an existing policy keeps
+    /// its `spent` and window, so changing the limit does not clear usage.
     ///
     /// Extends the instance storage TTL on every successful write (T-21).
     pub fn set_policy(
@@ -155,17 +157,22 @@ impl MuxSpendingPolicy {
         if period_ledgers == 0 {
             return Err(SpendingPolicyError::InvalidPeriod);
         }
+        let key = DataKey::SpendLimit(account.clone(), asset.clone());
+        let (spent, reset_ledger) = match env.storage().instance().get::<_, SpendLimit>(&key) {
+            Some(existing) => (existing.spent, existing.reset_ledger),
+            None => (
+                0,
+                env.ledger().sequence().saturating_add(period_ledgers),
+            ),
+        };
         let policy = SpendLimit {
             asset: asset.clone(),
             limit,
-            spent: 0,
-            reset_ledger: env.ledger().sequence(),
+            spent,
+            reset_ledger,
             period_ledgers,
         };
-        env.storage().instance().set(
-            &DataKey::SpendLimit(account.clone(), asset.clone()),
-            &policy,
-        );
+        env.storage().instance().set(&key, &policy);
         emit(&env, symbol_short!("lmt_set"), (account, asset, limit));
         // T-21: extend instance TTL on every write so the registry stays live.
         Self::extend_ttl(&env);
