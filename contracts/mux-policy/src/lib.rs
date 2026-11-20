@@ -707,6 +707,42 @@ mod tests {
         client.reset_daily_counter(&wallet);
     }
 
+    #[test]
+    fn test_reset_daily_counter_clears_spent_and_restarts_window() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        client.set_daily_limit(&wallet, &1000_i128, &10_u32, &None);
+        client.record_spend(&wallet, &400_i128);
+        assert_eq!(client.get_daily_limit(&wallet).spent, 400);
+
+        // Mid-window: reset must zero `spent` and restart the window from now.
+        env.ledger().set_sequence_number(5);
+        client.reset_daily_counter(&wallet);
+
+        let record = client.get_daily_limit(&wallet);
+        assert_eq!(record.spent, 0);
+        assert_eq!(record.reset_ledger, 5 + 10);
+        // The limit itself is untouched.
+        assert_eq!(record.limit, 1000);
+        assert_eq!(record.day_ledgers, 10);
+
+        let events = env.events().all();
+        assert_eq!(
+            topic_action(&env, &events, events.len() - 1),
+            symbol_short!("ctr_rst")
+        );
+    }
+
+    #[test]
+    fn test_reset_daily_counter_unconfigured_wallet_fails() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        assert_eq!(
+            client.try_reset_daily_counter(&wallet),
+            Err(Ok(MuxPolicyError::LimitNotFound))
+        );
+    }
+
     /// TTL constants are sized for the expected ~30-day window.
     #[test]
     fn test_ttl_constants() {
