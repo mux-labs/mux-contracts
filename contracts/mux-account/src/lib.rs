@@ -1067,8 +1067,10 @@ mod tests {
     use super::*;
     use soroban_sdk::{
         symbol_short,
-        testutils::{storage::Instance as _, Address as _, Events, Ledger as _},
-        Env, FromVal, IntoVal, String, Vec,
+        testutils::{
+            storage::Instance as _, Address as _, Events, Ledger as _, MockAuth, MockAuthInvoke,
+        },
+        Env, FromVal, IntoVal, String, Val, Vec,
     };
 
     #[contract]
@@ -1888,6 +1890,103 @@ mod tests {
             ),
             Err(Ok(MuxAccountError::ScopeNotGranted))
         );
+    }
+
+    /// Both parties must authorize. Only the session key signs here, so the
+    /// call must be rejected at `sponsor.require_auth()` even though the
+    /// relayer is allowlisted and the session key is valid.
+    #[test]
+    fn test_sponsored_execution_requires_sponsor_authorization() {
+        let (env, client, owner, cid) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let target = env.register_contract(None, ExecuteTarget);
+        let session_key = Address::generate(&env);
+        client.register_session_key(
+            &session_key,
+            &(env.ledger().timestamp() + 60),
+            &ping_scope(&env),
+        );
+        let relayer = Address::generate(&env);
+        client.set_sponsor(&relayer, &true);
+
+        let args: Vec<Val> = soroban_sdk::vec![
+            &env,
+            session_key.clone().into_val(&env),
+            relayer.clone().into_val(&env),
+            target.clone().into_val(&env),
+            symbol_short!("ping").into_val(&env),
+            Vec::<Val>::new(&env).into_val(&env),
+            0_u64.into_val(&env),
+        ];
+        env.mock_auths(&[MockAuth {
+            address: &session_key,
+            invoke: &MockAuthInvoke {
+                contract: &cid,
+                fn_name: "execute_with_session_sponsored",
+                args,
+                sub_invokes: &[],
+            },
+        }]);
+
+        assert!(client
+            .try_execute_with_session_sponsored(
+                &session_key,
+                &relayer,
+                &target,
+                &symbol_short!("ping"),
+                &Vec::new(&env),
+                &0_u64,
+            )
+            .is_err());
+        assert_eq!(client.nonce(), 0);
+    }
+
+    /// Both parties must authorize. Only the sponsor signs here, so the call
+    /// must be rejected at `session_key.require_auth()`.
+    #[test]
+    fn test_sponsored_execution_requires_session_key_authorization() {
+        let (env, client, owner, cid) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let target = env.register_contract(None, ExecuteTarget);
+        let session_key = Address::generate(&env);
+        client.register_session_key(
+            &session_key,
+            &(env.ledger().timestamp() + 60),
+            &ping_scope(&env),
+        );
+        let relayer = Address::generate(&env);
+        client.set_sponsor(&relayer, &true);
+
+        let args: Vec<Val> = soroban_sdk::vec![
+            &env,
+            session_key.clone().into_val(&env),
+            relayer.clone().into_val(&env),
+            target.clone().into_val(&env),
+            symbol_short!("ping").into_val(&env),
+            Vec::<Val>::new(&env).into_val(&env),
+            0_u64.into_val(&env),
+        ];
+        env.mock_auths(&[MockAuth {
+            address: &relayer,
+            invoke: &MockAuthInvoke {
+                contract: &cid,
+                fn_name: "execute_with_session_sponsored",
+                args,
+                sub_invokes: &[],
+            },
+        }]);
+
+        assert!(client
+            .try_execute_with_session_sponsored(
+                &session_key,
+                &relayer,
+                &target,
+                &symbol_short!("ping"),
+                &Vec::new(&env),
+                &0_u64,
+            )
+            .is_err());
+        assert_eq!(client.nonce(), 0);
     }
 
     // ── Transaction nonce ────────────────────────────────────────────────────
