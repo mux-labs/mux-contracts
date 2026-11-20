@@ -692,6 +692,42 @@ mod tests {
         assert_eq!(result, Err(Ok(MuxDelegationError::NotADelegate)));
     }
 
+    #[test]
+    fn test_check_delegate_is_permission_and_pair_specific() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxDelegation);
+        let client = MuxDelegationClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let delegate = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        client.grant_delegate(&owner, &delegate, &perms(&env, &["transfer"]));
+
+        // Granted permission passes with exactly Ok(()).
+        assert_eq!(
+            client.try_check_delegate(&owner, &delegate, &sym(&env, "transfer")),
+            Ok(Ok(()))
+        );
+        // A permission not in the grant is rejected.
+        assert_eq!(
+            client.try_check_delegate(&owner, &delegate, &sym(&env, "burn")),
+            Err(Ok(MuxDelegationError::NotADelegate))
+        );
+        // A different delegate under the same owner is rejected.
+        assert_eq!(
+            client.try_check_delegate(&owner, &other, &sym(&env, "transfer")),
+            Err(Ok(MuxDelegationError::NotADelegate))
+        );
+
+        // Revoking removes access.
+        client.revoke_delegate(&owner, &delegate);
+        assert_eq!(
+            client.try_check_delegate(&owner, &delegate, &sym(&env, "transfer")),
+            Err(Ok(MuxDelegationError::NotADelegate))
+        );
+    }
+
     // ── get_delegates ─────────────────────────────────────────────────────────
 
     #[test]
