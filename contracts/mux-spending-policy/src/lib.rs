@@ -193,7 +193,7 @@ impl MuxSpendingPolicy {
     ///
     /// Returns `Ok(())` when the spend is allowed, `Err(SpendLimitExceeded)`
     /// when the spend exceeds the configured limit, `Err(PolicyNotFound)` when
-    /// no policy is configured, and `Err(InvalidInput)` for negative amounts.
+    /// no policy is configured, and `Err(InvalidInput)` for non-positive amounts.
     ///
     /// Emits `chk_ok` when the spend is within the limit or `chk_ex` when the
     /// spend exceeds the configured limit (or policy is not found).
@@ -206,7 +206,7 @@ impl MuxSpendingPolicy {
         if !env.storage().instance().has(&DataKey::Admin) {
             return Err(SpendingPolicyError::NotInitialized);
         }
-        if amount < 0 {
+        if amount <= 0 {
             return Err(SpendingPolicyError::InvalidInput);
         }
         let key = DataKey::SpendLimit(account.clone(), asset.clone());
@@ -583,8 +583,9 @@ mod tests {
 
         client.set_policy(&account, &asset, &1000, &17280);
 
-        // Spending zero should be allowed (no validation against zero in current implementation)
-        assert!(client.try_check_spend(&account, &asset, &0).is_ok());
+        // Spending zero is invalid input, same as a negative amount.
+        let result = client.try_check_spend(&account, &asset, &0);
+        assert_eq!(result, Err(Ok(SpendingPolicyError::InvalidInput)));
     }
 
     #[test]
