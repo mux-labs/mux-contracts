@@ -1785,6 +1785,99 @@ mod tests {
         assert_eq!(env.events().all().len(), 1);
     }
 
+    /// The session key signs instead of the owner: the call must require the
+    /// session key's authorization and must not require the owner's.
+    #[test]
+    fn test_execute_with_session_requires_session_key_auth_not_owner() {
+        let (env, client, owner, _cid) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let target = env.register_contract(None, ExecuteTarget);
+        let session_key = Address::generate(&env);
+        client.register_session_key(
+            &session_key,
+            &(env.ledger().timestamp() + 60),
+            &ping_scope(&env),
+        );
+
+        client.execute_with_session(
+            &session_key,
+            &target,
+            &symbol_short!("ping"),
+            &Vec::new(&env),
+            &0_u64,
+        );
+
+        let auths = env.auths();
+        assert!(
+            auths.iter().any(|(addr, _)| addr == session_key),
+            "the session key must authorize the call"
+        );
+        assert!(
+            !auths.iter().any(|(addr, _)| addr == owner),
+            "the owner must not be required to sign a session call"
+        );
+    }
+
+    /// The target is dispatched while the reentrancy guard is held: a callback
+    /// into `debit_spend` is rejected, and the guard is released afterwards so
+    /// the account is not locked out.
+    #[test]
+    fn test_execute_with_session_holds_reentrancy_guard_across_invocation() {
+        let (env, client, owner, cid) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let asset = Address::generate(&env);
+        client.set_spend_limit(&asset, &1000_i128, &100_u32);
+
+        let attacker = env.register_contract(None, ReentrantTarget);
+        let session_key = Address::generate(&env);
+        client.register_session_key(
+            &session_key,
+            &(env.ledger().timestamp() + 60),
+            &soroban_sdk::vec![
+                &env,
+                Scope {
+                    method: symbol_short!("attack"),
+                },
+            ],
+        );
+        let attack_args: Vec<Val> = soroban_sdk::vec![
+            &env,
+            cid.clone().into_val(&env),
+            asset.clone().into_val(&env),
+            50_i128.into_val(&env)
+        ];
+
+        let value = client.execute_with_session(
+            &session_key,
+            &attacker,
+            &symbol_short!("attack"),
+            &attack_args,
+            &0_u64,
+        );
+        assert!(
+            bool::from_val(&env, &value),
+            "a reentrant debit_spend during execute_with_session must be rejected"
+        );
+
+        // Guard must be released once the call returns.
+        let still_held: bool = env.as_contract(&cid, || {
+            env.storage()
+                .instance()
+                .get(&DataKey::Executing)
+                .unwrap_or(false)
+        });
+        assert!(!still_held, "the reentrancy guard must be released after dispatch");
+
+        // The rejected callback must not have recorded any spend.
+        let recorded: SpendLimit = env.as_contract(&cid, || {
+            env.storage()
+                .instance()
+                .get(&DataKey::SpendLimit(asset.clone()))
+                .unwrap()
+        });
+        assert_eq!(recorded.spent, 0_i128);
+    }
+
     // ── Relayer sponsorship ──────────────────────────────────────────────────
 
     /// Sponsorship is fail-closed: a relayer that was never allowlisted cannot
