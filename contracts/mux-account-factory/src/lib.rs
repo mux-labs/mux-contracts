@@ -1851,4 +1851,36 @@ mod tests {
         // account_count includes the address only once.
         assert_eq!(client.account_count(), 1);
     }
+
+    #[test]
+    fn test_get_accounts_empty_for_unknown_owner_and_needs_no_auth() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let stranger = Address::generate(&env);
+        let account_addr = Address::generate(&env);
+        client.deploy_account(&owner, &account_addr);
+
+        // Never-deployed owner: empty vec, no error, even when others are registered.
+        let result = client.try_get_accounts(&stranger);
+        assert_eq!(result, Ok(Ok(Vec::new(&env))));
+
+        // Registered owner sees exactly their own account.
+        let accounts = client.get_accounts(&owner);
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts.get(0).unwrap(), account_addr);
+
+        // Fresh env with auths NOT mocked: reads must succeed without authorization.
+        let env2 = Env::default();
+        let id2 = env2.register_contract(None, MuxAccountFactory);
+        let client2 = MuxAccountFactoryClient::new(&env2, &id2);
+        let owner2 = Address::generate(&env2);
+        let acct2 = Address::generate(&env2);
+        env2.as_contract(&id2, || {
+            env2.storage()
+                .instance()
+                .set(&DataKey::Accounts(owner2.clone()), &Vec::from_array(&env2, [acct2.clone()]));
+        });
+        assert_eq!(client2.get_accounts(&owner2).get(0).unwrap(), acct2);
+        assert_eq!(client2.get_accounts(&Address::generate(&env2)).len(), 0);
+    }
 }
