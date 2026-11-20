@@ -1270,6 +1270,25 @@ mod tests {
         assert_eq!(client.account_count(), 2);
     }
 
+    /// Re-deploying an already-registered account via the other deploy path is
+    /// idempotent and must not increment `account_count`.
+    #[test]
+    fn test_account_count_unchanged_when_redeploying_across_paths() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let account = Address::generate(&env);
+        let version = String::from_str(&env, "1.0.0");
+        let description = String::from_str(&env, "Test");
+        let author = String::from_str(&env, "test");
+
+        client.deploy_account(&owner, &account);
+        assert_eq!(client.account_count(), 1);
+
+        client.deploy_account_with_metadata(&owner, &account, &version, &description, &author);
+        assert_eq!(client.account_count(), 1);
+        assert_eq!(client.get_accounts(&owner).len(), 1);
+    }
+
     // ── get_accounts for unknown owner ────────────────────────────────────────
 
     /// Querying accounts for an owner that has never deployed must return an
