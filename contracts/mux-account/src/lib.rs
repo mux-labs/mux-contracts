@@ -1419,6 +1419,56 @@ mod tests {
         assert!(result.is_err());
     }
 
+    fn recorded_limit(env: &Env, cid: &Address, asset: &Address) -> SpendLimit {
+        env.as_contract(cid, || {
+            env.storage()
+                .instance()
+                .get(&DataKey::SpendLimit(asset.clone()))
+                .unwrap()
+        })
+    }
+
+    #[test]
+    fn test_spend_resets_when_ledger_reaches_reset_ledger() {
+        let (env, client, owner, cid) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let asset = Address::generate(&env);
+        client.set_spend_limit(&asset, &100_i128, &100_u32);
+        let reset_ledger = recorded_limit(&env, &cid, &asset).reset_ledger;
+
+        client.debit_spend(&asset, &80_i128);
+        assert_eq!(recorded_limit(&env, &cid, &asset).spent, 80_i128);
+
+        // One ledger before the boundary the period has not rolled over.
+        env.ledger().with_mut(|l| l.sequence_number = reset_ledger - 1);
+        assert_eq!(
+            client.try_debit_spend(&asset, &30_i128),
+            Err(Ok(MuxAccountError::SpendLimitExceeded))
+        );
+
+        // At `reset_ledger` the counter restarts from zero.
+        env.ledger().with_mut(|l| l.sequence_number = reset_ledger);
+        client.debit_spend(&asset, &30_i128);
+        let after = recorded_limit(&env, &cid, &asset);
+        assert_eq!(after.spent, 30_i128);
+        assert_eq!(after.reset_ledger, reset_ledger + 100);
+    }
+
+    #[test]
+    fn test_spend_overflow_fails_and_leaves_spent_unchanged() {
+        let (env, client, owner, cid) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+        let asset = Address::generate(&env);
+        client.set_spend_limit(&asset, &i128::MAX, &100_u32);
+
+        client.debit_spend(&asset, &i128::MAX);
+        assert_eq!(
+            client.try_debit_spend(&asset, &1_i128),
+            Err(Ok(MuxAccountError::ArithmeticOverflow))
+        );
+        assert_eq!(recorded_limit(&env, &cid, &asset).spent, i128::MAX);
+    }
+
     #[test]
     fn test_execute_enforces_spend_limit_before_invocation() {
         let (env, client, owner, _cid) = setup();
