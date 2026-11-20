@@ -1899,6 +1899,39 @@ mod tests {
     }
 
     #[test]
+    fn test_upgrade_replaces_wasm_and_extends_instance_ttl() {
+        // Success path: an initialized batcher's admin can upgrade, and the
+        // instance TTL is pushed back out to TTL_EXTEND_TO (T-21).
+        use soroban_sdk::testutils::Ledger;
+
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+        client.initialize(&Address::generate(&env));
+
+        // Let the TTL decay below TTL_THRESHOLD so only upgrade() can restore it.
+        env.ledger()
+            .with_mut(|l| l.sequence_number += TTL_EXTEND_TO - 1_000);
+        let ttl_before = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+        assert!(ttl_before < TTL_THRESHOLD);
+
+        // Minimal valid Soroban module: wasm header + `contractenvmetav0`
+        // custom section declaring interface version (protocol 21, pre-release 0).
+        let mut wasm = std::vec![0x00u8, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x00, 0x1e, 0x11];
+        wasm.extend_from_slice(b"contractenvmetav0");
+        wasm.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 21, 0, 0, 0, 0]);
+        let new_hash = env
+            .deployer()
+            .upload_contract_wasm(soroban_sdk::Bytes::from_slice(&env, &wasm));
+
+        client.upgrade(&new_hash);
+
+        let ttl_after = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+        assert_eq!(ttl_after, TTL_EXTEND_TO);
+    }
+
+    #[test]
     fn test_execute_batch_does_not_require_initialize() {
         // Batching must keep working exactly as before for batchers that
         // never call initialize() — the admin is optional and orthogonal to
