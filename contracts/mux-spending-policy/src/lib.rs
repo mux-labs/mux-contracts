@@ -136,7 +136,9 @@ impl MuxSpendingPolicy {
     /// length in ledgers and must be > 0 (≈ 17 280 ledgers ≈ 1 day at 5-second
     /// ledger close) — a zero period is rejected with `InvalidPeriod`.
     ///
-    /// The spent counter is reset to 0 on every call.
+    /// A new policy starts with `spent` 0 and a window ending at
+    /// `current ledger + period_ledgers`. Replacing an existing policy keeps
+    /// its `spent` and window, so changing the limit does not clear usage.
     ///
     /// Extends the instance storage TTL on every successful write (T-21).
     pub fn set_policy(
@@ -155,17 +157,22 @@ impl MuxSpendingPolicy {
         if period_ledgers == 0 {
             return Err(SpendingPolicyError::InvalidPeriod);
         }
+        let key = DataKey::SpendLimit(account.clone(), asset.clone());
+        let (spent, reset_ledger) = match env.storage().instance().get::<_, SpendLimit>(&key) {
+            Some(existing) => (existing.spent, existing.reset_ledger),
+            None => (
+                0,
+                env.ledger().sequence().saturating_add(period_ledgers),
+            ),
+        };
         let policy = SpendLimit {
             asset: asset.clone(),
             limit,
-            spent: 0,
-            reset_ledger: env.ledger().sequence(),
+            spent,
+            reset_ledger,
             period_ledgers,
         };
-        env.storage().instance().set(
-            &DataKey::SpendLimit(account.clone(), asset.clone()),
-            &policy,
-        );
+        env.storage().instance().set(&key, &policy);
         emit(&env, symbol_short!("lmt_set"), (account, asset, limit));
         // T-21: extend instance TTL on every write so the registry stays live.
         Self::extend_ttl(&env);
@@ -196,7 +203,7 @@ impl MuxSpendingPolicy {
     /// Returns `Ok(())` when the spend is allowed, `Err(SpendLimitExceeded)`
     /// when `spent + amount` would pass the configured limit (or overflows),
     /// `Err(PolicyNotFound)` when no policy is configured, and
-    /// `Err(InvalidInput)` for zero or negative amounts.
+    /// `Err(InvalidInput)` for non-positive amounts.
     ///
     /// Emits `chk_ok` when the spend is recorded or `chk_ex` when the spend
     /// is rejected (or policy is not found).
@@ -336,11 +343,17 @@ mod tests {
 
     #[test]
     fn test_double_initialize_fails() {
-        let (_, client, admin) = setup();
+        let (env, client, admin) = setup();
+        let other = Address::generate(&env);
         assert_eq!(
-            client.try_initialize(&admin),
+            client.try_initialize(&other),
             Err(Ok(SpendingPolicyError::AlreadyInitialized))
         );
+        // The failed second call must not replace the first admin.
+        let stored: Address = env.as_contract(&client.address, || {
+            env.storage().instance().get(&DataKey::Admin).unwrap()
+        });
+        assert_eq!(stored, admin);
     }
 
     #[test]
@@ -464,6 +477,26 @@ mod tests {
         client.set_policy(&account, &asset, &1000, &17280);
         let result = client.try_check_spend(&account, &asset, &1001);
         assert_eq!(result, Err(Ok(SpendingPolicyError::SpendLimitExceeded)));
+    }
+
+    #[test]
+    fn test_set_policy_zero_period_non_admin_fails_auth() {
+        // No mock_all_auths — auth must fail before the period check is reached.
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxSpendingPolicy);
+        let client = MuxSpendingPolicyClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        env.as_contract(&contract_id, || {
+            env.storage().instance().set(&DataKey::Admin, &admin);
+        });
+
+        let account = Address::generate(&env);
+        let asset = Address::generate(&env);
+        let result = client.try_set_policy(&account, &asset, &1000, &0);
+        assert!(result.is_err());
+        assert_ne!(result, Err(Ok(SpendingPolicyError::InvalidPeriod)));
+        assert!(client.try_get_policy(&account, &asset).is_err());
+        assert_eq!(env.events().all().len(), 0);
     }
 
     #[test]
@@ -602,8 +635,9 @@ mod tests {
 
         client.set_policy(&account, &asset, &1000, &17280);
 
-        // Spending zero should be allowed (no validation against zero in current implementation)
-        assert!(client.try_check_spend(&account, &asset, &0).is_ok());
+        // Spending zero is invalid input, same as a negative amount.
+        let result = client.try_check_spend(&account, &asset, &0);
+        assert_eq!(result, Err(Ok(SpendingPolicyError::InvalidInput)));
     }
 
     #[test]

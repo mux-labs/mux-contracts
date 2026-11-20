@@ -266,21 +266,6 @@ impl MuxAccountFactory {
     ///
     /// | Variant | When |
     /// |---------|------|
-
-    ///
-    /// The caller must be `owner`.  `account_address` must differ from `owner`.
-    /// Metadata strings are individually bounded to prevent storage bloat:
-    ///
-    /// | Field | Max bytes | Constant |
-    /// |-------|-----------|----------|
-    /// | `version` | 32 | `MAX_VERSION_LENGTH` |
-    /// | `description` | 256 | `MAX_DESCRIPTION_LENGTH` |
-    /// | `author` | 64 | `MAX_AUTHOR_LENGTH` |
-    ///
-    /// # Errors
-    ///
-    /// | Variant | When |
-    /// |---------|------|
     /// | [`MuxAccountFactoryError::InvalidAccount`] | `account_address == owner` |
     /// | [`MuxAccountFactoryError::TooManyAccounts`] | owner's Accounts vec is at [`MAX_ACCOUNTS_PER_OWNER`] |
     /// | [`MuxAccountFactoryError::MetadataTooLarge`] | any metadata field exceeds its byte limit |
@@ -660,6 +645,59 @@ mod tests {
         let new_account = Address::generate(&env);
         let err_result = client.try_deploy_account(&owner, &new_account);
         assert_eq!(err_result, Err(Ok(MuxAccountFactoryError::TooManyAccounts)));
+    }
+
+    /// `load_accounts_for_deploy` loads the owner's Accounts vec, rejecting when
+    /// it is already at the storage-griefing cap unless the account is already
+    /// registered (idempotency). Exercised directly so a regression that drops
+    /// this guard (including the failure path) fails this focused test.
+    #[test]
+    fn test_load_accounts_for_deploy() {
+        let env = Env::default();
+        env.budget().reset_unlimited();
+        let contract_id = env.register_contract(None, MuxAccountFactory);
+        let owner = Address::generate(&env);
+
+        // Empty Accounts vec: returns the empty vec and is not registered.
+        let (accounts, registered) = env.as_contract(&contract_id, || {
+            MuxAccountFactory::load_accounts_for_deploy(&env, &owner, &Address::generate(&env))
+                .unwrap()
+        });
+        assert!(!registered);
+        assert!(accounts.is_empty());
+
+        // At the storage-griefing cap, a new account is rejected.
+        let new_account = Address::generate(&env);
+        let result = env.as_contract(&contract_id, || {
+            let mut full = Vec::new(&env);
+            for _ in 0..MAX_ACCOUNTS_PER_OWNER {
+                full.push_back(Address::generate(&env));
+            }
+            env.storage()
+                .instance()
+                .set(&DataKey::Accounts(owner.clone()), &full);
+            MuxAccountFactory::load_accounts_for_deploy(&env, &owner, &new_account)
+        });
+        assert!(matches!(
+            result,
+            Err(MuxAccountFactoryError::TooManyAccounts)
+        ));
+
+        // At the cap, an already-registered account is still allowed (idempotency).
+        let existing = Address::generate(&env);
+        let (accounts, registered) = env.as_contract(&contract_id, || {
+            let mut full = Vec::new(&env);
+            full.push_back(existing.clone());
+            for _ in 1..MAX_ACCOUNTS_PER_OWNER {
+                full.push_back(Address::generate(&env));
+            }
+            env.storage()
+                .instance()
+                .set(&DataKey::Accounts(owner.clone()), &full);
+            MuxAccountFactory::load_accounts_for_deploy(&env, &owner, &existing).unwrap()
+        });
+        assert!(registered);
+        assert_eq!(accounts.len(), MAX_ACCOUNTS_PER_OWNER);
     }
 
     #[test]
@@ -1258,6 +1296,33 @@ mod tests {
         let (_env, client) = setup();
         assert_eq!(client.max_accounts_per_owner(), MAX_ACCOUNTS_PER_OWNER);
         assert_eq!(client.max_accounts_per_owner(), 64);
+    }
+
+    /// The value returned by `max_accounts_per_owner` must match what the
+    /// deploy path actually enforces: exactly `cap` distinct accounts succeed,
+    /// and the next distinct account is predictably rejected with
+    /// [`MuxAccountFactoryError::TooManyAccounts`]. This locks in the failure
+    /// path the entrypoint's docs tell clients to preflight against.
+    #[test]
+    fn test_max_accounts_per_owner_matches_deploy_failure_path() {
+        let (env, client) = setup();
+        env.budget().reset_unlimited();
+
+        let cap = client.max_accounts_per_owner();
+        assert_eq!(cap, MAX_ACCOUNTS_PER_OWNER);
+        assert_eq!(cap, 64);
+
+        let owner = Address::generate(&env);
+
+        // Deploying exactly `cap` distinct accounts must all succeed.
+        for _ in 0..cap {
+            client.deploy_account(&owner, &Address::generate(&env));
+        }
+        assert_eq!(client.get_accounts(&owner).len(), cap);
+
+        // One more distinct account must hit the named failure path.
+        let result = client.try_deploy_account(&owner, &Address::generate(&env));
+        assert_eq!(result, Err(Ok(MuxAccountFactoryError::TooManyAccounts)));
     }
 
     // ── duplicate deploy is idempotent ───────────────────────────────────────
