@@ -2218,6 +2218,39 @@ mod tests {
         assert_eq!(client.nonce(), 1, "rejected calls must not advance it");
     }
 
+    /// Direct regression test for `consume_nonce`: exact match advances the
+    /// counter by one; replayed, future and uninitialised states fail closed.
+    #[test]
+    fn test_consume_nonce_is_exact_match_and_advances_by_one() {
+        let (env, client, owner, cid) = setup();
+
+        // Uninitialised: no stored counter must not be treated as 0.
+        env.as_contract(&cid, || {
+            assert_eq!(
+                MuxAccount::consume_nonce(&env, 0),
+                Err(MuxAccountError::NotInitialized)
+            );
+        });
+
+        client.initialize(&owner, &Vec::new(&env));
+        env.as_contract(&cid, || {
+            assert_eq!(MuxAccount::consume_nonce(&env, 0), Ok(()));
+            // Replay of the consumed nonce.
+            assert_eq!(
+                MuxAccount::consume_nonce(&env, 0),
+                Err(MuxAccountError::InvalidNonce)
+            );
+            // Nonce from the future: the counter is exact, not a lower bound.
+            assert_eq!(
+                MuxAccount::consume_nonce(&env, 2),
+                Err(MuxAccountError::InvalidNonce)
+            );
+            // Rejections did not advance the counter.
+            assert_eq!(MuxAccount::consume_nonce(&env, 1), Ok(()));
+        });
+        assert_eq!(client.nonce(), 2);
+    }
+
     /// A call rejected by an earlier check must not burn a nonce — otherwise a
     /// third party could desynchronise a relayer's queue by spamming rejects.
     #[test]
