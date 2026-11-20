@@ -662,6 +662,59 @@ mod tests {
         assert_eq!(err_result, Err(Ok(MuxAccountFactoryError::TooManyAccounts)));
     }
 
+    /// `load_accounts_for_deploy` loads the owner's Accounts vec, rejecting when
+    /// it is already at the storage-griefing cap unless the account is already
+    /// registered (idempotency). Exercised directly so a regression that drops
+    /// this guard (including the failure path) fails this focused test.
+    #[test]
+    fn test_load_accounts_for_deploy() {
+        let env = Env::default();
+        env.budget().reset_unlimited();
+        let contract_id = env.register_contract(None, MuxAccountFactory);
+        let owner = Address::generate(&env);
+
+        // Empty Accounts vec: returns the empty vec and is not registered.
+        let (accounts, registered) = env.as_contract(&contract_id, || {
+            MuxAccountFactory::load_accounts_for_deploy(&env, &owner, &Address::generate(&env))
+                .unwrap()
+        });
+        assert!(!registered);
+        assert!(accounts.is_empty());
+
+        // At the storage-griefing cap, a new account is rejected.
+        let new_account = Address::generate(&env);
+        let result = env.as_contract(&contract_id, || {
+            let mut full = Vec::new(&env);
+            for _ in 0..MAX_ACCOUNTS_PER_OWNER {
+                full.push_back(Address::generate(&env));
+            }
+            env.storage()
+                .instance()
+                .set(&DataKey::Accounts(owner.clone()), &full);
+            MuxAccountFactory::load_accounts_for_deploy(&env, &owner, &new_account)
+        });
+        assert!(matches!(
+            result,
+            Err(MuxAccountFactoryError::TooManyAccounts)
+        ));
+
+        // At the cap, an already-registered account is still allowed (idempotency).
+        let existing = Address::generate(&env);
+        let (accounts, registered) = env.as_contract(&contract_id, || {
+            let mut full = Vec::new(&env);
+            full.push_back(existing.clone());
+            for _ in 1..MAX_ACCOUNTS_PER_OWNER {
+                full.push_back(Address::generate(&env));
+            }
+            env.storage()
+                .instance()
+                .set(&DataKey::Accounts(owner.clone()), &full);
+            MuxAccountFactory::load_accounts_for_deploy(&env, &owner, &existing).unwrap()
+        });
+        assert!(registered);
+        assert_eq!(accounts.len(), MAX_ACCOUNTS_PER_OWNER);
+    }
+
     #[test]
     fn test_deploy_emits_event() {
         use soroban_sdk::testutils::Events;
