@@ -1506,6 +1506,35 @@ mod tests {
         assert_eq!(client.owner(), new_owner);
     }
 
+    /// With a full approval set, sequence `executable_at - 1` is rejected and
+    /// `executable_at` proceeds to the owner update.
+    #[test]
+    fn test_execute_recovery_rejects_before_executable_at_with_full_approvals() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxRecovery);
+        let client = MuxRecoveryClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let g1 = Address::generate(&env);
+        let g2 = Address::generate(&env);
+        client.initialize(&owner, &vec![&env, g1.clone(), g2.clone()], &2_u32);
+
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&g1, &new_owner);
+        client.approve_recovery(&g2);
+        let executable_at = client.recovery_request().unwrap().executable_at;
+
+        env.ledger()
+            .with_mut(|l| l.sequence_number = executable_at - 1);
+        let err = client.try_execute_recovery(&g1).unwrap_err().unwrap();
+        assert_eq!(err, RecoveryError::TimelockNotExpired);
+        assert_eq!(client.owner(), owner);
+
+        env.ledger().with_mut(|l| l.sequence_number = executable_at);
+        client.execute_recovery(&g1);
+        assert_eq!(client.owner(), new_owner);
+    }
+
     /// A guardian cannot approve a recovery request twice.
     #[test]
     fn test_duplicate_approval_rejected() {
