@@ -793,6 +793,54 @@ mod tests {
         assert_eq!(err, RecoveryError::AlreadyInitialized);
     }
 
+    /// Regression: initialize stores the supplied quorum threshold, accepts
+    /// only values in `[1, guardians.len()]`, and threshold=1 still lets a
+    /// single guardian complete a recovery (the previous behaviour).
+    #[test]
+    fn test_initialize_regression_quorum_bounds_and_single_guardian_behaviour() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let owner = Address::generate(&env);
+        let g1 = Address::generate(&env);
+        let g2 = Address::generate(&env);
+
+        let contract_id = env.register_contract(None, MuxRecovery);
+        let client = MuxRecoveryClient::new(&env, &contract_id);
+        client.initialize(&owner, &vec![&env, g1.clone(), g2.clone()], &1_u32);
+        assert_eq!(client.owner(), owner);
+        assert_eq!(client.guardians(), vec![&env, g1.clone(), g2.clone()]);
+        assert_eq!(client.quorum_threshold(), 1);
+
+        // One guardian's initiation approval is enough at threshold=1.
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&g1, &new_owner);
+        env.ledger()
+            .with_mut(|l| l.sequence_number += RECOVERY_TIMELOCK + 1);
+        client.execute_recovery(&g1);
+        assert_eq!(client.owner(), new_owner);
+
+        // The inclusive upper bound (threshold == number of guardians) is valid.
+        let upper_id = env.register_contract(None, MuxRecovery);
+        let upper = MuxRecoveryClient::new(&env, &upper_id);
+        upper.initialize(&owner, &vec![&env, g1.clone(), g2.clone()], &2_u32);
+        assert_eq!(upper.quorum_threshold(), 2);
+
+        // Both documented failure paths are rejected without initializing.
+        let bad_id = env.register_contract(None, MuxRecovery);
+        let bad = MuxRecoveryClient::new(&env, &bad_id);
+        let err = bad
+            .try_initialize(&owner, &vec![&env, g1.clone(), g2.clone()], &0_u32)
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, RecoveryError::InvalidQuorumThreshold);
+        let err = bad
+            .try_initialize(&owner, &vec![&env, g1], &2_u32)
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, RecoveryError::InvalidQuorumThreshold);
+        assert!(bad.try_owner().is_err());
+    }
+
     // ── recovery_status default ───────────────────────────────────────────────
 
     #[test]
@@ -899,6 +947,43 @@ mod tests {
         env.ledger()
             .with_mut(|l| l.sequence_number += RECOVERY_TIMELOCK + 1);
         client.execute_recovery(&guardian);
+        let err = client.try_cancel_recovery().unwrap_err().unwrap();
+        assert_eq!(err, RecoveryError::NoActiveRecovery);
+    }
+
+    /// Regression: only the current owner may cancel, and it may do so at any
+    /// point before execution. Once executed, cancellation is rejected.
+    #[test]
+    fn test_cancel_recovery_regression_owner_any_time_before_execution() {
+        let (env, client, owner, guardian) = setup();
+        let new_owner = Address::generate(&env);
+
+        // Immediately after initiation, before the timelock expires.
+        client.initiate_recovery(&guardian, &new_owner);
+        client.cancel_recovery();
+        assert_eq!(client.recovery_status(), RecoveryStatus::Cancelled);
+        assert_eq!(client.owner(), owner);
+
+        // At the exact executable ledger, still before execution.
+        client.initiate_recovery(&guardian, &new_owner);
+        let executable_at = client.recovery_request().unwrap().executable_at;
+        env.ledger().with_mut(|l| l.sequence_number = executable_at);
+        client.cancel_recovery();
+        assert_eq!(client.recovery_status(), RecoveryStatus::Cancelled);
+        assert_eq!(client.owner(), owner);
+
+        // Without the owner's auth the pending request is left untouched.
+        client.initiate_recovery(&guardian, &new_owner);
+        env.mock_auths(&[]);
+        assert!(client.try_cancel_recovery().is_err());
+        assert_eq!(client.recovery_status(), RecoveryStatus::Pending);
+        env.mock_all_auths();
+
+        // After execution the request is terminal and cannot be cancelled.
+        let executable_at = client.recovery_request().unwrap().executable_at;
+        env.ledger().with_mut(|l| l.sequence_number = executable_at);
+        client.execute_recovery(&guardian);
+        assert_eq!(client.owner(), new_owner);
         let err = client.try_cancel_recovery().unwrap_err().unwrap();
         assert_eq!(err, RecoveryError::NoActiveRecovery);
     }
@@ -1084,6 +1169,32 @@ mod tests {
             .unwrap_err()
             .unwrap();
         assert_eq!(err, RecoveryError::MinGuardiansRequired);
+    }
+
+    /// Regression: removal requires the owner's auth and at least one guardian
+    /// must always remain registered.
+    #[test]
+    fn test_remove_guardian_regression_owner_only_and_minimum_one() {
+        let (env, client, owner, guardian) = setup();
+        let g2 = Address::generate(&env);
+        client.add_guardian(&g2);
+        let both = vec![&env, guardian.clone(), g2.clone()];
+        assert_eq!(client.guardians(), both);
+
+        // Without owner auth nothing is removed.
+        env.mock_auths(&[]);
+        assert!(client.try_remove_guardian(&guardian).is_err());
+        assert_eq!(client.guardians(), both);
+        env.mock_all_auths();
+
+        client.remove_guardian(&guardian);
+        assert_eq!(client.guardians(), vec![&env, g2.clone()]);
+        assert_eq!(client.owner(), owner);
+
+        // The final guardian cannot be removed.
+        let err = client.try_remove_guardian(&g2).unwrap_err().unwrap();
+        assert_eq!(err, RecoveryError::MinGuardiansRequired);
+        assert_eq!(client.guardians(), vec![&env, g2.clone()]);
     }
 
     #[test]
@@ -1613,6 +1724,45 @@ mod tests {
         assert_eq!(client.quorum_threshold(), 1);
         client.set_quorum_threshold(&2_u32);
         assert_eq!(client.quorum_threshold(), 2);
+    }
+
+    /// Regression: threshold updates are owner-only, restricted to
+    /// `[1, guardians.len()]`, and emit a `qrm_set` event with the new value.
+    #[test]
+    fn test_set_quorum_threshold_regression_bounds_auth_and_event() {
+        let (env, client, owner, _) = setup();
+        let g2 = Address::generate(&env);
+        client.add_guardian(&g2);
+        assert_eq!(client.quorum_threshold(), 1);
+
+        // Both out-of-range values are rejected with no state or event change.
+        let err = client
+            .try_set_quorum_threshold(&0_u32)
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, RecoveryError::InvalidQuorumThreshold);
+        let err = client
+            .try_set_quorum_threshold(&3_u32)
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, RecoveryError::InvalidQuorumThreshold);
+        assert_eq!(client.quorum_threshold(), 1);
+        assert_eq!(env.events().all().len(), 2); // init + grd_add
+
+        client.set_quorum_threshold(&2_u32);
+        assert_eq!(client.quorum_threshold(), 2);
+        let events = env.events().all();
+        assert_eq!(events.len(), 3);
+        assert_eq!(topic_action(&env, &events, 2), symbol_short!("qrm_set"));
+        let (_, _, data) = events.get(2).unwrap();
+        let emitted: u32 = FromVal::from_val(&env, &data);
+        assert_eq!(emitted, 2);
+
+        // A caller without the owner's auth cannot change the threshold.
+        env.mock_auths(&[]);
+        assert!(client.try_set_quorum_threshold(&1_u32).is_err());
+        assert_eq!(client.quorum_threshold(), 2);
+        assert_eq!(client.owner(), owner);
     }
 
     /// approve_recovery emits rec_appr event.
