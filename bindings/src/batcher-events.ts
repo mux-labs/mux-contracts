@@ -16,6 +16,7 @@
  *   bat_ok      →  (caller: Address, success_count: u32)
  *   bat_abort   →  caller: Address
  *   sim_done    →  (caller: Address, success_count: u32)
+ *   fee_chg     →  (caller: Address, op_count: u32, fee: u32)
  *
  * Two decoding entrypoints are provided:
  *
@@ -25,6 +26,10 @@
  *     for indexers and anything that must not silently drop events.
  *   - {@link parseBatcherEvent} — lenient. Returns `null` instead of throwing,
  *     for callers that only want to filter a mixed event stream.
+ *
+ * A third, focused entrypoint — {@link decodeBatchOutcome} — maps the
+ * `bat_ok` / `bat_abort` lifecycle events to a discriminated success/abort
+ * result and fails closed for anything else.
  *
  * See docs/audit-events.md and docs/event-topic-conventions.md for the
  * canonical event catalog.
@@ -57,6 +62,8 @@ export const BATCHER_EVENT_TOPICS = {
   bat_abort: "bat_abort",
   /** Emitted by `simulate_batch` on completion. */
   sim_done: "sim_done",
+  /** Emitted by `execute_batch` on success with (caller, op_count, fee). */
+  fee_chg: "fee_chg",
 } as const;
 
 export type BatcherEventAction = (typeof BATCHER_EVENT_TOPICS)[keyof typeof BATCHER_EVENT_TOPICS];
@@ -98,13 +105,22 @@ export interface BatcherSimDoneEvent {
   successCount: string;
 }
 
+/** Emitted by `execute_batch` on success: (caller, op_count, fee). */
+export interface BatcherFeeChgEvent {
+  action: "fee_chg";
+  caller: string;
+  opCount: string;
+  fee: string;
+}
+
 export type BatcherEvent =
   | BatcherInitEvent
   | BatcherBatStartEvent
   | BatcherExecutedEvent
   | BatcherBatOkEvent
   | BatcherBatAbortEvent
-  | BatcherSimDoneEvent;
+  | BatcherSimDoneEvent
+  | BatcherFeeChgEvent;
 
 /**
  * Transaction-level metadata attached by {@link decodeBatcherEvent}.
@@ -135,6 +151,7 @@ export type DecodedBatcherEvent = BatcherEvent & BatcherEventMeta;
 
 // Import shared RawSorobanEvent from factory-events to avoid duplication
 import type { RawSorobanEvent } from "./factory-events";
+import { normaliseData, resolveSymbol } from "./event-decode";
 
 /**
  * Raw event accepted by {@link decodeBatcherEvent}. A superset of
@@ -172,6 +189,8 @@ export interface BatcherEventContext {
  *                     another contract; stream decoders skip it.
  *   MalformedTopics   topic vector is not exactly `[Symbol, Symbol]`.
  *   UnknownAction     topics[1] is not a documented batcher action.
+ *   NotBatchOutcome   the event decoded fine but is not a `bat_ok` /
+ *                     `bat_abort` lifecycle outcome (see {@link decodeBatchOutcome}).
  *   MalformedPayload  data is missing or has the wrong arity for the action.
  *   InvalidAddress    an Address field is not a G…/C… strkey.
  *   InvalidU32        a u32 field is not an integer in [0, 2^32 - 1].
@@ -182,6 +201,7 @@ export const BATCHER_EVENT_DECODE_ERROR_CODES = {
   NotBatcherEvent: "NotBatcherEvent",
   MalformedTopics: "MalformedTopics",
   UnknownAction: "UnknownAction",
+  NotBatchOutcome: "NotBatchOutcome",
   MalformedPayload: "MalformedPayload",
   InvalidAddress: "InvalidAddress",
   InvalidU32: "InvalidU32",
@@ -338,6 +358,92 @@ export function correlateBatcherEvents(
   return groups;
 }
 
+// ── Batch lifecycle outcome decoder (#953) ─────────────────────────────────────
+
+/**
+ * Discriminated batch outcome derived from the `bat_ok` / `bat_abort`
+ * lifecycle events emitted by `execute_batch`.
+ *
+ * `success` — every operation in the batch succeeded (`bat_ok`).
+ * `abort`   — a `require_success` operation failed and the batch aborted
+ *             (`bat_abort`); the call itself returns `RequiredOperationFailed`.
+ */
+export type BatcherBatchOutcome =
+  | {
+      outcome: "success";
+      caller: string;
+      successCount: string;
+      txHash: string;
+      correlationId: string;
+    }
+  | {
+      outcome: "abort";
+      caller: string;
+      txHash: string;
+      correlationId: string;
+    };
+
+/**
+ * Fail-closed decoder mapping a raw mux-batcher lifecycle event to its
+ * {@link BatcherBatchOutcome}.
+ *
+ * Only the two outcome actions are accepted:
+ *
+ *   - `bat_ok`    → `{ outcome: "success", caller, successCount, … }`
+ *   - `bat_abort` → `{ outcome: "abort", caller, … }`
+ *
+ * Everything else fails closed with a typed
+ * {@link BatcherEventDecodeError} instead of guessing:
+ * unknown or malformed topics/payloads surface the underlying decode error,
+ * non-lifecycle actions (e.g. `bat_start`, `executed`) raise
+ * `NotBatchOutcome`, and non-batcher events raise `NotBatcherEvent`.
+ *
+ * @example
+ * ```ts
+ * import { decodeBatchOutcome } from "@mux-protocol/contracts";
+ *
+ * const outcome = decodeBatchOutcome(rawEvent); // throws on anything unexpected
+ * if (outcome.outcome === "success") {
+ *   console.log(`batch ok: ${outcome.successCount} ops`);
+ * } else {
+ *   console.warn(`batch aborted by ${outcome.caller}`);
+ * }
+ * ```
+ */
+export function decodeBatchOutcome(
+  event: BatcherRawEvent,
+  context?: BatcherEventContext,
+): BatcherBatchOutcome {
+  const decoded = decodeBatcherEvent(event, context);
+  const meta = {
+    txHash: decoded.txHash,
+    correlationId: decoded.correlationId,
+  };
+
+  switch (decoded.action) {
+    case "bat_ok":
+      return {
+        outcome: "success",
+        caller: decoded.caller,
+        successCount: decoded.successCount,
+        ...meta,
+      };
+    case "bat_abort":
+      return {
+        outcome: "abort",
+        caller: decoded.caller,
+        ...meta,
+      };
+    default:
+      throw new BatcherEventDecodeError(
+        BATCHER_EVENT_DECODE_ERROR_CODES.NotBatchOutcome,
+        `mux_bat.${decoded.action} is not a batch outcome event ` +
+          `(expected "${BATCHER_EVENT_TOPICS.bat_ok}" or "${BATCHER_EVENT_TOPICS.bat_abort}")`,
+        { ...meta, action: decoded.action },
+      );
+  }
+}
+
 // ── Lenient parser ─────────────────────────────────────────────────────────────
 
 /**
@@ -378,6 +484,7 @@ const PAYLOAD_ARITY: Record<BatcherEventAction, number> = {
   bat_ok: 2,
   bat_abort: 1,
   sim_done: 2,
+  fee_chg: 3,
 };
 
 const KNOWN_ACTIONS = new Set<string>(Object.values(BATCHER_EVENT_TOPICS));
@@ -456,49 +563,67 @@ function decodeBatcherPayload(
       return { action: known, caller: address(0, "caller") };
     case "sim_done":
       return { action: known, caller: address(0, "caller"), successCount: u32(1, "successCount") };
+    case "fee_chg":
+      return {
+        action: known,
+        caller: address(0, "caller"),
+        opCount: u32(1, "opCount"),
+        fee: u32(2, "fee"),
+      };
   }
 }
 
 /**
- * Normalise the event data into a value list. Tuple payloads arrive as a
- * `Vec`; single-value payloads (`init`, `bat_abort`) arrive as a bare
- * scalar, which is wrapped when `arity` is 1.
+ * Decode a raw mux-batcher `fee_chg` event into a typed
+ * `{ caller, opCount, fee }` object.
+ *
+ * Fail-closed: throws {@link BatcherEventDecodeError} when the topics do not
+ * match the batcher tag/`fee_chg` action, the payload arity is wrong, or any
+ * payload element has the wrong type. Never returns a partially-populated
+ * object.
+ *
+ * @example
+ * ```ts
+ * import { decodeBatcherFeeEvent } from "./batcher-events";
+ * const event = decodeBatcherFeeEvent(rawEvent);
+ * console.log(`charged ${event.fee} for ${event.opCount} ops`);
+ * ```
  */
-function normaliseData(raw: unknown, arity: number): unknown[] | null {
-  if (raw === null || raw === undefined) return null;
-  if (Array.isArray(raw)) return raw as unknown[];
-
-  if (typeof raw === "object") {
-    const obj = raw as Record<string, unknown>;
-    if (Array.isArray(obj["vec"])) return obj["vec"] as unknown[];
-    if (Array.isArray(obj["_value"])) return obj["_value"] as unknown[];
+export function decodeBatcherFeeEvent(
+  event: BatcherRawEvent,
+  context: BatcherEventContext = {},
+): { caller: string; opCount: string; fee: string } & BatcherEventMeta {
+  const decoded = decodeBatcherEvent(event, context);
+  if (decoded.action !== "fee_chg") {
+    throw new BatcherEventDecodeError(
+      BATCHER_EVENT_DECODE_ERROR_CODES.UnknownAction,
+      `expected mux_bat.fee_chg event, got mux_bat.${decoded.action}`,
+      { ...decoded, action: decoded.action },
+    );
   }
-
-  if (typeof raw === "string") {
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed as unknown[];
-    } catch {
-      // Not JSON — fall through to scalar handling.
-    }
-  }
-
-  return arity === 1 ? [raw] : null;
-}
-
-function resolveSymbol(raw: unknown): string | null {
-  if (typeof raw === "string") return raw;
-  if (raw && typeof raw === "object") {
-    const obj = raw as Record<string, unknown>;
-    if (typeof obj["symbol"] === "string") return obj["symbol"];
-    if (typeof obj["sym"] === "string") return obj["sym"];
-  }
-  return null;
+  return {
+    caller: decoded.caller,
+    opCount: decoded.opCount,
+    fee: decoded.fee,
+    txHash: decoded.txHash,
+    correlationId: decoded.correlationId,
+  };
 }
 
 function requireAddress(raw: unknown, action: string, field: string, errCtx: ErrCtx): string {
   let value: unknown = raw;
-  if (raw && typeof raw === "object") value = (raw as Record<string, unknown>)["address"];
+  if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    if ("address" in obj) {
+      value = obj["address"];
+    } else {
+      throw new BatcherEventDecodeError(
+        BATCHER_EVENT_DECODE_ERROR_CODES.InvalidAddress,
+        `mux_bat.${action}.${field}: ${describe(raw)} is not a G…/C… strkey Address`,
+        { ...errCtx, action, field },
+      );
+    }
+  }
   if (typeof value === "string" && ADDRESS_RE.test(value)) return value;
   throw new BatcherEventDecodeError(
     BATCHER_EVENT_DECODE_ERROR_CODES.InvalidAddress,
@@ -509,12 +634,52 @@ function requireAddress(raw: unknown, action: string, field: string, errCtx: Err
 
 function requireU32(raw: unknown, action: string, field: string, errCtx: ErrCtx): string {
   let value: unknown = raw;
-  if (raw && typeof raw === "object") value = (raw as Record<string, unknown>)["u32"];
+  if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    if ("u32" in obj) {
+      value = obj["u32"];
+    } else {
+      throw new BatcherEventDecodeError(
+        BATCHER_EVENT_DECODE_ERROR_CODES.InvalidU32,
+        `mux_bat.${action}.${field}: ${describe(raw)} is not a u32`,
+        { ...errCtx, action, field },
+      );
+    }
+  }
 
   let n: number | null = null;
-  if (typeof value === "number" && Number.isInteger(value)) n = value;
-  else if (typeof value === "bigint" && value <= BigInt(U32_MAX)) n = Number(value);
-  else if (typeof value === "string" && /^\d{1,10}$/.test(value)) n = Number(value);
+  if (typeof value === "number") {
+    if (Number.isInteger(value) && value >= 0 && value <= U32_MAX) n = value;
+  } else if (typeof value === "bigint") {
+    if (value >= 0n && value <= BigInt(U32_MAX)) n = Number(value);
+  } else if (typeof value === "string") {
+    // Only accept non-negative integer strings with no leading zeros (except "0")
+    if (/^\d+$/.test(value)) {
+      if (value.length > 1 && value.startsWith("0")) {
+        throw new BatcherEventDecodeError(
+          BATCHER_EVENT_DECODE_ERROR_CODES.InvalidU32,
+          `mux_bat.${action}.${field}: ${describe(raw)} is not a u32`,
+          { ...errCtx, action, field },
+        );
+      }
+      if (value.length > 10) {
+        throw new BatcherEventDecodeError(
+          BATCHER_EVENT_DECODE_ERROR_CODES.InvalidU32,
+          `mux_bat.${action}.${field}: ${describe(raw)} is not a u32`,
+          { ...errCtx, action, field },
+        );
+      }
+      const bigVal = BigInt(value);
+      if (bigVal > BigInt(U32_MAX)) {
+        throw new BatcherEventDecodeError(
+          BATCHER_EVENT_DECODE_ERROR_CODES.InvalidU32,
+          `mux_bat.${action}.${field}: ${describe(raw)} is not a u32`,
+          { ...errCtx, action, field },
+        );
+      }
+      n = Number(bigVal);
+    }
+  }
 
   if (n !== null && n >= 0 && n <= U32_MAX) return String(n);
   throw new BatcherEventDecodeError(

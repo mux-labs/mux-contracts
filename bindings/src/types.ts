@@ -40,6 +40,14 @@ export interface Operation {
   requireSuccess: boolean;
   /** Classifies the operation intent for indexers and UI. */
   kind: BatchOperationKind;
+  /**
+   * Relative execution weight of this operation (e.g. CPU/resource cost),
+   * used to pre-validate the batch's aggregate weight against
+   * `BATCH_CAPS.maxAggregateOps` before submission. Defaults to 1 when
+   * omitted, matching the "one unit per operation" assumption used before
+   * this field existed.
+   */
+  weight?: number;
 }
 
 /** Mirrors the on-chain `BatchOperationKind` enum. */
@@ -78,7 +86,11 @@ export type MuxRecoveryError =
   | "GuardianAlreadyExists"
   | "GuardianNotFound"
   | "MinGuardiansRequired"
-  | "RecoveryExpired";
+  | "RecoveryExpired"
+  | "QuorumNotReached"
+  | "DuplicateApproval"
+  | "InvalidQuorumThreshold"
+  | "RegistryNotFound";
 
 // ── Recovery timelock constants ───────────────────────────────────────────────
 
@@ -95,9 +107,9 @@ export type MuxRecoveryError =
  * ```
  *
  * Off-chain tooling can compute the earliest execution ledger without an
- * RPC read:
+ * RPC read (the `rec_init` event fields are decimal strings):
  * ```ts
- * const executableAt = initiatedAt + RECOVERY_TIMELOCK_LEDGERS;
+ * const executableAt = BigInt(initiatedAt) + BigInt(RECOVERY_TIMELOCK_LEDGERS);
  * ```
  *
  * This value is encoded in `rec_init` event payloads (`executable_at`).
@@ -118,9 +130,10 @@ export const RECOVERY_TIMELOCK_LEDGERS = 17_280 as const;
  * 120_960 ledgers × 5 s/ledger = 604_800 s = 7 days
  * ```
  *
- * Off-chain tooling can compute the expiry ledger without an RPC read:
+ * Off-chain tooling can compute the expiry ledger without an RPC read
+ * (the `rec_init` event fields are decimal strings):
  * ```ts
- * const expiresAt = initiatedAt + RECOVERY_EXPIRY_LEDGERS;
+ * const expiresAt = BigInt(initiatedAt) + BigInt(RECOVERY_EXPIRY_LEDGERS);
  * ```
  *
  * This value is encoded in `rec_init` event payloads (`expires_at`).
@@ -134,7 +147,9 @@ export type MuxBatcherError =
   | "RequiredOperationFailed"
   | "Unauthorized"
   | "ReentrancyDetected"
-  | "MetadataAlreadySet";
+  | "MetadataAlreadySet"
+  | "NotInitialized"
+  | "AlreadyInitialized";
 
 /**
  * Contract-level metadata stored once at deployment for registry discovery.
@@ -168,6 +183,8 @@ export function muxBatcherErrorMessage(error: MuxBatcherError | number): string 
     4: "caller is not authorized",
     5: "reentrant call into the batcher detected",
     6: "metadata has already been set for this batcher instance",
+    7: "upgrade called before initialize; no admin to authorise it",
+    8: "initialize called more than once",
   };
 
   const nameMap: Record<MuxBatcherError, number> = {
@@ -177,6 +194,8 @@ export function muxBatcherErrorMessage(error: MuxBatcherError | number): string 
     Unauthorized: 4,
     ReentrancyDetected: 5,
     MetadataAlreadySet: 6,
+    NotInitialized: 7,
+    AlreadyInitialized: 8,
   };
 
   const code = typeof error === "number" ? error : nameMap[error] ?? -1;
@@ -248,7 +267,8 @@ export type MuxPermissionsError =
   | "TooManyMembers"
   | "TooManyRoles"
   | "AdminNotFound"
-  | "AlreadyApproved";
+  | "AlreadyApproved"
+  | "TooManyPendingAdmins";
 
 /**
  * Maps a `MuxPermissionsError` variant or its raw `u32` contract error code to
@@ -278,6 +298,7 @@ export function muxPermissionsErrorMessage(
     8: "account holds too many roles",
     9: "pending admin not found",
     10: "approver has already approved this candidate",
+    11: "too many pending admin approvals",
   };
 
   const nameMap: Record<MuxPermissionsError, number> = {
@@ -291,6 +312,7 @@ export function muxPermissionsErrorMessage(
     TooManyRoles: 8,
     AdminNotFound: 9,
     AlreadyApproved: 10,
+    TooManyPendingAdmins: 11,
   };
 
   const code = typeof error === "number" ? error : (nameMap[error] ?? -1);
@@ -326,6 +348,10 @@ export function muxRecoveryErrorMessage(
     9: "address is not a registered guardian",
     10: "cannot remove the last remaining guardian",
     11: "recovery execution window has elapsed",
+    12: "insufficient guardian approvals collected",
+    13: "guardian already approved this recovery",
+    14: "quorum threshold out of valid range",
+    15: "registry contract is not live (list_contracts validation failed)",
   };
 
   const nameMap: Record<MuxRecoveryError, number> = {
@@ -340,6 +366,10 @@ export function muxRecoveryErrorMessage(
     GuardianNotFound: 9,
     MinGuardiansRequired: 10,
     RecoveryExpired: 11,
+    QuorumNotReached: 12,
+    DuplicateApproval: 13,
+    InvalidQuorumThreshold: 14,
+    RegistryNotFound: 15,
   };
 
   const code = typeof error === "number" ? error : (nameMap[error] ?? -1);
@@ -372,6 +402,7 @@ export function muxPolicyErrorMessage(
     6: "amount is zero or negative",
     7: "day_ledgers is zero",
     8: "wallet cap (256) reached",
+    9: "linked registry contract is unreachable or invalid",
   };
 
   const nameMap: Record<MuxPolicyError, number> = {
@@ -383,6 +414,7 @@ export function muxPolicyErrorMessage(
     InvalidAmount: 6,
     InvalidPeriod: 7,
     TooManyWallets: 8,
+    RegistryNotFound: 9,
   };
 
   const code = typeof error === "number" ? error : (nameMap[error] ?? -1);
@@ -535,7 +567,8 @@ export type MuxPolicyError =
   | "LimitExceeded"
   | "InvalidAmount"
   | "InvalidPeriod"
-  | "TooManyWallets";
+  | "TooManyWallets"
+  | "RegistryNotFound";
 
 export type SpendingPolicyError =
   | "NotInitialized"

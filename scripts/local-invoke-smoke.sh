@@ -26,6 +26,7 @@ INVOKE="${REPO_ROOT}/scripts/local-invoke.sh"
 
 NETWORK="${SOROBAN_NETWORK:-localnet}"
 SECRET_KEY="${SECRET_KEY:-${DEPLOYER_PRIVATE_KEY:-}}"
+POLICY_WALLET="${POLICY_WALLET:-}"
 CONTRACT_FILTER=""
 DRY_RUN=0
 PASS=0
@@ -40,11 +41,14 @@ Options:
   --network <network>     localnet|testnet|mainnet (default: localnet)
   --contract <name>       Run checks for a single named contract only
   --dry-run               Print planned checks without invoking
+  --policy-wallet <G...>  Include the initialized mux-policy read check
   --help                  Show this help
 
 Smoke checks (simulate-only reads):
   mux-account         owner
   mux-batcher         max_batch_size
+  mux-account-factory account_count
+  mux-policy           get_daily_limit (requires --arg wallet)
   mux-permissions     get_pending_admins
 EOF
 }
@@ -66,6 +70,10 @@ while [[ $# -gt 0 ]]; do
     --dry-run)
       DRY_RUN=1
       shift
+      ;;
+    --policy-wallet)
+      POLICY_WALLET="${2:-}"
+      shift 2
       ;;
     --help|-h)
       usage
@@ -95,6 +103,7 @@ fi
 SMOKE_CHECKS=(
   "mux-account|owner"
   "mux-batcher|max_batch_size"
+  "mux-account-factory|account_count"
   "mux-permissions|get_pending_admins"
 )
 
@@ -133,6 +142,26 @@ for entry in "${SMOKE_CHECKS[@]}"; do
   IFS='|' read -r contract function <<<"$entry"
   run_check "$contract" "$function"
 done
+
+if [[ -n "$POLICY_WALLET" ]]; then
+  if [[ -z "$CONTRACT_FILTER" || "$CONTRACT_FILTER" == "mux-policy" ]]; then
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      echo "  PLAN: mux-policy::get_daily_limit (--arg $POLICY_WALLET)"
+      PASS=$((PASS + 1))
+    else
+      echo "  RUN:  mux-policy::get_daily_limit"
+      if bash "$INVOKE" --network "$NETWORK" --contract-name mux-policy \
+        --function get_daily_limit --secret-key "$SECRET_KEY" \
+        --arg "{\"type\":\"address\",\"value\":\"$POLICY_WALLET\"}" --simulate-only; then
+        echo "  PASS: mux-policy::get_daily_limit"
+        PASS=$((PASS + 1))
+      else
+        echo "  FAIL: mux-policy::get_daily_limit"
+        FAIL=$((FAIL + 1))
+      fi
+    fi
+  fi
+fi
 
 echo ""
 echo "Smoke summary: $PASS passed, $FAIL failed"

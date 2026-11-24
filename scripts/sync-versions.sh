@@ -32,6 +32,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CARGO_TOML="${REPO_ROOT}/Cargo.toml"
 PKG_JSON="${REPO_ROOT}/bindings/package.json"
+PKG_LOCK="${REPO_ROOT}/bindings/package-lock.json"
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 BLUE='\033[0;34m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
@@ -66,20 +67,20 @@ print(m.group(1))
 PYEOF
 )
 
-# ── Extract bindings package.json version ────────────────────────────────────
+# ── Extract bindings package versions ────────────────────────────────────────
 PKG_VERSION=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['version'])" "${PKG_JSON}")
-
+LOCK_VERSION=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['packages']['']['version'])" "${PKG_LOCK}")
 log_info "Cargo workspace version  : ${CARGO_VERSION}"
 log_info "bindings package version : ${PKG_VERSION}"
-
-if [[ "${CARGO_VERSION}" == "${PKG_VERSION}" ]]; then
+log_info "bindings lockfile version: ${LOCK_VERSION}"
+if [[ "${CARGO_VERSION}" == "${PKG_VERSION}" && "${CARGO_VERSION}" == "${LOCK_VERSION}" ]]; then
   log_success "Versions are in sync (${CARGO_VERSION})"
   exit 0
 fi
 
 # ── Versions differ ───────────────────────────────────────────────────────────
 if [[ "${CHECK_ONLY}" == "true" ]]; then
-  log_error "Version mismatch: Cargo.toml=${CARGO_VERSION}, bindings/package.json=${PKG_VERSION}"
+  log_error "Version mismatch: Cargo.toml=${CARGO_VERSION}, bindings/package.json=${PKG_VERSION}, bindings/package-lock.json=${LOCK_VERSION}"
   echo ""
   echo "Fix: run  bash scripts/sync-versions.sh  and commit the result."
   exit 1
@@ -98,8 +99,18 @@ with open(path, "w") as f:
     json.dump(pkg, f, indent=2)
     f.write("\n")
 PYEOF
-
+python3 - "${PKG_LOCK}" "${CARGO_VERSION}" <<'PYEOF'
+import json, sys
+path, new_version = sys.argv[1], sys.argv[2]
+with open(path) as f:
+    lock = json.load(f)
+lock["packages"][""]["version"] = new_version
+with open(path, "w") as f:
+    json.dump(lock, f, indent=2)
+    f.write("\n")
+PYEOF
 log_success "bindings/package.json updated to ${CARGO_VERSION}"
+log_success "bindings/package-lock.json updated to ${CARGO_VERSION}"
 echo ""
 echo "Next steps:"
 echo "  1. git add bindings/package.json"

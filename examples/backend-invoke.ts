@@ -54,9 +54,52 @@ const SOROBAN_NETWORK = process.env.SOROBAN_NETWORK || "localnet";
 // Load contract addresses from config/addresses.json
 const configPath = path.join(__dirname, "..", "config", "addresses.json");
 const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-// Default to muxAccount, but can be overridden via CONTRACT_ADDRESS env var
-const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS ||
-  config[SOROBAN_NETWORK]?.muxAccount;
+
+// Resolve the contract address fail-fast. CONTRACT_ADDRESS takes precedence;
+// otherwise fall back to config[SOROBAN_NETWORK].muxAccount, validating that
+// the network key exists and muxAccount is a non-empty string.
+function resolveContractAddress(): string {
+  const fromEnv = process.env.CONTRACT_ADDRESS;
+  if (fromEnv !== undefined && fromEnv !== "") {
+    return fromEnv;
+  }
+
+  const networkEntry = config[SOROBAN_NETWORK];
+  if (networkEntry === undefined || networkEntry === null) {
+    console.error(
+      `❌ Error: No entry for network "${SOROBAN_NETWORK}" in config/addresses.json (key "${SOROBAN_NETWORK}")`
+    );
+    console.error(
+      `Add a "${SOROBAN_NETWORK}" object with a "muxAccount" address, or set the CONTRACT_ADDRESS env var.`
+    );
+    process.exit(1);
+  }
+
+  const address = networkEntry.muxAccount;
+  if (address === undefined) {
+    console.error(
+      `❌ Error: config/addresses.json entry "${SOROBAN_NETWORK}.muxAccount" is missing`
+    );
+    console.error(
+      `Add a "muxAccount" address to the "${SOROBAN_NETWORK}" object, or set the CONTRACT_ADDRESS env var.`
+    );
+    process.exit(1);
+  }
+
+  if (typeof address !== "string" || address.trim() === "") {
+    console.error(
+      `❌ Error: config/addresses.json entry "${SOROBAN_NETWORK}.muxAccount" must be a non-empty string`
+    );
+    console.error(
+      `Set a valid contract address for "${SOROBAN_NETWORK}.muxAccount", or set the CONTRACT_ADDRESS env var.`
+    );
+    process.exit(1);
+  }
+
+  return address;
+}
+
+const CONTRACT_ADDRESS = resolveContractAddress();
 
 // Validate required environment variables
 if (!SERVER_SECRET_KEY) {

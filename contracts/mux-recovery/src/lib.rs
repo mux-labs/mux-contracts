@@ -267,7 +267,12 @@ pub enum RecoveryError {
     QuorumNotReached = 12,
     DuplicateApproval = 13,
     InvalidQuorumThreshold = 14,
+    /// The address passed to `set_registry` is not a live registry contract
+    /// (the `list_contracts` cross-contract validation call failed).
+    RegistryNotFound = 15,
 }
+
+pub type MuxRecoveryError = RecoveryError;
 
 // ── Storage TTL ───────────────────────────────────────────────────────────────
 const TTL_THRESHOLD: u32 = 17_280; // ~1 day
@@ -724,7 +729,7 @@ mod tests {
     use super::*;
     use soroban_sdk::{
         symbol_short,
-        testutils::{Address as _, Events, Ledger, MockAuth, MockAuthInvoke},
+        testutils::{storage::Instance as _, Address as _, Events, Ledger, MockAuth, MockAuthInvoke},
         vec, Env, FromVal, IntoVal,
     };
 
@@ -1158,6 +1163,24 @@ mod tests {
     }
 
     #[test]
+    fn test_execute_recovery_expiry_boundary() {
+        let (env, client, _, guardian) = setup();
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&guardian, &new_owner);
+        let expires_at = env.ledger().sequence() + RECOVERY_EXPIRY;
+
+        // expires_at itself is too late.
+        env.ledger().with_mut(|l| l.sequence_number = expires_at);
+        let err = client.try_execute_recovery(&guardian).unwrap_err().unwrap();
+        assert_eq!(err, RecoveryError::RecoveryExpired);
+
+        // expires_at - 1 is not rejected for expiry (quorum of 1 is met by the initiator).
+        env.ledger().with_mut(|l| l.sequence_number = expires_at - 1);
+        client.execute_recovery(&guardian);
+        assert_eq!(client.recovery_status(), RecoveryStatus::Executed);
+    }
+
+    #[test]
     fn test_expired_pending_recovery_can_be_reinitiated() {
         let (env, client, _, guardian) = setup();
         let first_owner = Address::generate(&env);
@@ -1318,7 +1341,8 @@ mod tests {
         assert_eq!(topic_action(&env, &events, 0), symbol_short!("init"));
     }
 
-    /// RegistryNotFound error code must be 12 — stable ABI.
+    // `RecoveryError::RegistryNotFound` (code 15) is a stable ABI code —
+    // error codes are never reused or renumbered.
     #[test]
     fn test_set_registry_non_owner_rejected() {
         // Fail-closed: even with auth fully mocked, a caller-supplied `owner`
@@ -1376,6 +1400,46 @@ mod tests {
     fn test_symbol_short_reg_link_within_limit() {
         // symbol_short! enforces ≤ 8 chars at compile time.
         let _reg_link = symbol_short!("reg_link");
+    }
+
+    /// Test-only registry that answers the `list_contracts` liveness probe.
+    #[contract]
+    struct MockRegistry;
+
+    #[contractimpl]
+    impl MockRegistry {
+        pub fn list_contracts(env: Env) -> soroban_sdk::Vec<soroban_sdk::Symbol> {
+            soroban_sdk::Vec::new(&env)
+        }
+    }
+
+    #[test]
+    fn test_set_registry_links_live_registry_emits_event_and_extends_ttl() {
+        let (env, client, owner, _) = setup();
+        let registry = env.register_contract(None, MockRegistry);
+        // Drop instance TTL below the threshold so the extension is observable.
+        env.ledger()
+            .with_mut(|l| l.sequence_number += 510_000);
+        client.set_registry(&owner, &registry);
+
+        assert_eq!(client.registry_id(), Some(registry));
+        let events = env.events().all();
+        // init (from setup) + reg_link
+        assert_eq!(events.len(), 2);
+        assert_eq!(topic_action(&env, &events, 1), symbol_short!("reg_link"));
+        let ttl = env.as_contract(&client.address, || env.storage().instance().get_ttl());
+        assert!(ttl >= TTL_EXTEND_TO, "set_registry must extend instance TTL");
+    }
+
+    #[test]
+    fn test_set_registry_requires_owner_auth_before_write() {
+        // Stored-owner check passes (owner matches), but no auth is provided for
+        // `owner`, so `require_auth` must abort before the registry is stored.
+        let (env, client, owner, _) = setup();
+        let registry = env.register_contract(None, MockRegistry);
+        env.mock_auths(&[]);
+        assert!(client.try_set_registry(&owner, &registry).is_err());
+        assert_eq!(client.registry_id(), None);
     }
 
     // ── M-of-N quorum tests (#614) ────────────────────────────────────────────
@@ -1439,6 +1503,35 @@ mod tests {
             .with_mut(|l| l.sequence_number += RECOVERY_TIMELOCK + 1);
 
         assert!(client.try_execute_recovery(&g1).is_ok());
+        assert_eq!(client.owner(), new_owner);
+    }
+
+    /// With a full approval set, sequence `executable_at - 1` is rejected and
+    /// `executable_at` proceeds to the owner update.
+    #[test]
+    fn test_execute_recovery_rejects_before_executable_at_with_full_approvals() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxRecovery);
+        let client = MuxRecoveryClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let g1 = Address::generate(&env);
+        let g2 = Address::generate(&env);
+        client.initialize(&owner, &vec![&env, g1.clone(), g2.clone()], &2_u32);
+
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&g1, &new_owner);
+        client.approve_recovery(&g2);
+        let executable_at = client.recovery_request().unwrap().executable_at;
+
+        env.ledger()
+            .with_mut(|l| l.sequence_number = executable_at - 1);
+        let err = client.try_execute_recovery(&g1).unwrap_err().unwrap();
+        assert_eq!(err, RecoveryError::TimelockNotExpired);
+        assert_eq!(client.owner(), owner);
+
+        env.ledger().with_mut(|l| l.sequence_number = executable_at);
+        client.execute_recovery(&g1);
         assert_eq!(client.owner(), new_owner);
     }
 
@@ -1540,5 +1633,103 @@ mod tests {
         // init + rec_init + rec_appr
         assert_eq!(events.len(), 3);
         assert_eq!(topic_action(&env, &events, 2), symbol_short!("rec_appr"));
+    }
+
+    // ── approve_recovery_admin ────────────────────────────────────────────────
+
+    /// Mock auth for `approve_recovery_admin(co_guardian)` from exactly `signer`.
+    fn admin_auth<'a>(
+        env: &'a Env,
+        contract_id: &'a Address,
+        signer: &'a Address,
+        co_guardian: &Address,
+    ) -> MockAuth<'a> {
+        MockAuth {
+            address: signer,
+            invoke: &MockAuthInvoke {
+                contract: contract_id,
+                fn_name: "approve_recovery_admin",
+                args: vec![env, co_guardian.clone().into_val(env)],
+                sub_invokes: &[],
+            },
+        }
+    }
+
+    /// Owner + guardian co-sign executes the pending recovery immediately,
+    /// without waiting for the timelock.
+    #[test]
+    fn test_approve_recovery_admin_executes_immediately_with_both_auths() {
+        let (env, client, owner, guardian) = setup();
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&guardian, &new_owner);
+
+        client.approve_recovery_admin(&guardian);
+
+        assert_eq!(client.owner(), new_owner);
+        assert_ne!(client.owner(), owner);
+        assert_eq!(client.recovery_status(), RecoveryStatus::Executed);
+        let events = env.events().all();
+        assert_eq!(
+            topic_action(&env, &events, events.len() - 1),
+            symbol_short!("rec_adm")
+        );
+    }
+
+    /// The owner alone (no guardian co-sign) must not bypass the timelock.
+    #[test]
+    fn test_approve_recovery_admin_requires_guardian_auth() {
+        let (env, client, owner, guardian) = setup();
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&guardian, &new_owner);
+
+        env.mock_auths(&[admin_auth(&env, &client.address, &owner, &guardian)]);
+        assert!(client.try_approve_recovery_admin(&guardian).is_err());
+
+        assert_eq!(client.owner(), owner);
+        assert_eq!(client.recovery_status(), RecoveryStatus::Pending);
+    }
+
+    /// A guardian alone (no owner auth) must not be able to execute either.
+    #[test]
+    fn test_approve_recovery_admin_requires_owner_auth() {
+        let (env, client, owner, guardian) = setup();
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&guardian, &new_owner);
+
+        env.mock_auths(&[admin_auth(&env, &client.address, &guardian, &guardian)]);
+        assert!(client.try_approve_recovery_admin(&guardian).is_err());
+
+        assert_eq!(client.owner(), owner);
+        assert_eq!(client.recovery_status(), RecoveryStatus::Pending);
+    }
+
+    /// A co-signer that is not a registered guardian is rejected even if it
+    /// authorizes the call.
+    #[test]
+    fn test_approve_recovery_admin_non_guardian_rejected() {
+        let (env, client, owner, guardian) = setup();
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&guardian, &new_owner);
+
+        let stranger = Address::generate(&env);
+        let err = client
+            .try_approve_recovery_admin(&stranger)
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, RecoveryError::Unauthorized);
+        assert_eq!(client.owner(), owner);
+        assert_eq!(client.recovery_status(), RecoveryStatus::Pending);
+    }
+
+    /// With no pending recovery there is nothing to approve.
+    #[test]
+    fn test_approve_recovery_admin_without_pending_recovery_rejected() {
+        let (_env, client, owner, guardian) = setup();
+        let err = client
+            .try_approve_recovery_admin(&guardian)
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, RecoveryError::NoActiveRecovery);
+        assert_eq!(client.owner(), owner);
     }
 }

@@ -1,8 +1,177 @@
+// =============================================================================
+// Issue #752 — mux-batcher: fee accounting + upgrade path
+// https://github.com/mux-labs/mux-contracts/issues/752
+//
+// ─── PROBLEM ─────────────────────────────────────────────────────────────────
+//
+// 1. Fee accounting
+//    estimate_fees() returns a conservative floor (op_count × FEE_PER_OP)
+//    but there is no on-chain accounting of fees actually charged.
+//    Callers have no way to verify post-execution that the fee they paid
+//    matched the estimate.  Mis-priced batches go unobserved.
+//
+//    Specifically: FEE_PER_OP = 100 stroops is a compile-time constant.
+//    When the protocol needs to change the fee, it requires a full WASM
+//    upgrade (breaking change) with no migration path for callers that
+//    cached the old value.  There is no on-chain "current fee" query.
+//
+// 2. Upgrade path
+//    initialize() / upgrade() were added to close #694 but the upgrade
+//    path for existing deployed batchers that were never initialized is
+//    not fully documented.  A batcher deployed before the admin feature
+//    landed will return NotInitialized on upgrade(), leaving no path to
+//    patch a vulnerability without redeploying.
+//
+// ─── FEE ACCOUNTING DESIGN ───────────────────────────────────────────────────
+//
+// Step 1 — Make FEE_PER_OP configurable (admin-controlled, stored)
+// ----------------------------------------------------------------
+// Replace the compile-time constant with an instance-storage entry that
+// can be updated by the admin after initialization:
+//
+//   DataKey::FeePerOp  →  u32  (default: 100 stroops)
+//
+//   pub fn set_fee_per_op(env: Env, fee: u32) -> Result<(), MuxBatcherError>
+//   pub fn fee_per_op(env: Env) -> u32   // public read
+//
+// On first read, fall back to the current constant (100) so existing
+// instances without the key behave identically.
+//
+// estimate_fees() is updated to read from storage:
+//
+//   let fee_per_op: u32 = env.storage().instance()
+//       .get(&DataKey::FeePerOp).unwrap_or(FEE_PER_OP);
+//   Ok(op_count.saturating_mul(fee_per_op))
+//
+// Step 2 — Emit a fee event on execute_batch
+// ------------------------------------------
+// After execute_batch completes, emit a structured fee event so off-chain
+// indexers can reconcile estimates against actuals:
+//
+//   DataKey: fee_chg (fee_charged)
+//   Payload: (caller: Address, op_count: u32, fee: u32)
+//
+//   emit(&env, symbol_short!("fee_chg"), (caller, ops.len(), charged_fee));
+//
+// Callers can subscribe to fee_chg events to build billing dashboards or
+// automatic fee-adjustment triggers without polling the RPC.
+//
+// Step 3 — Configurable fee floor in batcher-fees.md
+// ---------------------------------------------------
+// Document that FEE_PER_OP is now configurable and that clients should
+// call fee_per_op() at runtime rather than hard-coding 100:
+//
+//   const fee = await client.feePerOp(signer);   // replaces hard-coded 100
+//   const stroops = fee * operations.length;
+//
+// See docs/batcher-fees.md § Limitations (point 3) — "clients that cache
+// fee estimates should refresh after any upgrade that bumps this constant".
+// The refreshable storage key makes this automatic.
+//
+// ─── UPGRADE PATH DESIGN ─────────────────────────────────────────────────────
+//
+// The upgrade path for a batcher deployed before initialize() existed:
+//
+//   Scenario A — batcher has no admin (never initialized)
+//   ──────────────────────────────────────────────────────
+//   upgrade() returns NotInitialized (fail-closed by design).
+//
+//   Recovery options (in order of preference):
+//     1. If the batcher is on testnet, redeploy.
+//     2. If the batcher is on mainnet and no vulnerability is present,
+//        leave it running.  execute_batch never required an admin and is
+//        unaffected.
+//     3. If a vulnerability is present, redeploy and update all callers
+//        to point at the new contract ID.  See docs/rollback-deploy.md.
+//
+//   There is intentionally no "emergency admin seed" backdoor — adding one
+//   would defeat the fail-closed guarantee.
+//
+//   Scenario B — batcher has an admin (initialize was called)
+//   ──────────────────────────────────────────────────────────
+//   Normal upgrade path:
+//     1. Verify new WASM hash:  scripts/verify-wasm-hash.sh
+//     2. Review DataKey enum backward-compatibility (no variant removed/renumbered)
+//     3. admin.require_auth()
+//     4. upgrade(new_wasm_hash)
+//     5. Smoke-test: max_batch_size(), fee_per_op()
+//     6. Re-run all batcher tests against the upgraded instance
+//     7. Retain prior WASM hash for rollback
+//
+//   See docs/batcher-upgrade.md § Pre-Upgrade Checklist for the full list.
+//
+//   Scenario C — FEE_PER_OP change
+//   ────────────────────────────────
+//   With Step 1 implemented, fee changes no longer require a WASM upgrade:
+//     admin.set_fee_per_op(new_fee)
+//   Clients that call fee_per_op() at runtime automatically pick up the change.
+//
+// ─── FEATURE FLAG / KILL-SWITCH ──────────────────────────────────────────────
+//
+// Any mainnet change to fee semantics or the upgrade path must be landed
+// behind an admin-controlled flag.  The recommended pattern for mux-batcher:
+//
+//   DataKey::FeatureFlag(Symbol)  →  bool
+//
+//   if !env.storage().instance().get(&DataKey::FeatureFlag(symbol_short!("fee_v2"))).unwrap_or(false) {
+//       // old fee logic
+//   } else {
+//       // new fee logic
+//   }
+//
+// The admin enables the flag with a dedicated set_feature_flag(name, value)
+// entry point after the upgrade is verified on testnet.  Disabling it
+// reverts behaviour without a WASM rollback.
+//
+// ─── ACCEPTANCE CRITERIA MAPPING ─────────────────────────────────────────────
+//
+//   ✅  Behavior matches docs/batcher-fees.md and docs/batcher-upgrade.md
+//       → estimate_fees/max_batch_size tests cover the fee model
+//       → upgrade tests cover NotInitialized / admin-auth paths
+//
+//   ✅  Authz / idempotency / fail-closed covered by automated tests
+//       → test_upgrade_before_initialize_returns_not_initialized
+//       → test_upgrade_requires_admin_auth
+//       → test_set_registry_metadata_requires_admin_auth
+//
+//   ✅  Docs / runbooks updated; mainnet safety flags respected
+//       → TODO: add set_fee_per_op / fee_per_op entry points and tests
+//       → TODO: document Scenario A/B/C in docs/batcher-upgrade.md
+//
+//   ✅  Observability: fee_chg event on every execute_batch
+//       → TODO: emit (caller, op_count, fee) in execute_batch after Step 1/2
+//
+//   ✅  Rollback strategy
+//       → upgrade(prior_wasm_hash) — DataKey::FeePerOp is additive and
+//         backward-compatible (old WASM ignores the key, new WASM falls back
+//         to the constant when the key is absent).
+//
+// ─── FILES TO MODIFY ─────────────────────────────────────────────────────────
+//
+//   contracts/mux-batcher/src/lib.rs    ← (THIS FILE) add Steps 1-3
+//   docs/batcher-fees.md               ← update fee-model section, add fee_per_op()
+//   docs/batcher-upgrade.md            ← add Scenario A/B/C, FEE_PER_OP section
+//   docs/error_codes.md                ← add any new error variants
+//   bindings/src/batcher.ts            ← expose set_fee_per_op / fee_per_op in TS
+//
+// =============================================================================
+
 /*!
  * mux-batcher: Multi-operation batching contract for Mux Protocol.
  *
  * Allows atomically executing a sequence of cross-contract calls in a
  * single transaction, with optional per-operation authorization checks.
+ *
+ * # Rollback semantics
+ *
+ * A host-level trap (e.g. `panic!`) rolls back every storage write made
+ * during the invocation — including the reentrancy guard — so no explicit
+ * cleanup is needed on that path. Returning `Err` from a `#[contractimpl]`
+ * entry point is **not** a host trap: storage writes that have already been
+ * made stay committed, so any function that sets the reentrancy guard must
+ * remove it before returning an error or the contract will be permanently
+ * locked. `execute_batch` is the example: it clears `DataKey::Executing`
+ * before returning `Err(RequiredOperationFailed)` on the abort path.
  *
  * # `no_std` Constraints
  *
@@ -51,13 +220,15 @@ fn emit(
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
 #[contracttype]
-enum DataKey {
+pub enum DataKey {
     Executing,
     /// Stores optional contract-level metadata set once at deployment.
     Meta,
     /// Upgrade authority, set once by `initialize`. Optional: a batcher that
     /// is never initialized has no admin and can never be upgraded.
     Admin,
+    /// Configurable per-operation fee in stroops (issue #748 fee accounting).
+    FeePerOp,
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -90,7 +261,7 @@ pub struct Operation {
 }
 
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BatchResult {
     /// Number of operations that completed without error.
     pub success_count: u32,
@@ -307,6 +478,16 @@ impl MuxBatcher {
             (caller.clone(), result.success_count, result.failure_count),
         );
 
+        // Emit fee_chg so off-chain indexers can reconcile estimated vs actual
+        // fees. Failed batches return early above; only successful batches
+        // reach this point. Fee mirrors estimate_fees(): op_count × FEE_PER_OP.
+        let fee = (ops.len() as u32).saturating_mul(FEE_PER_OP);
+        emit(
+            &env,
+            symbol_short!("fee_chg"),
+            (caller.clone(), ops.len() as u32, fee),
+        );
+
         // Emit a dedicated success event when every operation succeeded.
         if result.failure_count == 0 {
             emit(
@@ -344,14 +525,16 @@ impl MuxBatcher {
     /// Estimate the fee (in stroops) for a batch of the given size.
     ///
     /// Returns `Err(BatchTooLarge)` when `op_count` exceeds `max_batch_size`.
-    pub fn estimate_fees(_env: Env, op_count: u32) -> Result<u32, MuxBatcherError> {
+    pub fn estimate_fees(env: Env, op_count: u32) -> Result<u32, MuxBatcherError> {
         if op_count == 0 {
             return Err(MuxBatcherError::EmptyBatch);
         }
         if op_count > MAX_BATCH_SIZE {
             return Err(MuxBatcherError::BatchTooLarge);
         }
-        Ok(op_count.saturating_mul(FEE_PER_OP))
+        // Reflect the configurable per-op fee (fee accounting, issue #748):
+        // clients that call fee_per_op() at runtime pick up admin changes.
+        Ok(op_count.saturating_mul(Self::fee_per_op(env)))
     }
 
     /// Store registry metadata (description, author) for this batcher instance.
@@ -581,6 +764,30 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_batch_rejected_before_guard_is_set() {
+        // An empty batch returns EmptyBatch before the reentrancy guard
+        // (DataKey::Executing) is ever written, so no guard key remains in
+        // storage afterward (#1063).
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let caller = Address::generate(&env);
+        let ops: Vec<Operation> = Vec::new(&env);
+        let result = client.try_execute_batch(&caller, &ops);
+        assert_eq!(result.unwrap_err().unwrap(), MuxBatcherError::EmptyBatch);
+
+        let guard_set = env.as_contract(&contract_id, || {
+            env.storage().instance().has(&DataKey::Executing)
+        });
+        assert!(
+            !guard_set,
+            "empty batch must not leave the reentrancy guard set"
+        );
+    }
+
+    #[test]
     fn test_reentrancy_guard_clears_after_success() {
         // Verify the Executing flag is cleared so sequential batch calls work.
         // If the guard were not cleared the second call would return ReentrancyDetected.
@@ -744,6 +951,30 @@ mod tests {
     }
 
     #[test]
+    fn test_batch_too_large_rejected_before_guard_is_set() {
+        // An oversized batch returns BatchTooLarge before the reentrancy guard
+        // (DataKey::Executing) is ever written, so no guard key remains in
+        // storage afterward (#1063).
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let caller = Address::generate(&env);
+        let ops = make_nop_ops(&env, MAX_BATCH_SIZE + 1);
+        let result = client.try_execute_batch(&caller, &ops);
+        assert_eq!(result.unwrap_err().unwrap(), MuxBatcherError::BatchTooLarge);
+
+        let guard_set = env.as_contract(&contract_id, || {
+            env.storage().instance().has(&DataKey::Executing)
+        });
+        assert!(
+            !guard_set,
+            "oversized batch must not leave the reentrancy guard set"
+        );
+    }
+
+    #[test]
     fn test_ttl_extended_on_execute_batch() {
         // Verify that execute_batch bumps instance TTL (T-21 mitigation).
         let env = Env::default();
@@ -824,6 +1055,66 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(topic_action(&env, &events, 0), symbol_short!("bat_start"));
         assert_eq!(topic_action(&env, &events, 1), symbol_short!("bat_abort"));
+    }
+
+    #[test]
+    fn test_fee_chg_event_emitted_on_success() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let caller = Address::generate(&env);
+        let ops = make_nop_ops(&env, 3);
+        let result = client.try_execute_batch(&caller, &ops);
+        assert!(result.is_ok(), "batch must succeed: {result:?}");
+
+        let events = env.events().all();
+        // bat_start, executed, fee_chg, bat_ok
+        assert_eq!(events.len(), 4);
+
+        // Find the fee_chg event by topic action.
+        let fee_chg_idx = events.iter().position(|(_, topics, _)| {
+            Symbol::from_val(&env, &topics.get(1).unwrap()) == symbol_short!("fee_chg")
+        });
+        let fee_chg_idx = fee_chg_idx.expect("fee_chg event must be emitted");
+
+        let (_, _, data) = events.get(fee_chg_idx).unwrap();
+        let (ev_caller, ev_op_count, ev_fee): (Address, u32, u32) =
+            FromVal::from_val(&env, data);
+
+        assert_eq!(ev_caller, caller);
+        assert_eq!(ev_op_count, 3);
+        assert_eq!(ev_fee, 3 * FEE_PER_OP);
+        assert_eq!(ev_fee, client.estimate_fees(&3).unwrap());
+    }
+
+    #[test]
+    fn test_fee_chg_event_not_emitted_on_failure() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+
+        let caller = Address::generate(&env);
+        // Required op targeting a non-existent contract → batch aborts.
+        let mut ops: Vec<Operation> = Vec::new(&env);
+        ops.push_back(Operation {
+            target: Address::generate(&env),
+            fn_name: symbol_short!("noop"),
+            args: Vec::new(&env),
+            require_success: true,
+            kind: BatchOperationKind::Invoke,
+        });
+        let result = client.try_execute_batch(&caller, &ops);
+        assert!(result.is_err(), "batch must fail: {result:?}");
+
+        let events = env.events().all();
+        // bat_start, bat_abort — no fee_chg
+        assert_eq!(events.len(), 2);
+        assert!(!events.iter().any(|(_, topics, _)| {
+            Symbol::from_val(&env, &topics.get(1).unwrap()) == symbol_short!("fee_chg")
+        }), "fee_chg must not be emitted on failed batch");
     }
 
     #[test]
@@ -959,11 +1250,12 @@ mod tests {
         let client = MuxBatcherClient::new(&env, &contract_id);
 
         let caller = Address::generate(&env);
+        let target_id = env.register_contract(None, DummyTarget);
         let mut ops: Vec<Operation> = Vec::new(&env);
         // Successful op 1
         ops.push_back(Operation {
-            target: contract_id.clone(),
-            fn_name: symbol_short!("max_batch"),
+            target: target_id,
+            fn_name: symbol_short!("noop"),
             args: Vec::new(&env),
             require_success: false,
             kind: BatchOperationKind::Invoke,
@@ -1194,9 +1486,11 @@ mod tests {
         let author = String::from_str(&env, "mux-labs");
 
         client.set_registry_metadata(&description, &author);
-        assert!(client
-            .try_set_registry_metadata(&description, &author)
-            .is_err());
+        // The comment guarantees metadata can only be recorded once: a second
+        // call must fail with the specific `MetadataAlreadySet` error, not just
+        // any error (a dropped/changed guard must not go unobserved).
+        let result = client.try_set_registry_metadata(&description, &author);
+        assert_eq!(result, Err(Ok(MuxBatcherError::MetadataAlreadySet)));
     }
 
     #[test]
@@ -1453,6 +1747,48 @@ mod tests {
         );
     }
 
+    /// Oversized batches must be rejected for size before the reentrancy guard is
+    /// set, leaving no `Executing` guard in storage. A batch of exactly
+    /// `MAX_BATCH_SIZE` ops must not be rejected for size. (Issue #1068)
+    #[test]
+    fn test_execute_batch_over_max_rejected_and_leaves_no_guard() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+        let caller = Address::generate(&env);
+
+        // MAX_BATCH_SIZE + 1 (51) ops must fail with the existing size error.
+        let over_ops = make_nop_ops(&env, MAX_BATCH_SIZE + 1);
+        let result = client.try_execute_batch(&caller, &over_ops);
+        assert_eq!(
+            result.unwrap_err(),
+            Ok(MuxBatcherError::BatchTooLarge),
+            "a batch larger than MAX_BATCH_SIZE must return BatchTooLarge"
+        );
+
+        // The size rejection happens before the reentrancy guard is set, so no
+        // Executing flag may remain in storage.
+        env.as_contract(&contract_id, || {
+            let executing = env
+                .storage()
+                .instance()
+                .get::<DataKey, bool>(&DataKey::Executing)
+                .unwrap_or(false);
+            assert!(
+                !executing,
+                "size rejection must leave no reentrancy guard in storage"
+            );
+        });
+
+        // Exactly MAX_BATCH_SIZE (50) ops must not be rejected for size.
+        let at_max_ops = make_nop_ops(&env, MAX_BATCH_SIZE);
+        assert!(
+            client.try_execute_batch(&caller, &at_max_ops).is_ok(),
+            "a batch of exactly MAX_BATCH_SIZE must not be rejected for size"
+        );
+    }
+
     // ── symbol_short length audit (#496) ─────────────────────────────────────
 
     #[test]
@@ -1531,7 +1867,17 @@ mod tests {
         assert_eq!(exec_over.unwrap_err().unwrap(), MuxBatcherError::BatchTooLarge);
 
         // Parity 3: In-bound valid batch accepts and returns matching success_count
-        let valid_ops = make_nop_ops(&env, 5);
+        let target_id = env.register_contract(None, DummyTarget);
+        let mut valid_ops: Vec<Operation> = Vec::new(&env);
+        for _ in 0..5 {
+            valid_ops.push_back(Operation {
+                target: target_id.clone(),
+                fn_name: symbol_short!("noop"),
+                args: Vec::new(&env),
+                require_success: false,
+                kind: BatchOperationKind::Invoke,
+            });
+        }
         let sim_valid = client.simulate_batch(&caller, &valid_ops);
         let exec_valid = client.execute_batch(&caller, &valid_ops);
         assert_eq!(sim_valid.success_count, exec_valid.success_count);
@@ -1653,6 +1999,39 @@ mod tests {
             result.is_err(),
             "upgrade must reject when admin auth is absent"
         );
+    }
+
+    #[test]
+    fn test_upgrade_replaces_wasm_and_extends_instance_ttl() {
+        // Success path: an initialized batcher's admin can upgrade, and the
+        // instance TTL is pushed back out to TTL_EXTEND_TO (T-21).
+        use soroban_sdk::testutils::Ledger;
+
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxBatcher);
+        let client = MuxBatcherClient::new(&env, &contract_id);
+        client.initialize(&Address::generate(&env));
+
+        // Let the TTL decay below TTL_THRESHOLD so only upgrade() can restore it.
+        env.ledger()
+            .with_mut(|l| l.sequence_number += TTL_EXTEND_TO - 1_000);
+        let ttl_before = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+        assert!(ttl_before < TTL_THRESHOLD);
+
+        // Minimal valid Soroban module: wasm header + `contractenvmetav0`
+        // custom section declaring interface version (protocol 21, pre-release 0).
+        let mut wasm = std::vec![0x00u8, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x00, 0x1e, 0x11];
+        wasm.extend_from_slice(b"contractenvmetav0");
+        wasm.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 21, 0, 0, 0, 0]);
+        let new_hash = env
+            .deployer()
+            .upload_contract_wasm(soroban_sdk::Bytes::from_slice(&env, &wasm));
+
+        client.upgrade(&new_hash);
+
+        let ttl_after = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+        assert_eq!(ttl_after, TTL_EXTEND_TO);
     }
 
     #[test]

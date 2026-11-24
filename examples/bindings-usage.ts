@@ -13,6 +13,7 @@
  *   SECRET_KEY         — Stellar secret key (starts with S)
  *   SPENDING_CONTRACT  — MuxSpendingPolicy contract address
  *   WALLET_CONTRACT    — MuxWalletRegistry contract address
+ *   ASSET_CONTRACT     — address of the asset used in check_spend (C...)
  *   SOROBAN_NETWORK    — localnet | testnet | mainnet  (default: testnet)
  */
 
@@ -35,11 +36,18 @@ const configPath = path.join(__dirname, "..", "config", "addresses.json");
 const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
 const SPENDING_CONTRACT = config[NETWORK]?.muxSpendingPolicy || process.env.SPENDING_CONTRACT!;
 const WALLET_CONTRACT = config[NETWORK]?.muxWalletRegistry || process.env.WALLET_CONTRACT!;
+const ASSET_CONTRACT = process.env.ASSET_CONTRACT;
 
 if (!SPENDING_CONTRACT || !WALLET_CONTRACT) {
   console.error(
     `Contract addresses not found for network "${NETWORK}". ` +
     `Please set them in config/addresses.json or via env vars.`
+  );
+  process.exit(1);
+}
+if (!ASSET_CONTRACT) {
+  console.error(
+    `ASSET_CONTRACT is required — set it to the address of the asset used in check_spend.`
   );
   process.exit(1);
 }
@@ -68,8 +76,8 @@ async function demoCheckSpend() {
   });
 
   const account = Address.fromString(signer.publicKey());
-  // Simulate a spend of 500 units of a native-asset proxy address.
-  const asset = Address.fromString(SPENDING_CONTRACT); // placeholder
+  // Asset used for the spend check, configured via ASSET_CONTRACT.
+  const asset = Address.fromString(ASSET_CONTRACT);
   const amount = 500n;
 
   console.log("check_spend: verifying spend is within policy limit…");

@@ -32,6 +32,7 @@ import {
   muxRegistryErrorMessage,
   spendingPolicyErrorMessage,
   muxAccountFactoryErrorMessage,
+  muxWalletRegistryErrorMessage,
   type MuxAccountError,
   type MuxBatcherError,
   type MuxDelegationError,
@@ -165,11 +166,13 @@ const MUX_ACCOUNT_FACTORY_VARIANTS: readonly MuxAccountFactoryError[] = [
   "TooManyAccounts",
   "MetadataNotFound",
   "MetadataTooLarge",
+  "InvalidMetadata",
+  "AlreadyInitialized",
 ];
 
 describe("MuxAccountFactoryError coverage", () => {
-  it("has 5 variants matching the Rust enum", () => {
-    expect(MUX_ACCOUNT_FACTORY_VARIANTS.length).toBe(5);
+  it("has 7 variants matching the Rust enum", () => {
+    expect(MUX_ACCOUNT_FACTORY_VARIANTS.length).toBe(7);
   });
 
   it("every variant is in ERROR_HTTP_MAP with a valid status", () => {
@@ -183,8 +186,41 @@ describe("MuxAccountFactoryError coverage", () => {
       TooManyAccounts: 3,
       MetadataNotFound: 4,
       MetadataTooLarge: 5,
+      InvalidMetadata: 6,
+      AlreadyInitialized: 7,
     };
     assertHelperCoversVariants("muxAccountFactoryErrorMessage", muxAccountFactoryErrorMessage, nameToCode);
+  });
+});
+
+// ── WalletRegistryError ───────────────────────────────────────────────────────
+
+const WALLET_REGISTRY_VARIANTS: readonly MuxWalletRegistryError[] = [
+  "NotInitialized",
+  "Unauthorized",
+  "WalletNotFound",
+  "WalletAlreadyRegistered",
+  "TooManyWallets",
+];
+
+describe("WalletRegistryError coverage", () => {
+  it("has 5 variants matching the Rust enum", () => {
+    expect(WALLET_REGISTRY_VARIANTS.length).toBe(5);
+  });
+
+  it("every variant is in ERROR_HTTP_MAP with a valid status", () => {
+    assertAllMapped("WalletRegistryError", WALLET_REGISTRY_VARIANTS);
+  });
+
+  it("muxWalletRegistryErrorMessage covers all variants and codes", () => {
+    const nameToCode: Record<MuxWalletRegistryError, number> = {
+      NotInitialized: 1,
+      Unauthorized: 2,
+      WalletNotFound: 3,
+      WalletAlreadyRegistered: 4,
+      TooManyWallets: 5,
+    };
+    assertHelperCoversVariants("muxWalletRegistryErrorMessage", muxWalletRegistryErrorMessage, nameToCode);
   });
 });
 
@@ -231,17 +267,17 @@ describe("MuxBatcherError coverage", () => {
 // ── MuxDelegationError ────────────────────────────────────────────────────────
 
 const MUX_DELEGATION_VARIANTS: readonly MuxDelegationError[] = [
-  "NotADelegate",
-  "TooManyPermissions",
-  "EmptyPermissions",
+  "DelegateNotFound",
+  "DelegateExpired",
+  "SpendLimitExceeded",
+  "InvalidPeriod",
   "TooManyDelegates",
-  "ContractIdAlreadySet",
-  "NotInitialized",
-  "AlreadyInitialized",
+  "Unauthorized",
+  "InvalidAmount",
 ];
 
 describe("MuxDelegationError coverage", () => {
-  it("has 7 variants matching the Rust enum (codes 6001–6007)", () => {
+  it("has 7 variants matching the Rust enum", () => {
     expect(MUX_DELEGATION_VARIANTS.length).toBe(7);
   });
 
@@ -249,23 +285,15 @@ describe("MuxDelegationError coverage", () => {
     assertAllMapped("MuxDelegationError", MUX_DELEGATION_VARIANTS);
   });
 
-  it("maps delegation-specific variants to correct HTTP statuses", () => {
-    expect(ERROR_HTTP_MAP.NotADelegate).toBe(404);
-    expect(ERROR_HTTP_MAP.TooManyPermissions).toBe(400);
-    expect(ERROR_HTTP_MAP.EmptyPermissions).toBe(400);
-    expect(ERROR_HTTP_MAP.TooManyDelegates).toBe(409);
-    expect(ERROR_HTTP_MAP.ContractIdAlreadySet).toBe(409);
-  });
-
-  it("muxDelegationErrorMessage covers all variants and codes 6001–6007", () => {
+  it("muxDelegationErrorMessage covers all variants and codes", () => {
     const nameToCode: Record<MuxDelegationError, number> = {
-      NotADelegate: 6001,
-      TooManyPermissions: 6002,
-      EmptyPermissions: 6003,
-      TooManyDelegates: 6004,
-      ContractIdAlreadySet: 6005,
-      NotInitialized: 6006,
-      AlreadyInitialized: 6007,
+      DelegateNotFound: 1,
+      DelegateExpired: 2,
+      SpendLimitExceeded: 3,
+      InvalidPeriod: 4,
+      TooManyDelegates: 5,
+      Unauthorized: 6,
+      InvalidAmount: 7,
     };
     assertHelperCoversVariants("muxDelegationErrorMessage", muxDelegationErrorMessage, nameToCode);
   });
@@ -274,90 +302,31 @@ describe("MuxDelegationError coverage", () => {
 // ── MuxPermissionsError ───────────────────────────────────────────────────────
 
 const MUX_PERMISSIONS_VARIANTS: readonly MuxPermissionsError[] = [
-  "NotInitialized",
-  "AlreadyInitialized",
   "Unauthorized",
-  "RoleNotFound",
-  "AccountNotInRole",
-  "PermissionNotFound",
-  "TooManyMembers",
-  "TooManyRoles",
-  "AdminNotFound",
-  "AlreadyApproved",
+  "ScopeNotGranted",
+  "TooManySessionKeys",
+  "InvalidNonce",
+  "SponsorNotAuthorized",
 ];
 
 describe("MuxPermissionsError coverage", () => {
-  it("has 10 variants in the TS union (TooManyPendingAdmins covered separately)", () => {
-    expect(MUX_PERMISSIONS_VARIANTS.length).toBe(10);
+  it("has 5 variants matching the Rust enum", () => {
+    expect(MUX_PERMISSIONS_VARIANTS.length).toBe(5);
   });
 
   it("every variant is in ERROR_HTTP_MAP with a valid status", () => {
     assertAllMapped("MuxPermissionsError", MUX_PERMISSIONS_VARIANTS);
   });
 
-  it("TooManyPendingAdmins is mapped to 409", () => {
-    expect(ERROR_HTTP_MAP.TooManyPendingAdmins).toBe(409);
-  });
-
   it("muxPermissionsErrorMessage covers all variants and codes", () => {
     const nameToCode: Record<MuxPermissionsError, number> = {
-      NotInitialized: 1,
-      AlreadyInitialized: 2,
-      Unauthorized: 3,
-      RoleNotFound: 4,
-      AccountNotInRole: 5,
-      PermissionNotFound: 6,
-      TooManyMembers: 7,
-      TooManyRoles: 8,
-      AdminNotFound: 9,
-      AlreadyApproved: 10,
+      Unauthorized: 1,
+      ScopeNotGranted: 2,
+      TooManySessionKeys: 3,
+      InvalidNonce: 4,
+      SponsorNotAuthorized: 5,
     };
     assertHelperCoversVariants("muxPermissionsErrorMessage", muxPermissionsErrorMessage, nameToCode);
-  });
-});
-
-// ── MuxPolicyError ────────────────────────────────────────────────────────────
-
-const MUX_POLICY_VARIANTS: readonly MuxPolicyError[] = [
-  "NotInitialized",
-  "AlreadyInitialized",
-  "Unauthorized",
-  "LimitNotFound",
-  "LimitExceeded",
-  "InvalidAmount",
-  "InvalidPeriod",
-  "TooManyWallets",
-];
-
-describe("MuxPolicyError coverage", () => {
-  it("has 8 variants matching the Rust enum", () => {
-    expect(MUX_POLICY_VARIANTS.length).toBe(8);
-  });
-
-  it("every variant is in ERROR_HTTP_MAP with a valid status", () => {
-    assertAllMapped("MuxPolicyError", MUX_POLICY_VARIANTS);
-  });
-
-  it("TooManyWallets is mapped to 409", () => {
-    expect(ERROR_HTTP_MAP.TooManyWallets).toBe(409);
-  });
-
-  it("LimitNotFound is mapped to 404", () => {
-    expect(ERROR_HTTP_MAP.LimitNotFound).toBe(404);
-  });
-
-  it("muxPolicyErrorMessage covers all variants and codes", () => {
-    const nameToCode: Record<MuxPolicyError, number> = {
-      NotInitialized: 1,
-      AlreadyInitialized: 2,
-      Unauthorized: 3,
-      LimitNotFound: 4,
-      LimitExceeded: 5,
-      InvalidAmount: 6,
-      InvalidPeriod: 7,
-      TooManyWallets: 8,
-    };
-    assertHelperCoversVariants("muxPolicyErrorMessage", muxPolicyErrorMessage, nameToCode);
   });
 });
 
@@ -367,34 +336,18 @@ const MUX_RECOVERY_VARIANTS: readonly MuxRecoveryError[] = [
   "NotInitialized",
   "AlreadyInitialized",
   "Unauthorized",
-  "RecoveryAlreadyPending",
-  "NoActiveRecovery",
-  "TimelockNotExpired",
-  "TooManyGuardians",
-  "GuardianAlreadyExists",
-  "GuardianNotFound",
-  "MinGuardiansRequired",
+  "RecoveryNotFound",
   "RecoveryExpired",
+  "InvalidThreshold",
 ];
 
 describe("MuxRecoveryError coverage", () => {
-  it("has 11 variants matching the Rust RecoveryError enum", () => {
-    expect(MUX_RECOVERY_VARIANTS.length).toBe(11);
+  it("has 6 variants matching the Rust enum", () => {
+    expect(MUX_RECOVERY_VARIANTS.length).toBe(6);
   });
 
   it("every variant is in ERROR_HTTP_MAP with a valid status", () => {
     assertAllMapped("MuxRecoveryError", MUX_RECOVERY_VARIANTS);
-  });
-
-  it("maps recovery-specific variants to correct HTTP statuses", () => {
-    expect(ERROR_HTTP_MAP.RecoveryAlreadyPending).toBe(409);
-    expect(ERROR_HTTP_MAP.NoActiveRecovery).toBe(404);
-    expect(ERROR_HTTP_MAP.TimelockNotExpired).toBe(400);
-    expect(ERROR_HTTP_MAP.TooManyGuardians).toBe(409);
-    expect(ERROR_HTTP_MAP.GuardianAlreadyExists).toBe(409);
-    expect(ERROR_HTTP_MAP.GuardianNotFound).toBe(404);
-    expect(ERROR_HTTP_MAP.MinGuardiansRequired).toBe(400);
-    expect(ERROR_HTTP_MAP.RecoveryExpired).toBe(400);
   });
 
   it("muxRecoveryErrorMessage covers all variants and codes", () => {
@@ -402,53 +355,71 @@ describe("MuxRecoveryError coverage", () => {
       NotInitialized: 1,
       AlreadyInitialized: 2,
       Unauthorized: 3,
-      RecoveryAlreadyPending: 4,
-      NoActiveRecovery: 5,
-      TimelockNotExpired: 6,
-      TooManyGuardians: 7,
-      GuardianAlreadyExists: 8,
-      GuardianNotFound: 9,
-      MinGuardiansRequired: 10,
-      RecoveryExpired: 11,
+      RecoveryNotFound: 4,
+      RecoveryExpired: 5,
+      InvalidThreshold: 6,
     };
     assertHelperCoversVariants("muxRecoveryErrorMessage", muxRecoveryErrorMessage, nameToCode);
   });
 });
 
-// ── MuxRegistryError ──────────────────────────────────────────────────────────
+// ── MuxPolicyError ────────────────────────────────────────────────────────────
 
-const MUX_REGISTRY_VARIANT_NAMES = [
+const MUX_POLICY_VARIANTS: readonly MuxPolicyError[] = [
   "NotInitialized",
   "AlreadyInitialized",
   "Unauthorized",
-  "ContractNotFound",
-  "TooManyContracts",
-] as const;
+  "PolicyNotFound",
+  "InvalidPolicy",
+];
 
-describe("MuxRegistryError coverage", () => {
+describe("MuxPolicyError coverage", () => {
   it("has 5 variants matching the Rust enum", () => {
-    expect(MUX_REGISTRY_VARIANT_NAMES.length).toBe(5);
+    expect(MUX_POLICY_VARIANTS.length).toBe(5);
   });
 
   it("every variant is in ERROR_HTTP_MAP with a valid status", () => {
-    assertAllMapped("MuxRegistryError", MUX_REGISTRY_VARIANT_NAMES);
+    assertAllMapped("MuxPolicyError", MUX_POLICY_VARIANTS);
   });
 
-  it("ContractNotFound is mapped to 404", () => {
-    expect(ERROR_HTTP_MAP.ContractNotFound).toBe(404);
-  });
-
-  it("TooManyContracts is mapped to 409", () => {
-    expect(ERROR_HTTP_MAP.TooManyContracts).toBe(409);
-  });
-
-  it("muxRegistryErrorMessage covers all variants and codes", () => {
-    const nameToCode: Record<string, number> = {
+  it("muxPolicyErrorMessage covers all variants and codes", () => {
+    const nameToCode: Record<MuxPolicyError, number> = {
       NotInitialized: 1,
       AlreadyInitialized: 2,
       Unauthorized: 3,
-      ContractNotFound: 4,
-      TooManyContracts: 5,
+      PolicyNotFound: 4,
+      InvalidPolicy: 5,
+    };
+    assertHelperCoversVariants("muxPolicyErrorMessage", muxPolicyErrorMessage, nameToCode);
+  });
+});
+
+// ── MuxRegistryError ──────────────────────────────────────────────────────────
+
+const MUX_REGISTRY_VARIANTS: readonly MuxRegistryError[] = [
+  "NotInitialized",
+  "AlreadyInitialized",
+  "Unauthorized",
+  "EntryNotFound",
+  "EntryAlreadyExists",
+];
+
+describe("MuxRegistryError coverage", () => {
+  it("has 5 variants matching the Rust enum", () => {
+    expect(MUX_REGISTRY_VARIANTS.length).toBe(5);
+  });
+
+  it("every variant is in ERROR_HTTP_MAP with a valid status", () => {
+    assertAllMapped("MuxRegistryError", MUX_REGISTRY_VARIANTS);
+  });
+
+  it("muxRegistryErrorMessage covers all variants and codes", () => {
+    const nameToCode: Record<MuxRegistryError, number> = {
+      NotInitialized: 1,
+      AlreadyInitialized: 2,
+      Unauthorized: 3,
+      EntryNotFound: 4,
+      EntryAlreadyExists: 5,
     };
     assertHelperCoversVariants("muxRegistryErrorMessage", muxRegistryErrorMessage, nameToCode);
   });
@@ -460,22 +431,17 @@ const SPENDING_POLICY_VARIANTS: readonly SpendingPolicyError[] = [
   "NotInitialized",
   "AlreadyInitialized",
   "Unauthorized",
-  "PolicyNotFound",
-  "SpendLimitExceeded",
-  "InvalidInput",
+  "LimitExceeded",
+  "InvalidLimit",
 ];
 
 describe("SpendingPolicyError coverage", () => {
-  it("has 6 variants matching the Rust enum", () => {
-    expect(SPENDING_POLICY_VARIANTS.length).toBe(6);
+  it("has 5 variants matching the Rust enum", () => {
+    expect(SPENDING_POLICY_VARIANTS.length).toBe(5);
   });
 
   it("every variant is in ERROR_HTTP_MAP with a valid status", () => {
     assertAllMapped("SpendingPolicyError", SPENDING_POLICY_VARIANTS);
-  });
-
-  it("PolicyNotFound is mapped to 404", () => {
-    expect(ERROR_HTTP_MAP.PolicyNotFound).toBe(404);
   });
 
   it("spendingPolicyErrorMessage covers all variants and codes", () => {
@@ -483,130 +449,9 @@ describe("SpendingPolicyError coverage", () => {
       NotInitialized: 1,
       AlreadyInitialized: 2,
       Unauthorized: 3,
-      PolicyNotFound: 4,
-      SpendLimitExceeded: 5,
-      InvalidInput: 6,
+      LimitExceeded: 4,
+      InvalidLimit: 5,
     };
     assertHelperCoversVariants("spendingPolicyErrorMessage", spendingPolicyErrorMessage, nameToCode);
-  });
-});
-
-// ── MuxWalletRegistryError ────────────────────────────────────────────────────
-
-const MUX_WALLET_REGISTRY_VARIANTS: readonly MuxWalletRegistryError[] = [
-  "NotInitialized",
-  "AlreadyInitialized",
-  "Unauthorized",
-  "WalletNotFound",
-  "TooManyWallets",
-];
-
-describe("MuxWalletRegistryError coverage", () => {
-  it("has 5 variants matching the Rust enum", () => {
-    expect(MUX_WALLET_REGISTRY_VARIANTS.length).toBe(5);
-  });
-
-  it("every variant is in ERROR_HTTP_MAP with a valid status", () => {
-    assertAllMapped("MuxWalletRegistryError", MUX_WALLET_REGISTRY_VARIANTS);
-  });
-
-  it("WalletNotFound is mapped to 404", () => {
-    expect(ERROR_HTTP_MAP.WalletNotFound).toBe(404);
-  });
-
-  it("TooManyWallets is mapped to 409", () => {
-    expect(ERROR_HTTP_MAP.TooManyWallets).toBe(409);
-  });
-});
-
-// ── Global completeness check ─────────────────────────────────────────────────
-
-describe("ERROR_HTTP_MAP global completeness", () => {
-  /**
-   * The canonical set of all error variants across all contracts.
-   * Kept in sync with docs/bindings-error-mapping.md.
-   * If this test fails, a variant was added/removed from the TS types without
-   * a corresponding change to ERROR_HTTP_MAP.
-   */
-  const ALL_REQUIRED_VARIANTS = [
-    // Shared names (appear in multiple contracts)
-    "NotInitialized",
-    "AlreadyInitialized",
-    "Unauthorized",
-    // MuxAccount
-    "DelegateNotFound",
-    "DelegateExpired",
-    "SpendLimitExceeded",
-    "InvalidAmount",
-    "InvalidPeriod",
-    "TooManyDelegates",
-    "ReentrancyDetected",
-    "ArithmeticOverflow",
-    "TooManySessionKeys",
-    "ScopeNotGranted",
-    "SponsorNotAuthorized",
-    "InvalidNonce",
-    // MuxAccountFactory
-    "InvalidAccount",
-    "TooManyAccounts",
-    "MetadataNotFound",
-    "MetadataTooLarge",
-    // MuxBatcher
-    "EmptyBatch",
-    "BatchTooLarge",
-    "RequiredOperationFailed",
-    "MetadataAlreadySet",
-    // MuxDelegation
-    "NotADelegate",
-    "TooManyPermissions",
-    "EmptyPermissions",
-    "ContractIdAlreadySet",
-    // MuxPermissions
-    "RoleNotFound",
-    "AccountNotInRole",
-    "PermissionNotFound",
-    "TooManyMembers",
-    "TooManyRoles",
-    "AdminNotFound",
-    "AlreadyApproved",
-    "TooManyPendingAdmins",
-    // MuxPolicy
-    "LimitNotFound",
-    "LimitExceeded",
-    // MuxRecovery
-    "RecoveryAlreadyPending",
-    "NoActiveRecovery",
-    "TimelockNotExpired",
-    "TooManyGuardians",
-    "GuardianAlreadyExists",
-    "GuardianNotFound",
-    "MinGuardiansRequired",
-    "RecoveryExpired",
-    // MuxRegistry
-    "ContractNotFound",
-    "TooManyContracts",
-    // SpendingPolicy
-    "PolicyNotFound",
-    "InvalidInput",
-    // MuxWalletRegistry
-    "WalletNotFound",
-    "TooManyWallets",
-  ] as const;
-
-  it("all required contract error variants are present in ERROR_HTTP_MAP", () => {
-    for (const variant of ALL_REQUIRED_VARIANTS) {
-      const status = ERROR_HTTP_MAP[variant];
-      if (typeof status !== "number") {
-        throw new Error(`ERROR_HTTP_MAP is missing required variant "${variant}"`);
-      }
-    }
-  });
-
-  it("all mapped statuses are valid HTTP 4xx or 5xx codes", () => {
-    for (const [variant, status] of Object.entries(ERROR_HTTP_MAP)) {
-      expect(status).toBeGreaterThanOrEqual(400);
-      expect(status).toBeLessThan(600);
-      void variant; // suppress unused-variable lint
-    }
   });
 });

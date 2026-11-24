@@ -590,6 +590,50 @@ describe("MuxAccount Integration & Test Vectors", () => {
     });
   });
 
+  describe("is_session_key_valid query states", () => {
+    it("returns true for an active, unexpired session key within scope", () => {
+      const engine = new AccountIntegrationEngine("GOWNER1");
+      const now = 1000;
+      engine.registerSessionKey("GOWNER1", "GSK_ACTIVE", 2000, ["ping"], now);
+      expect(engine.isSessionKeyValid("GSK_ACTIVE", now, "ping")).toBe(true);
+      expect(engine.isSessionKeyValid("GSK_ACTIVE", now)).toBe(true);
+    });
+
+    it("returns false for a revoked session key", () => {
+      const engine = new AccountIntegrationEngine("GOWNER1");
+      const now = 1000;
+      engine.registerSessionKey("GOWNER1", "GSK_REVOKED", 2000, ["ping"], now);
+      expect(engine.isSessionKeyValid("GSK_REVOKED", now, "ping")).toBe(true);
+
+      // Revoke by removing the key record directly (no dedicated revoke
+      // entrypoint exists on the contract yet; revocation is modeled as
+      // deleting the stored record, mirroring on-chain key removal).
+      engine.sessionKeys.delete("GSK_REVOKED");
+
+      expect(engine.isSessionKeyValid("GSK_REVOKED", now, "ping")).toBe(false);
+      expect(engine.isSessionKeyValid("GSK_REVOKED", now)).toBe(false);
+    });
+
+    it("returns false for an expired session key", () => {
+      const engine = new AccountIntegrationEngine("GOWNER1");
+      const now = 1000;
+      engine.registerSessionKey("GOWNER1", "GSK_EXPIRED", 2000, ["ping"], now);
+
+      // Still valid right before expiry...
+      expect(engine.isSessionKeyValid("GSK_EXPIRED", 1999, "ping")).toBe(true);
+      // ...invalid exactly at and after the expiry ledger (exclusive upper bound).
+      expect(engine.isSessionKeyValid("GSK_EXPIRED", 2000, "ping")).toBe(false);
+      expect(engine.isSessionKeyValid("GSK_EXPIRED", 5000, "ping")).toBe(false);
+    });
+
+    it("returns false for an unknown session key that was never registered", () => {
+      const engine = new AccountIntegrationEngine("GOWNER1");
+      const now = 1000;
+      expect(engine.isSessionKeyValid("GSK_NEVER_REGISTERED", now)).toBe(false);
+      expect(engine.isSessionKeyValid("GSK_NEVER_REGISTERED", now, "ping")).toBe(false);
+    });
+  });
+
   describe("Spend Limit Vectors & Debit Boundaries", () => {
     it("debit_spend enforces spend limit and rejects overflow", () => {
       const engine = new AccountIntegrationEngine("GOWNER1");

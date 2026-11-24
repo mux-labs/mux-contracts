@@ -33,6 +33,57 @@ export class TransactionFailedError extends Error {
 }
 
 /**
+ * Thrown by {@link pollTransaction} immediately (no retries consumed) when
+ * the error raised by `getTransaction` is known to be permanent: a
+ * malformed hash the RPC will never accept, or an RPC rejection code that
+ * cannot resolve itself on retry. Distinguishing these from transient
+ * transport/gateway errors keeps a bad hash or a permanent rejection from
+ * burning all `maxAttempts` before failing.
+ */
+export class NonRetryableRpcError extends Error {
+  constructor(
+    public readonly hash: string,
+    public readonly cause: unknown,
+  ) {
+    super(
+      `Transaction ${hash} polling failed with a non-retryable RPC error: ${describeError(cause)}`
+    );
+    this.name = "NonRetryableRpcError";
+  }
+}
+
+/** RPC error codes that indicate a permanent rejection, never transient. */
+const NON_RETRYABLE_RPC_CODES = new Set([-32602, -32600, -32601]);
+
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+/**
+ * True when `error` represents a permanent RPC rejection rather than a
+ * transient transport/gateway failure. Covers JSON-RPC error objects with a
+ * known non-retryable `code` (invalid params, invalid request, method not
+ * found) as well as HTTP-style 4xx status codes, which indicate the request
+ * itself is invalid and will fail identically on every retry.
+ */
+function isNonRetryableRpcError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  const err = error as { code?: unknown; status?: unknown };
+  if (typeof err.code === "number" && NON_RETRYABLE_RPC_CODES.has(err.code)) {
+    return true;
+  }
+  if (typeof err.status === "number" && err.status >= 400 && err.status < 500) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Poll Soroban RPC until a transaction is confirmed or reaches a terminal
  * state. NOT_FOUND and PENDING are retried; FAILED is surfaced with its result
  * XDR. Transient RPC errors are retried so a short Horizon/RPC interruption
@@ -71,6 +122,11 @@ export async function pollTransaction(
       // A terminal contract failure is not transient and must be returned now.
       if (error instanceof TransactionFailedError) {
         throw error;
+      }
+      // A permanent RPC rejection (bad params/method, 4xx) will fail
+      // identically on every retry, so fail fast instead of burning attempts.
+      if (isNonRetryableRpcError(error)) {
+        throw new NonRetryableRpcError(hash, error);
       }
       // Other errors (transport failures, malformed gateway responses, and
       // NOT_FOUND/PENDING responses) consume this attempt and are retried.

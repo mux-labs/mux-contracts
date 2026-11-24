@@ -71,17 +71,53 @@ async function main() {
 
   const validExamples = ["treasury", "hot_wallet_01", "vault_cold", "A1_B2"];
   for (const sample of validExamples) {
-    console.log(`  ✓ Name '${sample}' is valid: ${isValidWalletName(sample)}`);
+    const valid = isValidWalletName(sample);
+    if (!valid) {
+      throw new Error(`Expected '${sample}' to be a valid wallet name, but it was rejected`);
+    }
+    console.log(`  ✓ Name '${sample}' is valid: ${valid}`);
   }
 
   const invalidExamples = ["invalid-name", "has space", "too_many_characters_12345678901234567890", "bad@char!"];
   for (const sample of invalidExamples) {
+    if (isValidWalletName(sample)) {
+      throw new Error(`Expected '${sample}' to be rejected, but it was accepted`);
+    }
     try {
       validateWalletName(sample);
-      console.warn(`  ⚠️ Unexpectedly valid: '${sample}'`);
+      throw new Error(`Expected '${sample}' to be rejected, but validateWalletName accepted it`);
     } catch (err) {
+      if ((err as Error).message.startsWith("Expected")) {
+        throw err;
+      }
       console.log(`  ✗ Name '${sample}' correctly rejected fail-closed: ${(err as Error).message}`);
     }
+  }
+
+  // ── Boundary Cases Derived from WALLET_NAME_MAX_LEN ───────────────────────
+  // A name of exactly WALLET_NAME_MAX_LEN characters must pass; one character
+  // longer must be rejected.
+  const atLimit = "a".repeat(WALLET_NAME_MAX_LEN);
+  const overLimit = "a".repeat(WALLET_NAME_MAX_LEN + 1);
+
+  if (!isValidWalletName(atLimit)) {
+    throw new Error(`Expected a name of exactly ${WALLET_NAME_MAX_LEN} chars to be valid, but it was rejected`);
+  }
+  validateWalletName(atLimit);
+  console.log(`  ✓ Name of exactly ${WALLET_NAME_MAX_LEN} chars accepted`);
+
+  if (isValidWalletName(overLimit)) {
+    throw new Error(`Expected a name of ${WALLET_NAME_MAX_LEN + 1} chars to be rejected, but it was accepted`);
+  }
+  let overLimitRejected = false;
+  try {
+    validateWalletName(overLimit);
+  } catch (err) {
+    overLimitRejected = true;
+    console.log(`  ✗ Name of ${WALLET_NAME_MAX_LEN + 1} chars correctly rejected: ${(err as Error).message}`);
+  }
+  if (!overLimitRejected) {
+    throw new Error(`Expected a name of ${WALLET_NAME_MAX_LEN + 1} chars to be rejected, but validateWalletName accepted it`);
   }
 
   const name = "treasury";
@@ -94,6 +130,14 @@ async function main() {
   console.log(`\nLooking up wallet name '${name}'...`);
   const fetched = await walletClient.getWallet(signer, name);
   console.log(`  Fetched wallet address: ${fetched.toString()}`);
+
+  if (fetched.toString() !== wallet.toString()) {
+    console.error(
+      `❌ Round-trip mismatch for '${name}': registered ${wallet.toString()} but fetched ${fetched.toString()}`,
+    );
+    process.exit(1);
+  }
+  console.log("  ✓ Fetched address matches registered address.");
 }
 
 main().catch((err) => {

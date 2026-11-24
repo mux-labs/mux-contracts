@@ -4,8 +4,21 @@ import {
   getValidatedAddresses,
 } from "../src/addresses";
 import { DEFAULT_ADDRESSES } from "../src/addresses-config";
+import { validateAddresses as validateGeneratorAddresses } from "../../scripts/generate-addresses";
 
 describe("Contract Address Configuration", () => {
+  // Mainnet address resolution is fail-closed: it requires the mainnet PR
+  // review marker (`MAINNET_ADDRESS_REVIEW_APPROVED=true`). Approve it here
+  // so tests that resolve mainnet addresses exercise the loader/validation
+  // logic instead of being rejected by the review gate.
+  beforeAll(() => {
+    process.env.MAINNET_ADDRESS_REVIEW_APPROVED = "true";
+  });
+
+  afterAll(() => {
+    delete process.env.MAINNET_ADDRESS_REVIEW_APPROVED;
+  });
+
   describe("loadContractAddresses", () => {
     it("loads addresses for localnet from config", () => {
       const addresses = loadContractAddresses("localnet", DEFAULT_ADDRESSES);
@@ -72,28 +85,55 @@ describe("Contract Address Configuration", () => {
     });
   });
 
-  describe("validateAddresses", () => {
-    it("passes when all addresses are present", () => {
-      const addresses = {
-        muxAccount: "CAcc1",
-        muxBatcher: "CBatch1",
-        muxDelegation: "CDel1",
-        muxPermissions: "CPerms1",
-        muxWalletRegistry: "CWReg1",
-      };
+  describe("getContractAddresses / loadContractAddresses share env resolution (#988)", () => {
+    it("resolve the same value for a shared key from the same env var", async () => {
+      // network.ts's getContractAddresses is not exported, but it drives
+      // NETWORK_CONFIGS at module-load time, so import it fresh and read
+      // through that. Both it and loadContractAddresses now go through
+      // resolveContractAddressesFromEnv, so an env override is honored
+      // identically by both.
+      process.env.LOCALNET_MUX_BATCHER_ID = "CSHARED_BATCHER_OVERRIDE";
+      try {
+        const { resolveContractAddressesFromEnv } = await import(
+          "../src/env-resolve"
+        );
+        const viaAddresses = loadContractAddresses(
+          "localnet",
+          DEFAULT_ADDRESSES,
+        );
+        const viaShared = resolveContractAddressesFromEnv("localnet", {
+          muxBatcher: DEFAULT_ADDRESSES.localnet.muxBatcher,
+        });
+        expect(viaAddresses.muxBatcher).toBe("CSHARED_BATCHER_OVERRIDE");
+        expect(viaShared.muxBatcher).toBe("CSHARED_BATCHER_OVERRIDE");
+        expect(viaAddresses.muxBatcher).toBe(viaShared.muxBatcher);
+      } finally {
+        delete process.env.LOCALNET_MUX_BATCHER_ID;
+      }
+    });
+  });
 
+  describe("validateAddresses", () => {
+    // Well-formed strkey contract IDs (56 chars, leading "C") for fixtures
+    // that must pass the format check.
+    const wellFormed = {
+      muxAccount: "C" + "A".repeat(55),
+      muxBatcher: "C" + "B".repeat(55),
+      muxDelegation: "C" + "D".repeat(55),
+      muxPermissions: "C" + "E".repeat(55),
+      muxWalletRegistry: "C" + "F".repeat(55),
+    };
+
+    it("passes when all addresses are present and well-formed", () => {
       expect(() => {
-        validateAddresses("testnet", addresses);
+        validateAddresses("testnet", wellFormed);
       }).not.toThrow();
     });
 
     it("throws when muxAccount is missing", () => {
       const addresses = {
+        ...wellFormed,
         muxAccount: "",
-        muxBatcher: "CBatch1",
-        muxDelegation: "CDel1",
-        muxPermissions: "CPerms1",
-        muxWalletRegistry: "CWReg1",
       };
 
       expect(() => {
@@ -106,11 +146,9 @@ describe("Contract Address Configuration", () => {
 
     it("throws when multiple addresses are missing", () => {
       const addresses = {
+        ...wellFormed,
         muxAccount: "",
         muxBatcher: "",
-        muxDelegation: "CDel1",
-        muxPermissions: "CPerms1",
-        muxWalletRegistry: "CWReg1",
       };
 
       expect(() => {
@@ -134,25 +172,66 @@ describe("Contract Address Configuration", () => {
         validateAddresses("localnet", addresses);
       }).toThrow("LOCALNET_MUX");
     });
+
+    it("throws when an address is present but not a well-formed contract ID (#993)", () => {
+      const addresses = {
+        ...wellFormed,
+        muxAccount: "CAcc1", // too short, not a valid strkey contract ID
+      };
+
+      expect(() => {
+        validateAddresses("testnet", addresses);
+      }).toThrow("Malformed contract address");
+      expect(() => {
+        validateAddresses("testnet", addresses);
+      }).toThrow("muxAccount");
+    });
+
+    it("throws when an address does not start with the contract prefix 'C' (#993)", () => {
+      const addresses = {
+        ...wellFormed,
+        // Valid-length strkey but a "G" (account, not contract) prefix.
+        muxBatcher: "G" + "B".repeat(55),
+      };
+
+      expect(() => {
+        validateAddresses("testnet", addresses);
+      }).toThrow("Malformed contract address");
+      expect(() => {
+        validateAddresses("testnet", addresses);
+      }).toThrow("muxBatcher");
+    });
+
+    it("flags every malformed address when more than one is invalid (#993)", () => {
+      const addresses = {
+        ...wellFormed,
+        muxAccount: "not-a-contract-id",
+        muxPermissions: "short",
+      };
+
+      const fn = () => validateAddresses("testnet", addresses);
+      expect(fn).toThrow("muxAccount");
+      expect(fn).toThrow("muxPermissions");
+    });
   });
 
   describe("getValidatedAddresses", () => {
     it("loads and validates addresses in one call", () => {
       const addresses = getValidatedAddresses("testnet", {
         localnet: {
-          muxAccount: "CLoc1",
-          muxBatcher: "CLoc2",
-          muxDelegation: "CLoc3",
-          muxPermissions: "CLoc4",
-          muxWalletRegistry: "CLoc5",
+          muxAccount: "C" + "1".repeat(55),
+          muxBatcher: "C" + "2".repeat(55),
+          muxDelegation: "C" + "3".repeat(55),
+          muxPermissions: "C" + "4".repeat(55),
+          muxWalletRegistry: "C" + "5".repeat(55),
         },
         testnet: {
-          muxAccount: "CTest1",
-          muxBatcher: "CTest2",
-          muxDelegation: "CTest3",
-          muxPermissions: "CTest4",
-          muxWalletRegistry: "CTest5",
-          muxPolicy: "CTest5",
+          muxAccount: "C" + "6".repeat(55),
+          muxBatcher: "C" + "7".repeat(55),
+          muxDelegation: "C" + "A".repeat(55),
+          muxPermissions: "C" + "B".repeat(55),
+          muxWalletRegistry: "C" + "D".repeat(55),
+          muxPolicy: "C" + "D".repeat(55),
         },
         mainnet: {
           muxAccount: "",
@@ -163,16 +242,30 @@ describe("Contract Address Configuration", () => {
         },
       });
 
-      expect(addresses.muxAccount).toBe("CTest1");
-      expect(addresses.muxBatcher).toBe("CTest2");
-      expect(addresses.muxDelegation).toBe("CTest3");
-      expect(addresses.muxPermissions).toBe("CTest4");
-      expect(addresses.muxPolicy).toBe("CTest5");
+      expect(addresses.muxAccount).toBe("C" + "6".repeat(55));
+      expect(addresses.muxBatcher).toBe("C" + "7".repeat(55));
+      expect(addresses.muxDelegation).toBe("C" + "A".repeat(55));
+      expect(addresses.muxPermissions).toBe("C" + "B".repeat(55));
+      expect(addresses.muxPolicy).toBe("C" + "D".repeat(55));
     });
 
     it("throws if validation fails", () => {
+      // testnet is not mainnet, so the mainnet review gate is skipped and the
+      // missing-address check runs. DEFAULT_ADDRESSES now carries non-empty
+      // placeholders, so assert against an explicitly incomplete testnet book.
+      const incomplete = {
+        localnet: DEFAULT_ADDRESSES.localnet,
+        testnet: {
+          muxAccount: "",
+          muxBatcher: "",
+          muxDelegation: "",
+          muxPermissions: "",
+          muxWalletRegistry: "",
+        },
+        mainnet: DEFAULT_ADDRESSES.mainnet,
+      };
       expect(() => {
-        getValidatedAddresses("mainnet", DEFAULT_ADDRESSES);
+        getValidatedAddresses("testnet", incomplete);
       }).toThrow("Missing contract addresses");
     });
   });
@@ -192,6 +285,45 @@ describe("Contract Address Configuration", () => {
         expect(networkAddresses).toHaveProperty("muxPermissions");
         expect(networkAddresses).toHaveProperty("muxWalletRegistry");
       });
+    });
+  });
+
+  describe("scripts/generate-addresses fail-closed validation", () => {
+    const fullBook = {
+      muxAccount: "CAcc1",
+      muxBatcher: "CB1",
+      muxDelegation: "CD1",
+      muxPermissions: "CP1",
+      muxWalletRegistry: "CW1",
+    };
+
+    it("throws when a required network is missing", () => {
+      const data: any = {
+        localnet: fullBook,
+        // testnet intentionally absent
+        mainnet: fullBook,
+      };
+      expect(() => validateGeneratorAddresses(data)).toThrow("testnet");
+    });
+
+    it("throws when a network is present but not an object", () => {
+      const data: any = {
+        localnet: fullBook,
+        testnet: null,
+        mainnet: fullBook,
+      };
+      expect(() => validateGeneratorAddresses(data)).toThrow("testnet");
+    });
+
+    it("throws when a contract address is empty", () => {
+      const data: any = {
+        localnet: fullBook,
+        testnet: { ...fullBook, muxAccount: "" },
+        mainnet: fullBook,
+      };
+      const fn = () => validateGeneratorAddresses(data);
+      expect(fn).toThrow("testnet");
+      expect(fn).toThrow("muxAccount");
     });
   });
 });

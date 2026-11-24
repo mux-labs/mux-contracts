@@ -6,22 +6,14 @@ import {
   correlateBatcherEvents,
   decodeBatcherEvent,
   decodeBatcherEvents,
+  decodeBatchOutcome,
+  decodeBatcherFeeEvent,
   parseBatcherEvent,
   type BatcherEvent,
   type BatcherEventDecodeErrorCode,
   type BatcherRawEvent,
 } from "../src/batcher-events";
-import type { RawSorobanEvent } from "../src/factory-events";
-
-const ADMIN = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4";
-const CALLER = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M";
-const OP_COUNT = "5";
-const SUCCESS_COUNT = "4";
-const FAILURE_COUNT = "1";
-
-function makeRawEvent(tag: string, action: string, data: unknown): RawSorobanEvent {
-  return { topic: [tag, action], value: data };
-}
+import { makeRawEvent } from "./event-fixtures";
 
 describe("BATCHER_CONTRACT_TAG", () => {
   it("equals 'mux_bat'", () => {
@@ -116,25 +108,93 @@ describe("parseBatcherEvent — sim_done", () => {
   });
 });
 
-describe("parseBatcherEvent — returns null for non-batcher events", () => {
-  it("returns null for different contract tag", () => {
-    const event = makeRawEvent("mux_other", BATCHER_EVENT_TOPICS.init, [ADMIN]);
-    expect(parseBatcherEvent(event)).toBeNull();
+describe("parseBatcherEvent — fail-closed value validation", () => {
+  describe("bat_start", () => {
+    it("returns null for non-numeric op count", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.bat_start, [CALLER, "abc"]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("returns null for negative op count", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.bat_start, [CALLER, "-1"]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("returns null for empty caller", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.bat_start, ["", OP_COUNT]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("parses valid bat_start event as control", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.bat_start, [CALLER, OP_COUNT]);
+      expect(parseBatcherEvent(event)).not.toBeNull();
+    });
   });
 
-  it("returns null for unknown action", () => {
-    const event = makeRawEvent(BATCHER_CONTRACT_TAG, "unknown", [ADMIN]);
-    expect(parseBatcherEvent(event)).toBeNull();
+  describe("executed", () => {
+    it("returns null for non-numeric success count", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.executed, [CALLER, "abc", FAILURE_COUNT]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("returns null for negative success count", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.executed, [CALLER, "-1", FAILURE_COUNT]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("returns null for empty caller", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.executed, ["", SUCCESS_COUNT, FAILURE_COUNT]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("parses valid executed event as control", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.executed, [CALLER, SUCCESS_COUNT, FAILURE_COUNT]);
+      expect(parseBatcherEvent(event)).not.toBeNull();
+    });
   });
 
-  it("returns null when data is null", () => {
-    const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.init, null);
-    expect(parseBatcherEvent(event)).toBeNull();
+  describe("bat_ok", () => {
+    it("returns null for non-numeric success count", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.bat_ok, [CALLER, "abc"]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("returns null for negative success count", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.bat_ok, [CALLER, "-1"]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("returns null for empty caller", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.bat_ok, ["", SUCCESS_COUNT]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("parses valid bat_ok event as control", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.bat_ok, [CALLER, SUCCESS_COUNT]);
+      expect(parseBatcherEvent(event)).not.toBeNull();
+    });
   });
 
-  it("returns null when required fields are missing", () => {
-    const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.executed, [CALLER]);
-    expect(parseBatcherEvent(event)).toBeNull();
+  describe("sim_done", () => {
+    it("returns null for non-numeric success count", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.sim_done, [CALLER, "abc"]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("returns null for negative success count", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.sim_done, [CALLER, "-1"]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("returns null for empty caller", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.sim_done, ["", SUCCESS_COUNT]);
+      expect(parseBatcherEvent(event)).toBeNull();
+    });
+
+    it("parses valid sim_done event as control", () => {
+      const event = makeRawEvent(BATCHER_CONTRACT_TAG, BATCHER_EVENT_TOPICS.sim_done, [CALLER, SUCCESS_COUNT]);
+      expect(parseBatcherEvent(event)).not.toBeNull();
+    });
   });
 });
 
@@ -407,6 +467,193 @@ describe("decodeBatcherEvents / correlateBatcherEvents", () => {
       () =>
         decodeBatcherEvents([rpcEvent("bat_start", [CALLER, 1]), rpcEvent("executed", [CALLER])]),
       BATCHER_EVENT_DECODE_ERROR_CODES.MalformedPayload,
+    );
+  });
+});
+
+// ── Stable-ABI literal-value assertions (closes #918) ─────────────────────────
+
+describe("BATCHER_CONTRACT_TAG literal value (closes #918)", () => {
+  it("equals exactly 'mux_bat'", () => {
+    expect(BATCHER_CONTRACT_TAG).toBe("mux_bat");
+  });
+});
+
+describe("BATCHER_EVENT_TOPICS literal values (closes #918)", () => {
+  it("deep-equals the seven documented key/value pairs", () => {
+    expect(BATCHER_EVENT_TOPICS).toEqual({
+      init: "init",
+      bat_start: "bat_start",
+      executed: "executed",
+      bat_ok: "bat_ok",
+      bat_abort: "bat_abort",
+      sim_done: "sim_done",
+      fee_chg: "fee_chg",
+    });
+  });
+});
+
+// ── Batch outcome decoder (closes #953) ───────────────────────────────────────
+
+describe("decodeBatchOutcome (closes #953)", () => {
+  it("decodes bat_ok into a discriminated success outcome", () => {
+    const outcome = decodeBatchOutcome(rpcEvent("bat_ok", [CALLER, 4]));
+    expect(outcome).toEqual({
+      outcome: "success",
+      caller: CALLER,
+      successCount: "4",
+      txHash: TX_A,
+      correlationId: TX_A,
+    });
+  });
+
+  it("decodes bat_abort into a discriminated abort outcome", () => {
+    const outcome = decodeBatchOutcome(rpcEvent("bat_abort", CALLER));
+    expect(outcome).toEqual({
+      outcome: "abort",
+      caller: CALLER,
+      txHash: TX_A,
+      correlationId: TX_A,
+    });
+  });
+
+  it("honours caller-supplied correlation metadata", () => {
+    const outcome = decodeBatchOutcome(rpcEvent("bat_ok", [CALLER, 1]), {
+      correlationId: "batch-7",
+    });
+    expect(outcome.correlationId).toBe("batch-7");
+  });
+
+  it("fails closed for an unknown action topic", () => {
+    expectDecodeError(
+      () => decodeBatchOutcome(rpcEvent("fee_paid", [CALLER, 1])),
+      BATCHER_EVENT_DECODE_ERROR_CODES.UnknownAction,
+      { action: "fee_paid" },
+    );
+  });
+
+  it("fails closed for a malformed payload", () => {
+    expectDecodeError(
+      () => decodeBatchOutcome(rpcEvent("bat_ok", [CALLER])),
+      BATCHER_EVENT_DECODE_ERROR_CODES.MalformedPayload,
+      { action: "bat_ok" },
+    );
+    expectDecodeError(
+      () => decodeBatchOutcome(rpcEvent("bat_abort", [CALLER, 9])),
+      BATCHER_EVENT_DECODE_ERROR_CODES.MalformedPayload,
+      { action: "bat_abort" },
+    );
+  });
+
+  it("fails closed for a corrupted caller address", () => {
+    expectDecodeError(
+      () => decodeBatchOutcome(rpcEvent("bat_abort", "not-an-address")),
+      BATCHER_EVENT_DECODE_ERROR_CODES.InvalidAddress,
+      { action: "bat_abort", field: "caller" },
+    );
+  });
+
+  it("fails closed for valid non-outcome batcher actions", () => {
+    for (const action of ["init", "bat_start", "executed", "sim_done"]) {
+      const value =
+        action === "init"
+          ? ADMIN
+          : action === "executed"
+            ? [CALLER, 1, 0]
+            : [CALLER, 1];
+      expectDecodeError(
+        () => decodeBatchOutcome(rpcEvent(action, value)),
+        BATCHER_EVENT_DECODE_ERROR_CODES.NotBatchOutcome,
+        { action },
+      );
+    }
+  });
+
+  it("fails closed for events from another contract and for a missing tx hash", () => {
+    expectDecodeError(
+      () =>
+        decodeBatchOutcome({
+          topic: ["mux_pol", "bat_ok"],
+          value: [CALLER, 1],
+          txHash: TX_A,
+        }),
+      BATCHER_EVENT_DECODE_ERROR_CODES.NotBatcherEvent,
+    );
+    expectDecodeError(
+      () => decodeBatchOutcome({ topic: [BATCHER_CONTRACT_TAG, "bat_ok"], value: [CALLER, 1] }),
+      BATCHER_EVENT_DECODE_ERROR_CODES.MissingTxHash,
+    );
+  });
+});
+
+// ── decodeBatcherFeeEvent (closes #950) ───────────────────────────────────────
+
+describe("decodeBatcherFeeEvent (closes #950)", () => {
+  it("decodes a valid fee_chg event into typed caller/opCount/fee", () => {
+    const event = rpcEvent("fee_chg", [CALLER, OP_COUNT, "300"]);
+    const result = decodeBatcherFeeEvent(event);
+    expect(result.caller).toBe(CALLER);
+    expect(result.opCount).toBe(OP_COUNT);
+    expect(result.fee).toBe("300");
+    expect(result.txHash).toBe(TX_A);
+    expect(result.correlationId).toBe(TX_A);
+  });
+
+  it("fails closed for a wrong action topic", () => {
+    expectDecodeError(
+      () => decodeBatcherFeeEvent(rpcEvent("bat_ok", [CALLER, 4])),
+      BATCHER_EVENT_DECODE_ERROR_CODES.UnknownAction,
+      { action: "bat_ok" },
+    );
+  });
+
+  it("fails closed for a truncated payload", () => {
+    expectDecodeError(
+      () => decodeBatcherFeeEvent(rpcEvent("fee_chg", [CALLER])),
+      BATCHER_EVENT_DECODE_ERROR_CODES.MalformedPayload,
+      { action: "fee_chg" },
+    );
+    expectDecodeError(
+      () => decodeBatcherFeeEvent(rpcEvent("fee_chg", [CALLER, OP_COUNT])),
+      BATCHER_EVENT_DECODE_ERROR_CODES.MalformedPayload,
+      { action: "fee_chg" },
+    );
+  });
+
+  it("fails closed for payload with wrong element types", () => {
+    expectDecodeError(
+      () => decodeBatcherFeeEvent(rpcEvent("fee_chg", ["not-an-address", OP_COUNT, "300"])),
+      BATCHER_EVENT_DECODE_ERROR_CODES.InvalidAddress,
+      { action: "fee_chg", field: "caller" },
+    );
+    expectDecodeError(
+      () => decodeBatcherFeeEvent(rpcEvent("fee_chg", [CALLER, "not-a-u32", "300"])),
+      BATCHER_EVENT_DECODE_ERROR_CODES.InvalidU32,
+      { action: "fee_chg", field: "opCount" },
+    );
+    expectDecodeError(
+      () => decodeBatcherFeeEvent(rpcEvent("fee_chg", [CALLER, OP_COUNT, "not-a-u32"])),
+      BATCHER_EVENT_DECODE_ERROR_CODES.InvalidU32,
+      { action: "fee_chg", field: "fee" },
+    );
+  });
+
+  it("fails closed for events from another contract", () => {
+    expectDecodeError(
+      () =>
+        decodeBatcherFeeEvent({
+          topic: ["mux_pol", "fee_chg"],
+          value: [CALLER, OP_COUNT, "300"],
+          txHash: TX_A,
+        }),
+      BATCHER_EVENT_DECODE_ERROR_CODES.NotBatcherEvent,
+    );
+  });
+
+  it("fails closed for a missing tx hash", () => {
+    expectDecodeError(
+      () => decodeBatcherFeeEvent({ topic: [BATCHER_CONTRACT_TAG, "fee_chg"], value: [CALLER, OP_COUNT, "300"] }),
+      BATCHER_EVENT_DECODE_ERROR_CODES.MissingTxHash,
     );
   });
 });

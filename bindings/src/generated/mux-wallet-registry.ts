@@ -39,6 +39,13 @@ export const WALLET_NAME_MIN_LEN = 1;
 export const WALLET_NAME_MAX_LEN = 32;
 
 /**
+ * Maximum number of wallets the registry will hold. Mirrors `MAX_WALLETS` in
+ * `contracts/mux-wallet-registry/src/lib.rs`; a divergence test asserts the two
+ * stay in sync.
+ */
+export const MAX_WALLETS = 128;
+
+/**
  * Checks whether a given string adheres to the wallet registry name charset policy.
  */
 export function isValidWalletName(name: string): boolean {
@@ -65,12 +72,139 @@ export function validateWalletName(name: string): void {
   }
 }
 
-export type MuxWalletRegistryError =
+export type MuxWalletRegistryErrorCode =
   | "NotInitialized"
   | "AlreadyInitialized"
   | "Unauthorized"
   | "WalletNotFound"
   | "TooManyWallets";
+
+/**
+ * Stable numeric error codes returned by the `mux-wallet-registry` contract.
+ *
+ * These mirror the contract's `#[contracterror]` discriminants and are the
+ * canonical mapping used to translate on-chain failures into typed client
+ * errors. Do not renumber: clients and runbooks depend on these values.
+ */
+export const MUX_WALLET_REGISTRY_ERROR_CODES: Record<MuxWalletRegistryErrorCode, number> = {
+  NotInitialized: 1,
+  AlreadyInitialized: 2,
+  Unauthorized: 3,
+  WalletNotFound: 4,
+  TooManyWallets: 5,
+};
+
+/**
+ * Documented HTTP statuses for each registry error code, used when surfacing
+ * contract failures through an HTTP boundary.
+ */
+export const MUX_WALLET_REGISTRY_ERROR_HTTP_STATUS: Record<MuxWalletRegistryErrorCode, number> = {
+  NotInitialized: 500,
+  AlreadyInitialized: 409,
+  Unauthorized: 403,
+  WalletNotFound: 404,
+  TooManyWallets: 409,
+};
+
+/**
+ * Typed error thrown by {@link MuxWalletRegistryClient} for contract-level
+ * failures. Carries the stable {@link MuxWalletRegistryError} code plus an
+ * optional `correlationId` so ops can trace a failed register/lookup across
+ * logs without exposing key material.
+ */
+export class MuxWalletRegistryError extends Error {
+  readonly code: MuxWalletRegistryErrorCode;
+  readonly numericCode: number;
+  readonly httpStatus: number;
+  readonly correlationId?: string;
+
+  constructor(code: MuxWalletRegistryErrorCode, correlationId?: string) {
+    super(`mux-wallet-registry: ${code} (code ${MUX_WALLET_REGISTRY_ERROR_CODES[code]})`);
+    this.name = "MuxWalletRegistryError";
+    this.code = code;
+    this.numericCode = MUX_WALLET_REGISTRY_ERROR_CODES[code];
+    this.httpStatus = MUX_WALLET_REGISTRY_ERROR_HTTP_STATUS[code];
+    this.correlationId = correlationId;
+  }
+}
+
+/**
+ * Authorization roles recognised by the registry. `Owner` is the address set
+ * at {@link MuxWalletRegistryClient.initialize}; `Delegate` and `Guardian`
+ * are optional secondary authorities that may be granted register rights.
+ * Lookups are unauthenticated (read-only simulation).
+ */
+export type WalletRegistryRole = "Owner" | "Delegate" | "Guardian";
+
+/**
+ * Optional authz context for privileged (write) entrypoints. When omitted the
+ * client defaults to `Owner` and relies on the contract's own auth checks.
+ * Supplying a role lets callers assert intent and fail fast client-side when
+ * the source keypair is not the expected authority.
+ */
+export interface WalletRegistryAuthz {
+  role?: WalletRegistryRole;
+  /**
+   * Optional correlation id propagated into logs/errors for tracing a single
+   * register/lookup across services. Never include secrets or key material.
+   */
+  correlationId?: string;
+}
+
+/**
+ * Generates a non-secret correlation id suitable for tracing a registry call.
+ * Uses a random hex string; contains no key material or PII.
+ */
+export function newCorrelationId(): string {
+  const bytes = new Uint8Array(8);
+  if (typeof globalThis.crypto?.getRandomValues === "function") {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Redacts a Stellar address for safe logging: keeps the first 4 and last 4
+ * characters, masking the middle. Never log full addresses or key material.
+ */
+export function redactAddress(address: string): string {
+  if (typeof address !== "string" || address.length <= 8) {
+    return "***";
+  }
+  return `${address.slice(0, 4)}…${address.slice(-4)}`;
+}
+
+/**
+ * Asserts that a read result for a single wallet lookup is a non-empty entry.
+ * A missing entry is a hard `WalletNotFound` failure, never a default address.
+ */
+export function assertWalletFound(
+  wallet: Address | null | undefined,
+  correlationId?: string
+): Address {
+  if (wallet === null || wallet === undefined || wallet.toString() === "") {
+    throw new MuxWalletRegistryError("WalletNotFound", correlationId);
+  }
+  return wallet;
+}
+
+/**
+ * Asserts that a returned name list does not exceed the contract's
+ * `MAX_WALLETS` cap. A list of exactly `MAX_WALLETS` is accepted.
+ */
+export function assertWalletListWithinCap(
+  names: readonly string[],
+  correlationId?: string
+): readonly string[] {
+  if (names.length > MAX_WALLETS) {
+    throw new MuxWalletRegistryError("TooManyWallets", correlationId);
+  }
+  return names;
+}
 
 export class MuxWalletRegistryClient {
   private contract: Contract;
@@ -107,19 +241,21 @@ export class MuxWalletRegistryClient {
    *
    * @param name   Symbolic key (1-32 characters, [a-zA-Z0-9_]).
    * @param wallet Wallet address to associate with `name`.
+   * @param authz  Optional authz context (role + correlation id).
    * @throws if the contract is not initialised, the source is not the owner, or the name violates charset policy.
    */
   async registerWallet(
     sourceKeypair: Keypair,
     name: string,
-    wallet: Address
+    wallet: Address,
+    authz?: WalletRegistryAuthz
   ): Promise<void> {
     validateWalletName(name);
     const tx = await this.buildTx(sourceKeypair, "register_wallet", [
       xdr.ScVal.scvSymbol(name),
       nativeToScVal(wallet.toString(), { type: "address" }),
     ]);
-    await this.submit(tx, sourceKeypair);
+    await this.submit(tx, sourceKeypair, authz);
   }
 
   /**
@@ -137,115 +273,14 @@ export class MuxWalletRegistryClient {
     const tx = await this.buildTx(sourceKeypair, "get_wallet", [
       xdr.ScVal.scvSymbol(name),
     ]);
-    return this.simulateRead<Address>(tx);
+    const result = await this.simulateRead<Address | null>(tx);
+    return assertWalletFound(result);
   }
 
   /**
    * Register or overwrite a wallet address with descriptive metadata.
    *
    * `sourceKeypair` must be (or be authorised by) the owner set at
-   * initialisation. Calling this with an existing `name` silently replaces
-   * the previous entry and its metadata.
-   *
-   * @param name        Symbolic key (max 10 UTF-8 bytes — Soroban `Symbol` limit).
-   * @param wallet      Wallet address to associate with `name`.
-   * @param label       Short human-readable label for the wallet.
-   * @param description Free-form description or notes.
-   * @throws if the contract is not initialised, the source is not the owner,
-   *         or the wallet cap (128) has been reached (`TooManyWallets`, code 5).
-   */
-  async registerWalletWithMetadata(
-    sourceKeypair: Keypair,
-    name: string,
-    wallet: Address,
-    label: string,
-    description: string
-  ): Promise<void> {
-    validateWalletName(name);
-    const tx = await this.buildTx(sourceKeypair, "register_wallet_with_metadata", [
-      xdr.ScVal.scvSymbol(name),
-      nativeToScVal(wallet.toString(), { type: "address" }),
-      xdr.ScVal.scvString(label),
-      xdr.ScVal.scvString(description),
-    ]);
-    await this.submit(tx, sourceKeypair);
-  }
+   * initialisation. Ca
 
-  /**
-   * Return the metadata for the wallet registered under `name`.
-   *
-   * This is a read-only simulation; no on-chain transaction is submitted and
-   * no auth is required. Only wallets registered via
-   * {@link registerWalletWithMetadata} have metadata; wallets registered
-   * via {@link registerWallet} alone do not.
-   *
-   * @param name Symbolic key to look up.
-   * @throws if no wallet with metadata is registered under `name`
-   *         (`WalletNotFound`, error code 4) or name violates charset policy.
-   */
-  async getMetadata(sourceKeypair: Keypair, name: string): Promise<WalletMetadata> {
-    validateWalletName(name);
-    const tx = await this.buildTx(sourceKeypair, "get_metadata", [
-      xdr.ScVal.scvSymbol(name),
-    ]);
-    return this.simulateRead<WalletMetadata>(tx);
-  }
-
-  /**
-   * List all registered wallet names.
-   *
-   * This is a read-only simulation; no on-chain transaction is submitted and
-   * no auth is required. Returns an empty array when no wallets have been
-   * registered or the contract is not yet initialized.
-   *
-   * @returns Array of symbolic wallet names (Soroban `Symbol` values, returned as strings).
-   */
-  async listWallets(sourceKeypair: Keypair): Promise<string[]> {
-    const tx = await this.buildTx(sourceKeypair, "list_wallets", []);
-    return this.simulateRead<string[]>(tx);
-  }
-
-  // ── Private helpers ──────────────────────────────────────────────────────────
-
-  private async buildTx(
-    sourceKeypair: Keypair,
-    method: string,
-    args: xdr.ScVal[]
-  ): Promise<Transaction> {
-    const account = await this.server.getAccount(sourceKeypair.publicKey());
-    return new TransactionBuilder(account, {
-      fee: "100",
-      networkPassphrase: this.networkPassphrase,
-    })
-      .addOperation(this.contract.call(method, ...args))
-      .setTimeout(30)
-      .build();
-  }
-
-  private async simulateRead<T>(tx: Transaction): Promise<T> {
-    const result = await this.server.simulateTransaction(tx);
-    if (SorobanRpc.Api.isSimulationError(result)) {
-      throw new Error(`Simulation failed: ${result.error}`);
-    }
-    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
-    if (!retval) throw new Error("No return value");
-    return scValToNative(retval) as T;
-  }
-
-  private async submit(tx: Transaction, signer: Keypair): Promise<void> {
-    const simResult = await this.server.simulateTransaction(tx);
-    if (SorobanRpc.Api.isSimulationError(simResult)) {
-      throw new Error(`Simulation failed: ${simResult.error}`);
-    }
-    const preparedTx = SorobanRpc.assembleTransaction(
-      tx,
-      simResult as SorobanRpc.Api.SimulateTransactionSuccessResponse
-    ).build();
-    preparedTx.sign(signer);
-    const sendResult = await this.server.sendTransaction(preparedTx);
-    if (sendResult.status === "ERROR") {
-      throw new Error(`Transaction failed: ${JSON.stringify(sendResult.errorResult)}`);
-    }
-    await pollTransaction(this.server, sendResult.hash);
-  }
-}
+/* … truncated 5126 chars — edit only what you need near the top … */

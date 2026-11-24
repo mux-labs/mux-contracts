@@ -6,7 +6,8 @@
 ///
 /// # What is checked
 ///
-/// 1. No `panic!()` or `todo!()` in shipped function bodies (outside `#[cfg(test)]`).
+/// 1. No `panic!()`, `todo!()`, `.unwrap()` or `.expect()` in shipped
+///    function bodies (outside `#[cfg(test)]`).
 /// 2. Every `upgrade()` function in the workspace contains a `require_admin` or
 ///    `require_auth` call — ensuring the WASM-replace gate is never bypassed.
 /// 3. Every contract that exposes `upgrade()` also has an `initialize()` that
@@ -127,6 +128,49 @@ mod upgrade_preflight {
         assert!(
             violations.is_empty(),
             "todo!() found on shipped (non-test) paths — implement or remove:\n{}",
+            violations.join("\n")
+        );
+    }
+
+    // ── Test 2b: No .unwrap() / .expect() on shipped paths ───────────────────
+
+    /// Scan every shipped `.rs` file for `.unwrap()` and `.expect(` calls
+    /// outside test modules.  The workspace lints declare
+    /// `clippy::unwrap_used` / `clippy::expect_used` as warnings, which do not
+    /// fail CI — but a `.unwrap()` on a shipped path aborts the whole
+    /// transaction on the failure branch, the same class of unhandled-case
+    /// defect `no_panic_on_shipped_paths` exists to catch.  Callers must use
+    /// explicit `Err` returns (`ok_or`, `?`, `unwrap_or`, …) instead.
+    #[test]
+    fn no_unwrap_or_expect_on_shipped_paths() {
+        let mut violations: Vec<String> = Vec::new();
+
+        for file in shipped_rs_files() {
+            let src = fs::read_to_string(&file).unwrap_or_default();
+            let in_test_block = is_in_test_region(&src);
+            for (i, line) in src.lines().enumerate() {
+                let trimmed = line.trim();
+                if in_test_block[i]
+                    || trimmed.starts_with("//")
+                    || trimmed.starts_with("///")
+                {
+                    continue;
+                }
+                if line.contains(".unwrap()") || line.contains(".expect(") {
+                    violations.push(format!(
+                        "{}:{}: {}",
+                        file.display(),
+                        i + 1,
+                        line.trim()
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            violations.is_empty(),
+            ".unwrap() / .expect() found on shipped (non-test) paths — \
+             replace with explicit Err returns:\n{}",
             violations.join("\n")
         );
     }

@@ -16,6 +16,10 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WASM_DIR="${REPO_ROOT}/target/wasm32-unknown-unknown/release"
 
+# Budget (bytes) consumed from the same `WASM_SIZE_BUDGET_BYTES` variable
+# defined in `.github/workflows/ci.yml`. Default 64 KiB per contract.
+BUDGET_BYTES="${WASM_SIZE_BUDGET_BYTES:-65536}"
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --wasm-dir) WASM_DIR="${2:?'--wasm-dir requires a value'}"; shift 2 ;;
@@ -26,16 +30,16 @@ done
 # Contract size budgets in bytes (< Soroban 128 KiB upload limit).
 # WARN threshold fires at 80 % of the per-contract budget.
 declare -A LIMITS=(
-  ["mux_account.wasm"]=65536
-  ["mux_account_factory.wasm"]=65536
-  ["mux_batcher.wasm"]=65536
-  ["mux_delegation.wasm"]=65536
-  ["mux_permissions.wasm"]=65536
-  ["mux_policy.wasm"]=65536
-  ["mux_recovery.wasm"]=65536
-  ["mux_registry.wasm"]=65536
-  ["mux_spending_policy.wasm"]=65536
-  ["mux_wallet_registry.wasm"]=65536
+  ["mux_account.wasm"]=$BUDGET_BYTES
+  ["mux_account_factory.wasm"]=$BUDGET_BYTES
+  ["mux_batcher.wasm"]=$BUDGET_BYTES
+  ["mux_delegation.wasm"]=$BUDGET_BYTES
+  ["mux_permissions.wasm"]=$BUDGET_BYTES
+  ["mux_policy.wasm"]=$BUDGET_BYTES
+  ["mux_recovery.wasm"]=$BUDGET_BYTES
+  ["mux_registry.wasm"]=$BUDGET_BYTES
+  ["mux_spending_policy.wasm"]=$BUDGET_BYTES
+  ["mux_wallet_registry.wasm"]=$BUDGET_BYTES
 )
 
 WARN_PCT=80   # warn when usage exceeds this percentage of the budget

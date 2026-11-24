@@ -113,6 +113,7 @@ pub struct BatcherMeta {
 | Constant | Value | Description |
 |---|---|---|
 | `MAX_BATCH_SIZE` | 50 | Maximum operations per batch; enforced on every entry point |
+| `MAX_OPS` | 100 | Maximum operations per transaction (per-transaction op cap) |
 | `FEE_PER_OP` | 100 stroops | Base fee per operation used by `estimate_fees` |
 | `TTL_THRESHOLD` | 17,280 ledgers | ~1 day — TTL extension trigger |
 | `TTL_EXTEND_TO` | 518,400 ledgers | ~30 days — TTL extended to |

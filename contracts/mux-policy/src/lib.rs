@@ -1,42 +1,4 @@
 /*!
- * mux-policy: Per-wallet daily spend-limit policy for Mux Protocol.
- *
- * Tracks a rolling daily spend window per wallet address. The contract
- * admin sets per-wallet limits; any caller may record a spend (subject to
- * the configured limit); the admin or the wallet itself may reset the
- * daily counter.
- *
- * # Fail-closed auth
- *
- * Every state-mutating entrypoint (except `record_spend`) requires
- * `require_admin` to pass before any state is modified. `require_admin`
- * calls `admin.require_auth()` on the stored admin address, which fails
- * closed: if no admin has been initialised, or if the caller is not the
- * admin, the call panics with `Unauthorized` before touching any storage.
- *
- * `record_spend` enforces the configured limit; spending above the limit
- * reverts with `LimitExceeded`. If no limit has been set for a wallet,
- * the call reverts with `LimitNotSet` (deny-by-default).
- *
- * # Audit Events
- *
- * Contract tag: `mux_pol`
- *
- * | Action     | Trigger                | Data payload                              |
- * |------------|------------------------|-------------------------------------------|
- * | `init`     | `initialize`           | `admin: Address`                          |
- * | `lmt_set`  | `set_daily_limit`      | `(wallet: Address, limit: i128, day_ledgers: u32)` |
- * | `spent`    | `record_spend`         | `(wallet: Address, amount: i128)`         |
- * | `ctr_rst`  | `reset_daily_counter`  | `wallet: Address`                         |
- *
- * `get_daily_limit` is read-only and emits no events.
- * `upgrade` extends TTL but does not emit an audit event of its own.
- *
- * See [`docs/audit-events.md`] and [`docs/policy-semantics.md`] for the full
- * event schema and policy design.
- *
- * [`docs/audit-events.md`]: ../../docs/audit-events.md
- * [`docs/policy-semantics.md`]: ../../docs/policy-semantics.md
  * mux-policy: Per-wallet daily spend limit policy contract for Mux Protocol.
  *
  * Stores and enforces a daily spend limit per wallet address. The daily
@@ -77,15 +39,11 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env,
-};
-
-// ── Audit events ──────────────────────────────────────────────────────────────
-
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, BytesN, Env,
 };
 
 // ── Audit events ──────────────────────────────────────────────────────────────
+
 fn emit(
     env: &Env,
     action: soroban_sdk::Symbol,
@@ -95,75 +53,6 @@ fn emit(
         .publish((symbol_short!("mux_pol"), action), data);
 }
 
-// ── TTL constants ─────────────────────────────────────────────────────────────
-
-/// Minimum TTL threshold (ledgers) before an auto-extend is triggered.
-/// At ~5 s per ledger: 17 280 ≈ 1 day.
-const TTL_THRESHOLD: u32 = 17_280;
-
-/// Target TTL (ledgers) after an auto-extend.
-/// At ~5 s per ledger: 518 400 ≈ 30 days.
-const TTL_EXTEND_TO: u32 = 518_400;
-
-/// Default number of ledgers in a daily window.
-/// At ~5 s per ledger: 17 280 ≈ 1 day.
-pub const DEFAULT_DAY_LEDGERS: u32 = 17_280;
-
-// ── Error codes ───────────────────────────────────────────────────────────────
-
-/// Stable error codes returned by mux-policy.
-///
-/// These codes are on-chain ABI — changing an existing variant is a
-/// breaking change. New variants may be appended.
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-#[repr(u32)]
-pub enum PolicyError {
-    /// The contract has not been initialised.
-    NotInitialized = 1,
-    /// The contract has already been initialised.
-    AlreadyInitialized = 2,
-    /// The caller is not the contract admin.
-    Unauthorized = 3,
-    /// No spend limit has been configured for this wallet.
-    LimitNotSet = 4,
-    /// The requested spend would exceed the configured daily limit.
-    LimitExceeded = 5,
-    /// An amount of zero or negative was supplied.
-    InvalidAmount = 6,
-}
-
-// ── Storage keys ──────────────────────────────────────────────────────────────
-
-/// Storage keys for the mux-policy contract.
-#[contracttype]
-#[derive(Clone)]
-pub enum DataKey {
-    /// Admin address (`Address`).
-    Admin,
-    /// Per-wallet spend limit record keyed by wallet `Address`.
-    Limit(Address),
-}
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-/// A per-wallet daily spend limit record stored on-chain.
-///
-/// `reset_ledger` records the ledger at which the current window started.
-/// When `env.ledger().sequence() >= reset_ledger + day_ledgers`, the window
-/// has elapsed and `spent` is treated as 0 (but only written on next spend).
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct SpendRecord {
-    /// Configured daily limit in the asset's smallest unit.
-    pub limit: i128,
-    /// Amount spent in the current window.
-    pub spent: i128,
-    /// Ledger sequence at which the current window began.
-    pub reset_ledger: u32,
-    /// Window length in ledgers.
-    pub day_ledgers: u32,
-}
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
 #[contracttype]
@@ -178,6 +67,10 @@ pub enum DataKey {
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 /// Daily spend limit record stored per wallet.
+///
+/// `reset_ledger` records the ledger at which the current window expires and
+/// `spent` resets. When `env.ledger().sequence() >= reset_ledger`, the window
+/// has elapsed and `spent` is treated as 0 (but only written on next spend).
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct DailyLimit {
@@ -219,6 +112,10 @@ pub enum MuxPolicyError {
 /// Maximum number of wallets with configured limits to bound storage growth.
 const MAX_WALLETS: u32 = 256;
 
+/// Default number of ledgers in a daily spend window.
+/// At ~5 s per ledger: 17 280 ≈ 1 day.
+pub const DEFAULT_DAY_LEDGERS: u32 = 17_280;
+
 // ── Storage TTL ───────────────────────────────────────────────────────────────
 const TTL_THRESHOLD: u32 = 17_280; // ~1 day
 const TTL_EXTEND_TO: u32 = 518_400; // ~30 days
@@ -230,74 +127,6 @@ pub struct MuxPolicy;
 
 #[contractimpl]
 impl MuxPolicy {
-    // ── Auth helpers ──────────────────────────────────────────────────────────
-
-    /// Fail-closed admin guard.
-    ///
-    /// Reads the stored admin address and calls `require_auth()` on it.
-    /// Panics with [`PolicyError::NotInitialized`] if no admin is stored,
-    /// or with [`PolicyError::Unauthorized`] if the caller is not the admin.
-    ///
-    /// Every state-mutating admin entrypoint MUST call `require_admin` before
-    /// reading or writing any other storage key.
-    fn require_admin(env: &Env) -> Result<Address, PolicyError> {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(PolicyError::NotInitialized)?;
-        admin.require_auth();
-        Ok(admin)
-    }
-
-    // ── Lifecycle ─────────────────────────────────────────────────────────────
-
-    /// Initialise the contract and set the admin address.
-    ///
-    /// Fails with [`PolicyError::AlreadyInitialized`] if called more than once.
-    /// The `admin` address is stored as the sole privileged principal.
-    ///
-    /// Emits: `init`
-    pub fn initialize(env: Env, admin: Address) -> Result<(), PolicyError> {
-        if env.storage().instance().has(&DataKey::Admin) {
-            return Err(PolicyError::AlreadyInitialized);
-        }
-        admin.require_auth();
-        env.storage()
-            .instance()
-            .set(&DataKey::Admin, &admin);
-        env.storage()
-            .instance()
-            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
-        emit(&env, symbol_short!("init"), admin);
-        Ok(())
-    }
-
-    /// Upgrade the contract WASM.
-    ///
-    /// Requires admin authorisation. Extends instance TTL after the upgrade
-    /// to keep the entry live. Does not emit an audit event — the
-    /// upload/invoke transaction is the on-chain audit record.
-    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), PolicyError> {
-        Self::require_admin(&env)?;
-        env.deployer().update_current_contract_wasm(new_wasm_hash);
-        env.storage()
-            .instance()
-            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
-        Ok(())
-    }
-
-    // ── Admin entrypoints ─────────────────────────────────────────────────────
-
-    /// Set or update the daily spend limit for `wallet`.
-    ///
-    /// `limit` must be positive. `day_ledgers` is the window size; pass 0 to
-    /// use [`DEFAULT_DAY_LEDGERS`]. Setting a new limit resets the `spent`
-    /// counter and starts a new window from the current ledger.
-    ///
-    /// Requires admin authorisation (fail-closed via [`Self::require_admin`]).
-    ///
-    /// Emits: `lmt_set`
     /// Initialize the policy contract with an admin address.
     pub fn initialize(env: Env, admin: Address) -> Result<(), MuxPolicyError> {
         if env.storage().instance().has(&DataKey::Admin) {
@@ -330,6 +159,8 @@ impl MuxPolicy {
         Ok(())
     }
 
+    // ── Admin entrypoints ─────────────────────────────────────────────────────
+
     /// Set or update the daily spend limit for a wallet. Admin only.
     ///
     /// `day_ledgers` is the number of ledgers that constitute one day
@@ -337,128 +168,13 @@ impl MuxPolicy {
     /// `registry_id` is an optional registry contract address for policy validation.
     ///
     /// Returns `TooManyWallets` if the wallet limit count has reached capacity.
+    ///
+    /// Emits: `lmt_set`
     pub fn set_daily_limit(
         env: Env,
         wallet: Address,
         limit: i128,
         day_ledgers: u32,
-    ) -> Result<(), PolicyError> {
-        Self::require_admin(&env)?;
-        if limit <= 0 {
-            return Err(PolicyError::InvalidAmount);
-        }
-        let window = if day_ledgers == 0 {
-            DEFAULT_DAY_LEDGERS
-        } else {
-            day_ledgers
-        };
-        let record = SpendRecord {
-            limit,
-            spent: 0,
-            reset_ledger: env.ledger().sequence(),
-            day_ledgers: window,
-        };
-        env.storage()
-            .persistent()
-            .set(&DataKey::Limit(wallet.clone()), &record);
-        env.storage()
-            .instance()
-            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
-        emit(&env, symbol_short!("lmt_set"), (wallet, limit, window));
-        Ok(())
-    }
-
-    /// Reset the daily spend counter for `wallet` to zero.
-    ///
-    /// Starts a new window from the current ledger. Does not change the
-    /// configured limit or window size.
-    ///
-    /// Requires admin authorisation (fail-closed via [`Self::require_admin`]).
-    ///
-    /// Emits: `ctr_rst`
-    pub fn reset_daily_counter(env: Env, wallet: Address) -> Result<(), PolicyError> {
-        Self::require_admin(&env)?;
-        let mut record: SpendRecord = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Limit(wallet.clone()))
-            .ok_or(PolicyError::LimitNotSet)?;
-        record.spent = 0;
-        record.reset_ledger = env.ledger().sequence();
-        env.storage()
-            .persistent()
-            .set(&DataKey::Limit(wallet.clone()), &record);
-        env.storage()
-            .instance()
-            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
-        emit(&env, symbol_short!("ctr_rst"), wallet);
-        Ok(())
-    }
-
-    // ── Public entrypoints ────────────────────────────────────────────────────
-
-    /// Record a spend of `amount` against `wallet`'s daily limit.
-    ///
-    /// Reverts with [`PolicyError::LimitNotSet`] if no limit is configured
-    /// (deny-by-default). Reverts with [`PolicyError::LimitExceeded`] if
-    /// `amount` would push the cumulative spend past the limit.
-    ///
-    /// If the current ledger is past the window's `reset_ledger + day_ledgers`,
-    /// the counter is automatically reset before checking the limit.
-    ///
-    /// Emits: `spent`
-    pub fn record_spend(env: Env, wallet: Address, amount: i128) -> Result<(), PolicyError> {
-        if amount <= 0 {
-            return Err(PolicyError::InvalidAmount);
-        }
-        let mut record: SpendRecord = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Limit(wallet.clone()))
-            .ok_or(PolicyError::LimitNotSet)?;
-
-        // Auto-reset if the window has elapsed.
-        let current = env.ledger().sequence();
-        if current >= record.reset_ledger.saturating_add(record.day_ledgers) {
-            record.spent = 0;
-            record.reset_ledger = current;
-        }
-
-        let new_spent = record.spent.saturating_add(amount);
-        if new_spent > record.limit {
-            return Err(PolicyError::LimitExceeded);
-        }
-        record.spent = new_spent;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Limit(wallet.clone()), &record);
-        env.storage()
-            .instance()
-            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
-        emit(&env, symbol_short!("spent"), (wallet, amount));
-        Ok(())
-    }
-
-    /// Return the current spend record for `wallet`.
-    ///
-    /// Read-only — emits no events. Returns `None` if no limit is configured.
-    /// Note: `spent` is reported as 0 when the window has elapsed, but this
-    /// reset is NOT persisted by this call — only `record_spend` and
-    /// `reset_daily_counter` write the reset.
-    pub fn get_daily_limit(env: Env, wallet: Address) -> Option<SpendRecord> {
-        let record: SpendRecord = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Limit(wallet))?;
-        let current = env.ledger().sequence();
-        if current >= record.reset_ledger.saturating_add(record.day_ledgers) {
-            // Window elapsed — report spent as 0 without persisting.
-            return Some(SpendRecord {
-                spent: 0,
-                ..record
-            });
-        }
-        Some(record)
         registry_id: Option<Address>,
     ) -> Result<(), MuxPolicyError> {
         Self::require_admin(&env)?;
@@ -610,6 +326,15 @@ impl MuxPolicy {
 
     // ── Private helpers ────────────────────────────────────────────────────────
 
+    /// Fail-closed admin guard.
+    ///
+    /// Reads the stored admin address and calls `require_auth()` on it.
+    /// Fails with [`MuxPolicyError::NotInitialized`] if no admin is stored,
+    /// or with [`MuxPolicyError::Unauthorized`] (via `require_auth`) if the
+    /// caller is not the admin.
+    ///
+    /// Every state-mutating admin entrypoint MUST call `require_admin` before
+    /// reading or writing any other storage key.
     fn require_admin(env: &Env) -> Result<(), MuxPolicyError> {
         let admin: Address = env
             .storage()
@@ -678,6 +403,40 @@ mod tests {
     fn test_double_initialize_fails() {
         let (_env, client, admin) = setup();
         assert!(client.try_initialize(&admin).is_err());
+    }
+
+    #[test]
+    fn test_require_admin_fails_closed_when_uninitialized() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxPolicy);
+        let result = env.as_contract(&contract_id, || MuxPolicy::require_admin(&env));
+        assert_eq!(result, Err(MuxPolicyError::NotInitialized));
+    }
+
+    #[test]
+    fn test_require_admin_demands_stored_admin_auth() {
+        let (env, client, admin) = setup();
+        let result = env.as_contract(&client.address, || MuxPolicy::require_admin(&env));
+        assert_eq!(result, Ok(()));
+        // The auth requested must be the stored admin's, not any other address.
+        assert_eq!(env.auths().last().unwrap().0, admin);
+    }
+
+    #[test]
+    fn test_require_admin_rejects_unauthorized_caller() {
+        // No mock_all_auths: admin is stored but has not authorized the call.
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxPolicy);
+        let client = MuxPolicyClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        env.as_contract(&contract_id, || {
+            env.storage().instance().set(&DataKey::Admin, &admin);
+        });
+        let wallet = Address::generate(&env);
+        assert!(client.try_reset_daily_counter(&wallet).is_err());
+        // Guard ran before any other storage access: no limit record was created.
+        assert!(client.try_get_daily_limit(&wallet).is_err());
     }
 
     #[test]
@@ -770,6 +529,26 @@ mod tests {
         assert_eq!(
             client.try_set_daily_limit(&wallet, &1000_i128, &0_u32, &None),
             Err(Ok(MuxPolicyError::InvalidPeriod))
+        );
+
+        // Issue #930 acceptance: the rejected call must be a pure no-op —
+        // no `lmt_set` audit event may be published for it. (`setup()`
+        // already emitted the `init` event; nothing else may appear.)
+        let events = env.events().all();
+        for idx in 0..events.len() {
+            assert_ne!(
+                topic_action(&env, &events, idx),
+                symbol_short!("lmt_set"),
+                "a rejected set_daily_limit must not emit lmt_set"
+            );
+        }
+
+        // Issue #930 acceptance: no limit was written, so the wallet still
+        // reads back as unconfigured.
+        assert_eq!(
+            client.try_get_daily_limit(&wallet),
+            Err(Ok(MuxPolicyError::LimitNotFound)),
+            "get_daily_limit must still report the wallet as unconfigured"
         );
     }
 
@@ -928,6 +707,42 @@ mod tests {
         client.reset_daily_counter(&wallet);
     }
 
+    #[test]
+    fn test_reset_daily_counter_clears_spent_and_restarts_window() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        client.set_daily_limit(&wallet, &1000_i128, &10_u32, &None);
+        client.record_spend(&wallet, &400_i128);
+        assert_eq!(client.get_daily_limit(&wallet).spent, 400);
+
+        // Mid-window: reset must zero `spent` and restart the window from now.
+        env.ledger().set_sequence_number(5);
+        client.reset_daily_counter(&wallet);
+
+        let record = client.get_daily_limit(&wallet);
+        assert_eq!(record.spent, 0);
+        assert_eq!(record.reset_ledger, 5 + 10);
+        // The limit itself is untouched.
+        assert_eq!(record.limit, 1000);
+        assert_eq!(record.day_ledgers, 10);
+
+        let events = env.events().all();
+        assert_eq!(
+            topic_action(&env, &events, events.len() - 1),
+            symbol_short!("ctr_rst")
+        );
+    }
+
+    #[test]
+    fn test_reset_daily_counter_unconfigured_wallet_fails() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        assert_eq!(
+            client.try_reset_daily_counter(&wallet),
+            Err(Ok(MuxPolicyError::LimitNotFound))
+        );
+    }
+
     /// TTL constants are sized for the expected ~30-day window.
     #[test]
     fn test_ttl_constants() {
@@ -1083,5 +898,87 @@ mod tests {
             9,
             "RegistryNotFound must remain error code 9; coordinate with docs/error_codes.md"
         );
+    }
+
+    // ── Issue #960: lmt_set event payload shape ───────────────────────────────
+
+    /// `set_daily_limit` must emit exactly one `mux_pol/lmt_set` event whose
+    /// data decodes to the `(wallet, limit, day_ledgers)` tuple with the
+    /// values passed in. A tuple-arity or field-order change would break
+    /// indexers without a compile-time check — this test pins it, including
+    /// a case that passes [`DEFAULT_DAY_LEDGERS`].
+    #[test]
+    fn test_set_daily_limit_emits_lmt_set_with_wallet_limit_day_ledgers() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        let limit = 1000_i128;
+        client.set_daily_limit(&wallet, &limit, &DEFAULT_DAY_LEDGERS, &None);
+
+        // init + lmt_set
+        let events = env.events().all();
+        assert_eq!(events.len(), 2);
+        assert_eq!(topic_action(&env, &events, 1), symbol_short!("lmt_set"));
+
+        let (_, _, data) = events.get(1).unwrap();
+        let (ev_wallet, ev_limit, ev_day_ledgers): (Address, i128, u32) =
+            FromVal::from_val(&env, &data);
+        assert_eq!(ev_wallet, wallet);
+        assert_eq!(ev_limit, limit);
+        assert_eq!(
+            ev_day_ledgers, DEFAULT_DAY_LEDGERS,
+            "decoded day_ledgers must equal DEFAULT_DAY_LEDGERS"
+        );
+    }
+
+    /// The `lmt_set` payload also pins arbitrary (non-default) values, so a
+    /// field-order swap that happens to survive the default case cannot slip
+    /// through.
+    #[test]
+    fn test_set_daily_limit_emits_lmt_set_with_custom_day_ledgers() {
+        let (env, client, _) = setup();
+        let wallet = Address::generate(&env);
+        let limit = 500_i128;
+        let day_ledgers = 10_u32;
+        client.set_daily_limit(&wallet, &limit, &day_ledgers, &None);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 2);
+        assert_eq!(topic_action(&env, &events, 1), symbol_short!("lmt_set"));
+
+        let (_, _, data) = events.get(1).unwrap();
+        let (ev_wallet, ev_limit, ev_day_ledgers): (Address, i128, u32) =
+            FromVal::from_val(&env, &data);
+        assert_eq!(ev_wallet, wallet);
+        assert_eq!(ev_limit, limit);
+        assert_eq!(ev_day_ledgers, day_ledgers);
+    }
+
+    /// Once `MAX_WALLETS` distinct wallets are tracked, `set_daily_limit`
+    /// returns `TooManyWallets` for a new wallet but still allows updating an
+    /// existing one.
+    #[test]
+    fn test_set_daily_limit_too_many_wallets_and_update() {
+        let (env, client, _) = setup();
+        let first = Address::generate(&env);
+        let registry = Address::generate(&env);
+        client.set_daily_limit(&first, &1000_i128, &17280_u32, &None);
+        for _ in 1..MAX_WALLETS {
+            let w = Address::generate(&env);
+            client.set_daily_limit(&w, &1000_i128, &17280_u32, &None);
+        }
+
+        let extra = Address::generate(&env);
+        assert_eq!(
+            client.try_set_daily_limit(&extra, &1000_i128, &17280_u32, &None),
+            Err(Ok(MuxPolicyError::TooManyWallets))
+        );
+        assert!(client.try_get_daily_limit(&extra).is_err());
+
+        // At capacity, updating an already-tracked wallet must still succeed.
+        client.set_daily_limit(&first, &2000_i128, &100_u32, &Some(registry.clone()));
+        let record = client.get_daily_limit(&first);
+        assert_eq!(record.limit, 2000);
+        assert_eq!(record.day_ledgers, 100);
+        assert_eq!(record.registry_id, Some(registry));
     }
 }

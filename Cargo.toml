@@ -9,6 +9,7 @@ members = [
     "contracts/mux-policy",
     "contracts/mux-recovery",
     "contracts/mux-registry",
+    "contracts/mux-recovery",
     "contracts/mux-spending-policy",
     "contracts/mux-wallet-registry",
     "contracts/soroban-test-helpers",

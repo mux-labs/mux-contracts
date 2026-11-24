@@ -69,6 +69,7 @@
 
 #![no_std]
 
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec};
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String,
     Symbol, Vec,
@@ -201,6 +202,8 @@ pub enum MuxRegistryError {
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
+
+const MAX_CONTRACTS: u32 = 128;
 
 /// Maximum number of registered contract names to bound the Names vec.
 const MAX_CONTRACTS: u32 = 128;
@@ -340,6 +343,8 @@ impl MuxRegistry {
         env.storage()
             .instance()
             .set(&DataKey::Names, &Vec::<Symbol>::new(&env));
+        env.events()
+            .publish((symbol_short!("mux_reg"), symbol_short!("init")), admin);
         emit(&env, symbol_short!("init"), admin);
         Self::extend_ttl(&env);
         Ok(())
@@ -505,6 +510,29 @@ impl MuxRegistry {
         };
         env.storage()
             .instance()
+            .set(&DataKey::Version(name.clone()), &version);
+        env.events()
+            .publish((symbol_short!("mux_reg"), symbol_short!("reg")), (name, version));
+        Ok(())
+    }
+
+    /// Register a contract with metadata (description and author). Admin only.
+    pub fn register_with_metadata(
+        env: Env,
+        name: Symbol,
+        version: String,
+        description: String,
+        author: String,
+    ) -> Result<(), MuxRegistryError> {
+        Self::register(env.clone(), name.clone(), version.clone())?;
+        env.storage()
+            .instance()
+            .set(&DataKey::Metadata(name.clone()), &(description, author));
+        env.events()
+            .publish(
+                (symbol_short!("mux_reg"), symbol_short!("regmeta")),
+                (name, version),
+            );
             .set(&DataKey::Metadata(name.clone()), &meta);
         emit(&env, symbol_short!("regmeta"), (name, version));
         Self::extend_ttl(&env);
@@ -519,6 +547,17 @@ impl MuxRegistry {
             .ok_or(MuxRegistryError::ContractNotFound)
     }
 
+    /// Check whether a contract's version matches the expected string.
+    /// Read-only: does not mutate storage.
+    pub fn check_version(env: Env, name: Symbol, expected: String) -> bool {
+        match Self::get_version(env, name) {
+            Ok(v) => v == expected,
+            Err(_) => false,
+        }
+    }
+
+    /// Get the metadata (description, author) for a registered contract.
+    pub fn get_metadata(env: Env, name: Symbol) -> Result<(String, String), MuxRegistryError> {
     /// Dry-run validation of a version query without state mutation.
     /// Returns the version if registered, otherwise returns `ContractNotFound`.
     /// This is useful for preflight checks and deployment validation.
@@ -587,7 +626,7 @@ mod tests {
     }
 
     #[test]
-    fn test_initialize() {
+    fn test_initialize_emits_init_and_rejects_double() {
         let env = Env::default();
         env.mock_all_auths();
         let contract_id = env.register_contract(None, MuxRegistry);
@@ -595,6 +634,8 @@ mod tests {
         let admin = Address::generate(&env);
         assert!(client.try_initialize(&admin).is_ok());
         assert!(client.try_initialize(&admin).is_err());
+        let events = env.events().all();
+        assert!(events.iter().any(|e| e.topics.iter().any(|t| *t == symbol_short!("mux_reg").into())));
     }
 
     #[test]
@@ -605,6 +646,16 @@ mod tests {
         client.register(&name, &version);
         assert_eq!(client.get_version(&name), version);
         assert!(client.list_contracts().contains(&name));
+    }
+
+    #[test]
+    fn test_non_admin_register_fails() {
+        let (env, client, _admin) = setup();
+        // Stop mocking auths so require_auth fails for any caller
+        env.mock_auths(&[]);
+        let name = symbol_short!("acc");
+        let version = String::from_str(&env, "1.0.0");
+        assert!(client.try_register(&name, &version).is_err());
     }
 
     #[test]
@@ -1173,5 +1224,58 @@ mod tests {
         let _ = client.try_register(&overflow, &version);
         // No extra event from the failed call.
         assert_eq!(env.events().all().len(), before);
+    }
+
+    #[test]
+    fn test_check_version_no_mutation() {
+        let (env, client, _) = setup();
+        let name = symbol_short!("batcher");
+        let version = String::from_str(&env, "2.1.0");
+        client.register(&name, &version);
+
+        // check_version with wrong version returns false
+        let wrong = String::from_str(&env, "9.9.9");
+        assert!(!client.check_version(&name, &wrong));
+
+        // Storage is unchanged
+        assert_eq!(client.get_version(&name), version);
+
+        // check_version with correct version returns true
+        assert!(client.check_version(&name, &version));
+        assert_eq!(client.get_version(&name), version);
+    }
+
+    #[test]
+    fn test_register_cap_128() {
+        let (env, client, _) = setup();
+        for i in 0..128u32 {
+            let name = Symbol::new(&env, &format!("c{}", i));
+            let version = String::from_str(&env, "1.0.0");
+            assert!(client.try_register(&name, &version).is_ok());
+        }
+        // 129th should fail
+        let name = Symbol::new(&env, "c129");
+        let version = String::from_str(&env, "1.0.0");
+        let result = client.try_register(&name, &version);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_register_with_metadata_and_get() {
+        let (env, client, _) = setup();
+        let name = symbol_short!("recover");
+        let version = String::from_str(&env, "1.0.0");
+        let desc = String::from_str(&env, "Recovery contract");
+        let author = String::from_str(&env, "mux-labs");
+        client.register_with_metadata(&name, &version, &desc, &author);
+        let (d, a) = client.get_metadata(&name);
+        assert_eq!(d, desc);
+        assert_eq!(a, author);
+
+        // Verify regmeta event emitted
+        let events = env.events().all();
+        assert!(events.iter().any(|e| {
+            e.topics.iter().any(|t| *t == symbol_short!("regmeta").into())
+        }));
     }
 }

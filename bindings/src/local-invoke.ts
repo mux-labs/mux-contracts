@@ -25,8 +25,14 @@ export interface LocalInvokeOptions {
 
 export type NamedContract =
   | "mux-account"
+  | "mux-account-factory"
   | "mux-batcher"
+  | "mux-delegation"
+  | "mux-policy"
   | "mux-permissions"
+  | "mux-recovery"
+  | "mux-registry"
+  | "mux-spending-policy"
   | "mux-wallet-registry";
 
 export function resolveContractId(
@@ -35,8 +41,14 @@ export function resolveContractId(
 ): string {
   const supported: Record<NamedContract, keyof import("./types").MuxContractIds> = {
     "mux-account": "muxAccount",
+    "mux-account-factory": "muxAccountFactory",
     "mux-batcher": "muxBatcher",
+    "mux-delegation": "muxDelegation",
+    "mux-policy": "muxPolicy",
     "mux-permissions": "muxPermissions",
+    "mux-recovery": "muxRecovery",
+    "mux-registry": "muxRegistry",
+    "mux-spending-policy": "muxSpendingPolicy",
     "mux-wallet-registry": "muxWalletRegistry",
   };
 
@@ -79,7 +91,7 @@ function parseJsonValue(value: unknown): xdr.ScVal {
   }
 
   if (typeof value === "number") {
-    return nativeToScVal(value, { type: "i64" });
+    return parseBigIntScVal("i64", value);
   }
 
   if (typeof value === "string") {
@@ -89,7 +101,111 @@ function parseJsonValue(value: unknown): xdr.ScVal {
   throw new Error(`Unsupported argument type: ${typeof value}`);
 }
 
-function parseExplicitScVal(type: string, value: unknown): xdr.ScVal {
+/** Inclusive bounds for signed/unsigned 64-bit contract arguments. */
+const I64_MIN = -(2n ** 63n);
+const I64_MAX = 2n ** 63n - 1n;
+const U64_MAX = 2n ** 64n - 1n;
+/** Inclusive bounds for the signed 128-bit contract argument type. */
+const I128_MIN = -(2n ** 127n);
+const I128_MAX = 2n ** 127n - 1n;
+
+/**
+ * Quote unquoted JSON integer literals with more than 15 digits so that
+ * `JSON.parse` never has a chance to round them through an IEEE-754 double.
+ * Strings, floats/exponents, and numbers already inside string literals are
+ * left untouched. This lets {@link parseRawArgument}'s own BigInt-based
+ * decimal parsing (which has full 64/128-bit precision) handle the value
+ * once JSON.parse hands it back as a string.
+ */
+function quoteBigIntegers(jsonText: string): string {
+  let result = "";
+  let inString = false;
+  let escape = false;
+
+  for (let i = 0; i < jsonText.length; i += 1) {
+    const ch = jsonText[i];
+
+    if (inString) {
+      result += ch;
+      if (escape) {
+        escape = false;
+      } else if (ch === "\\") {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      result += ch;
+      continue;
+    }
+
+    if (ch === "-" || (ch >= "0" && ch <= "9")) {
+      let j = i;
+      let numStr = "";
+      if (jsonText[j] === "-") {
+        numStr += "-";
+        j += 1;
+      }
+      while (j < jsonText.length && jsonText[j] >= "0" && jsonText[j] <= "9") {
+        numStr += jsonText[j];
+        j += 1;
+      }
+
+      // Floats/exponents are copied through unchanged; precision loss there
+      // is an existing, separate concern from integer misclassification.
+      if (jsonText[j] === "." || jsonText[j] === "e" || jsonText[j] === "E") {
+        let full = numStr;
+        while (j < jsonText.length && /[0-9+\-.eE]/.test(jsonText[j])) {
+          full += jsonText[j];
+          j += 1;
+        }
+        result += full;
+        i = j - 1;
+        continue;
+      }
+
+      const digits = numStr.startsWith("-") ? numStr.slice(1) : numStr;
+      result += digits.length > 15 ? `"${numStr}"` : numStr;
+      i = j - 1;
+      continue;
+    }
+
+    result += ch;
+  }
+
+  return result;
+}
+
+/**
+ * Convert a raw value to a 64-bit ScVal via BigInt, rejecting values outside
+ * the signed (`i64`) or unsigned (`u64`) 64-bit range with a descriptive error.
+ * BigInt conversion preserves the full 64-bit range; Number() would silently
+ * lose precision above 2^53.
+ */
+function parseBigIntScVal(type: "i64" | "u64", value: unknown): xdr.ScVal {
+  let parsed: bigint;
+  try {
+    parsed = BigInt(String(value));
+  } catch {
+    throw new Error(`Invalid ${type} argument value: ${String(value)}`);
+  }
+
+  const min = type === "i64" ? I64_MIN : 0n;
+  const max = type === "i64" ? I64_MAX : U64_MAX;
+  if (parsed < min || parsed > max) {
+    throw new Error(
+      `${type} value out of range: ${String(value)} (valid range ${min} to ${max})`
+    );
+  }
+
+  return nativeToScVal(parsed, { type });
+}
+
+export function parseExplicitScVal(type: string, value: unknown): xdr.ScVal {
   switch (type) {
     case "address":
       return nativeToScVal(String(value), { type: "address" });
@@ -102,9 +218,9 @@ function parseExplicitScVal(type: string, value: unknown): xdr.ScVal {
     case "u32":
       return nativeToScVal(Number(value), { type: "u32" });
     case "u64":
-      return nativeToScVal(BigInt(String(value)), { type: "u64" });
+      return parseBigIntScVal("u64", value);
     case "i64":
-      return nativeToScVal(Number(value), { type: "i64" });
+      return parseBigIntScVal("i64", value);
     case "i128":
       return nativeToScVal(BigInt(String(value)), { type: "i128" });
     case "u128":
@@ -129,18 +245,38 @@ export function parseRawArgument(raw: string): xdr.ScVal {
     return nativeToScVal(trimmed === "true", { type: "bool" });
   }
 
+  // Explicit unsigned 64-bit form: "u64:<decimal>". The bare-numeric path
+  // below only ever emits i64/i128, so u64 arguments require this prefix
+  // (or the explicit JSON {"type":"u64",...} object).
+  if (trimmed.startsWith("u64:")) {
+    const payload = trimmed.slice("u64:".length);
+    if (!/^\d+$/.test(payload)) {
+      throw new Error(`Invalid u64 argument value: ${payload}`);
+    }
+    return parseBigIntScVal("u64", payload);
+  }
+
   if (/^-?\d+$/.test(trimmed)) {
     const value = BigInt(trimmed);
-    if (value >= BigInt(Number.MIN_SAFE_INTEGER) && value <= BigInt(Number.MAX_SAFE_INTEGER)) {
-      return nativeToScVal(Number(value), { type: "i64" });
+    // The full i64 range (~9.2e18) is far larger than Number.MAX_SAFE_INTEGER
+    // (~9e15); classifying against the safe-integer bound reclassified
+    // perfectly valid i64 values as i128. Classify against the real i64
+    // bounds instead, and reject anything that doesn't even fit in i128.
+    if (value >= I64_MIN && value <= I64_MAX) {
+      return nativeToScVal(value, { type: "i64" });
     }
-    return nativeToScVal(value, { type: "i128" });
+    if (value >= I128_MIN && value <= I128_MAX) {
+      return nativeToScVal(value, { type: "i128" });
+    }
+    throw new Error(
+      `Integer argument out of i128 range: ${trimmed} (valid range ${I128_MIN} to ${I128_MAX})`
+    );
   }
 
   if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
     let parsed: unknown;
     try {
-      parsed = JSON.parse(trimmed);
+      parsed = JSON.parse(quoteBigIntegers(trimmed));
     } catch {
       return nativeToScVal(trimmed, { type: "string" });
     }
@@ -237,7 +373,7 @@ Options:
   --network <network>           Use SOROBAN_NETWORK (localnet|testnet|mainnet). Default: localnet
   --rpc-url <url>               Override the Soroban RPC endpoint
   --contract-id <contractId>    Explicit contract ID to invoke
-  --contract-name <name>        Named contract (mux-account|mux-batcher|mux-permissions|mux-wallet-registry)
+  --contract-name <name>        Named contract (mux-account|mux-account-factory|mux-batcher|mux-policy|mux-permissions|mux-wallet-registry)
   --function <name>             Contract function name to invoke
   --secret-key <secret>         Signer secret key for the transaction
   --arg <value>                 Argument for the contract function (repeatable)

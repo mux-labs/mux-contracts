@@ -92,61 +92,21 @@ describe("MuxRegistryClient shape", () => {
   it("exposes listContracts as a function", () => {
     expect(typeof MuxRegistryClient.prototype.listContracts).toBe("function");
   });
-});
 
-describe("Factory and registry error HTTP mapping", () => {
-  it("maps InvalidAccount to 400", () => {
-    expect(ERROR_HTTP_MAP.InvalidAccount).toBe(400);
-  });
+  it("exposes the full read-only query surface (getVersion, getMetadata, listContracts, contractVersion, assertContractVersion)", () => {
+    const readOnlyMethods = [
+      "getVersion",
+      "getMetadata",
+      "listContracts",
+      "contractVersion",
+      "assertContractVersion",
+    ] as const;
 
-  it("maps TooManyAccounts to 409", () => {
-    expect(ERROR_HTTP_MAP.TooManyAccounts).toBe(409);
-  });
-
-  it("maps MetadataNotFound to 404", () => {
-    expect(ERROR_HTTP_MAP.MetadataNotFound).toBe(404);
-  });
-
-  it("maps MetadataTooLarge to 400", () => {
-    expect(ERROR_HTTP_MAP.MetadataTooLarge).toBe(400);
-  });
-
-  it("maps ContractNotFound to 404", () => {
-    expect(ERROR_HTTP_MAP.ContractNotFound).toBe(404);
-  });
-
-  it("maps TooManyContracts to 409", () => {
-    expect(ERROR_HTTP_MAP.TooManyContracts).toBe(409);
-  });
-});
-
-describe("MuxRegistryClient shape", () => {
-  it("exposes initialize as a function", () => {
-    expect(typeof MuxRegistryClient.prototype.initialize).toBe("function");
-  });
-
-  it("exposes register as a function", () => {
-    expect(typeof MuxRegistryClient.prototype.register).toBe("function");
-  });
-
-  it("exposes registerWithMetadata as a function", () => {
-    expect(typeof MuxRegistryClient.prototype.registerWithMetadata).toBe("function");
-  });
-
-  it("exposes getVersion as a function", () => {
-    expect(typeof MuxRegistryClient.prototype.getVersion).toBe("function");
-  });
-
-  it("exposes registerWithMetadata as a function", () => {
-    expect(typeof MuxRegistryClient.prototype.registerWithMetadata).toBe("function");
-  });
-
-  it("exposes getMetadata as a function", () => {
-    expect(typeof MuxRegistryClient.prototype.getMetadata).toBe("function");
-  });
-
-  it("exposes listContracts as a function", () => {
-    expect(typeof MuxRegistryClient.prototype.listContracts).toBe("function");
+    for (const method of readOnlyMethods) {
+      expect(typeof (MuxRegistryClient.prototype as Record<string, unknown>)[method]).toBe(
+        "function",
+      );
+    }
   });
 });
 

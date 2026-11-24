@@ -76,6 +76,12 @@ export async function initializeAccount(
 /**
  * Read the owner address of a mux-account contract.
  * Uses simulation (no fee, no signing).
+ *
+ * The throwaway keypair passed to `client.owner(...)` is only a simulation
+ * source: `owner()` is a read-only view function, so no transaction is signed
+ * or submitted with it. The decoded return value is validated to be a
+ * well-formed Stellar address so a misconfigured or uninitialized contract
+ * fails loudly instead of returning a garbage string.
  */
 export async function getOwner(
   contractId: string
@@ -87,7 +93,23 @@ export async function getOwner(
     rpcUrl: config.rpcUrl,
   });
   const owner = await client.owner(Keypair.random());
-  return owner.toString();
+  const ownerAddress = String(owner);
+
+  if (ownerAddress.length === 0) {
+    throw new Error(
+      `mux-account ${contractId} owner() returned an empty value; is the contract initialized?`
+    );
+  }
+
+  try {
+    Address.fromString(ownerAddress);
+  } catch {
+    throw new Error(
+      `mux-account ${contractId} owner() returned a value that is not a valid Stellar address: ${ownerAddress}`
+    );
+  }
+
+  return ownerAddress;
 }
 
 /**

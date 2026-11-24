@@ -169,3 +169,35 @@ The `sim_done` event is distinct from `executed` (emitted by `execute_batch`), a
 |---|---|---|
 | T-BATCH-01 | Caller submits oversized batch to exhaust ledger resources | `MAX_BATCH_SIZE = 50` enforced |
 | T-SIM-01 | Attacker spams simulate to pollute event log | `caller.require_auth()` enforced |
+
+## Simulation-only CLI
+
+`bindings/src/simulate-batch.ts` provides a simulation-only preflight command. It validates typed operation arguments and the generated client's operation-count and aggregate-weight caps, calls Soroban RPC simulation, prints the result, and never submits `executeBatch` or `submitBatch`.
+
+Create an input file with a non-empty `operations` array:
+
+```json
+{
+  "operations": [
+    {
+      "target": "C_REPLACE_WITH_TARGET_CONTRACT_ID",
+      "fnName": "owner",
+      "args": [],
+      "requireSuccess": true,
+      "kind": "Invoke"
+    }
+  ]
+}
+```
+
+Supported argument types are `address`, `string`, `bool`, `u32`, `u64`, and `i128`.
+
+```bash
+SECRET_KEY=S... \
+BATCHER_CONTRACT_ID=C... \
+SOROBAN_NETWORK=testnet \
+RPC_URL=https://soroban-testnet.stellar.org \
+npm run simulate-batch -- --input ../examples/simulate-batch.json
+```
+
+Use `SOROBAN_NETWORK=localnet RPC_URL=http://localhost:8000` for Docker localnet. The signer is used only to build the simulation transaction; no secret is logged or submitted to the contract.

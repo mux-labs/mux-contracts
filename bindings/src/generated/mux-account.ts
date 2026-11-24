@@ -25,6 +25,31 @@ export interface MuxAccountClientOptions {
   rpcUrl: string;
 }
 
+/**
+ * Authorization requirement for a mutating entrypoint.
+ *
+ * - `owner`    — only the account owner may invoke.
+ * - `delegate` — owner or an active, non-expired delegate with spend rights.
+ * - `guardian` — owner or a configured guardian (recovery paths).
+ * - `public`   — intentionally unauthenticated (e.g. one-time init).
+ *
+ * Deny-by-default: any mutating entrypoint not listed in
+ * `MUX_ACCOUNT_MUTATING_AUTHZ` is treated as unguarded and must fail the
+ * access-control checklist test.
+ */
+export type MutatingAuthz = "owner" | "delegate" | "guardian" | "public";
+
+/**
+ * Authorization map for every mutating entrypoint on `mux-account`.
+ * Keep in sync with `docs/access-control-checklist.md`.
+ */
+export const MUX_ACCOUNT_MUTATING_AUTHZ: Readonly<Record<string, MutatingAuthz>> = {
+  initialize: "public",
+  set_delegate: "owner",
+  remove_delegate: "owner",
+  set_spend_limit: "owner",
+};
+
 export class MuxAccountClient {
   private contract: Contract;
   private server: SorobanRpc.Server;
@@ -45,14 +70,14 @@ export class MuxAccountClient {
     sourceKeypair: Keypair,
     owner: Address,
     guardians: Address[]
-  ): Promise<void> {
+  ): Promise<string> {
     const tx = await this.buildTx(sourceKeypair, "initialize", [
       nativeToScVal(owner.toString(), { type: "address" }),
       xdr.ScVal.scvVec(
         guardians.map((g) => nativeToScVal(g.toString(), { type: "address" }))
       ),
     ]);
-    await this.submit(tx, sourceKeypair);
+    return this.submit(tx, sourceKeypair);
   }
 
   async setDelegate(
@@ -60,23 +85,23 @@ export class MuxAccountClient {
     delegate: Address,
     expiresAt: bigint,
     canSpend: boolean
-  ): Promise<void> {
+  ): Promise<string> {
     const tx = await this.buildTx(sourceKeypair, "set_delegate", [
       nativeToScVal(delegate.toString(), { type: "address" }),
       nativeToScVal(expiresAt, { type: "u64" }),
       nativeToScVal(canSpend, { type: "bool" }),
     ]);
-    await this.submit(tx, sourceKeypair);
+    return this.submit(tx, sourceKeypair);
   }
 
   async removeDelegate(
     sourceKeypair: Keypair,
     delegate: Address
-  ): Promise<void> {
+  ): Promise<string> {
     const tx = await this.buildTx(sourceKeypair, "remove_delegate", [
       nativeToScVal(delegate.toString(), { type: "address" }),
     ]);
-    await this.submit(tx, sourceKeypair);
+    return this.submit(tx, sourceKeypair);
   }
 
   async setSpendLimit(
@@ -84,13 +109,13 @@ export class MuxAccountClient {
     asset: Address,
     amount: bigint,
     periodLedgers: number
-  ): Promise<void> {
+  ): Promise<string> {
     const tx = await this.buildTx(sourceKeypair, "set_spend_limit", [
       nativeToScVal(asset.toString(), { type: "address" }),
       nativeToScVal(amount, { type: "i128" }),
       nativeToScVal(periodLedgers, { type: "u32" }),
     ]);
-    await this.submit(tx, sourceKeypair);
+    return this.submit(tx, sourceKeypair);
   }
 
   // ── Private helpers ──────────────────────────────────────────────────────────
@@ -120,7 +145,7 @@ export class MuxAccountClient {
     return scValToNative(returnVal) as T;
   }
 
-  private async submit(tx: Transaction, signer: Keypair): Promise<void> {
+  private async submit(tx: Transaction, signer: Keypair): Promise<string> {
     const simResult = await this.server.simulateTransaction(tx);
     if (SorobanRpc.Api.isSimulationError(simResult)) {
       throw new Error(`Simulation failed: ${simResult.error}`);
@@ -135,5 +160,6 @@ export class MuxAccountClient {
       throw new Error(`Transaction failed: ${JSON.stringify(sendResult.errorResult)}`);
     }
     await pollTransaction(this.server, sendResult.hash);
+    return sendResult.hash;
   }
 }

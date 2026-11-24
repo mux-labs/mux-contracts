@@ -39,8 +39,36 @@ import {
 
 const RPC_URL = process.env.RPC_URL ?? "https://soroban-testnet.stellar.org";
 const NETWORK = process.env.SOROBAN_NETWORK ?? "testnet";
-const ACCOUNT_CONTRACT = process.env.ACCOUNT_CONTRACT!;
-const TARGET_CONTRACT = process.env.TARGET_CONTRACT!;
+
+// === Fail-closed configuration (issue #965) ===
+//
+// Configuration errors must surface BEFORE any RPC call, with the offending
+// variable named, rather than as an opaque SDK failure deep inside a
+// transaction build (e.g. `new Contract(undefined)`).
+
+function required(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required; refusing to run without explicit configuration`);
+  return value;
+}
+
+/**
+ * Reads a contract address from env var `name` and validates it. A missing
+ * value fails via `required()`; a malformed value fails with the variable
+ * name and the invalid value so the operator can fix it immediately.
+ */
+function requiredContractAddress(name: string): string {
+  const value = required(name);
+  try {
+    Address.fromString(value);
+  } catch {
+    throw new Error(`${name} is not a valid contract address: ${value}`);
+  }
+  return value;
+}
+
+const ACCOUNT_CONTRACT = requiredContractAddress("ACCOUNT_CONTRACT");
+const TARGET_CONTRACT = requiredContractAddress("TARGET_CONTRACT");
 
 const PASSPHRASE: Record<string, string> = {
   localnet: "Standalone Network ; February 2025",

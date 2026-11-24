@@ -1,8 +1,10 @@
 import {
   RECOVERY_CONTRACT_TAG,
   RECOVERY_EVENT_TOPICS,
+  RecoveryEventDecodeError,
   parseRecoveryEvent,
   type RecoveryEvent,
+  type RecoveryRecInitEvent,
 } from "../src/recovery-events";
 import type { RawSorobanEvent } from "../src/factory-events";
 
@@ -68,6 +70,125 @@ describe("parseRecoveryEvent — rec_init", () => {
     expect((result as any)?.guardian).toBe(GUARDIAN);
     expect((result as any)?.newOwner).toBe(NEW_OWNER);
   });
+
+  it("decodes u64 fields above Number.MAX_SAFE_INTEGER without precision loss (#937)", () => {
+    const initiatedAt = "9007199254740993"; // 2^53 + 1
+    const executableAt = "9007199254741000"; // initiatedAt + timelock-ish
+    const expiresAt = "18446744073709551615"; // u64::MAX
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_init, [
+      GUARDIAN,
+      NEW_OWNER,
+      initiatedAt,
+      executableAt,
+      expiresAt,
+    ]);
+    const result = parseRecoveryEvent(event) as RecoveryRecInitEvent | null;
+    expect(result).not.toBeNull();
+    expect(result?.action).toBe("rec_init");
+    expect(result?.initiatedAt).toBe(initiatedAt);
+    expect(result?.executableAt).toBe(executableAt);
+    expect(result?.expiresAt).toBe(expiresAt);
+  });
+
+  it("decodes { u64 } object-shaped u64 fields above Number.MAX_SAFE_INTEGER (#937)", () => {
+    const initiatedAt = "9007199254740993";
+    const executableAt = "9007199254741000";
+    const expiresAt = "9007199254750000";
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_init, [
+      GUARDIAN,
+      NEW_OWNER,
+      { u64: initiatedAt },
+      { u64: executableAt },
+      { u64: expiresAt },
+    ]);
+    const result = parseRecoveryEvent(event) as RecoveryRecInitEvent | null;
+    expect(result?.initiatedAt).toBe(initiatedAt);
+    expect(result?.executableAt).toBe(executableAt);
+    expect(result?.expiresAt).toBe(expiresAt);
+  });
+
+  it("throws RecoveryEventDecodeError for an undecodable u64 field (#937)", () => {
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_init, [
+      GUARDIAN,
+      NEW_OWNER,
+      "not-a-u64",
+      EXECUTABLE_AT,
+      EXPIRES_AT,
+    ]);
+    expect(() => parseRecoveryEvent(event)).toThrow(RecoveryEventDecodeError);
+  });
+
+  it("throws RecoveryEventDecodeError for an unsafe number u64 field (#937)", () => {
+    // A JS number above 2^53 cannot represent the u64 exactly; it must fail
+    // loudly instead of yielding a silently truncated ledger timestamp.
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_init, [
+      GUARDIAN,
+      NEW_OWNER,
+      2 ** 60,
+      EXECUTABLE_AT,
+      EXPIRES_AT,
+    ]);
+    expect(() => parseRecoveryEvent(event)).toThrow(RecoveryEventDecodeError);
+  });
+
+  it("throws RecoveryEventDecodeError when guardian is not a well-formed address (regression)", () => {
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_init, [
+      "not-an-address",
+      NEW_OWNER,
+      EXECUTABLE_AT,
+      EXECUTABLE_AT,
+      EXPIRES_AT,
+    ]);
+    expect(() => parseRecoveryEvent(event)).toThrow(RecoveryEventDecodeError);
+  });
+
+  it("throws RecoveryEventDecodeError when newOwner is not a well-formed address (regression)", () => {
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_init, [
+      GUARDIAN,
+      "not-an-address",
+      EXECUTABLE_AT,
+      EXECUTABLE_AT,
+      EXPIRES_AT,
+    ]);
+    expect(() => parseRecoveryEvent(event)).toThrow(RecoveryEventDecodeError);
+  });
+
+  it("throws RecoveryEventDecodeError for a missing payload (#937)", () => {
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_init, null);
+    expect(() => parseRecoveryEvent(event)).toThrow(RecoveryEventDecodeError);
+  });
+
+  it("throws RecoveryEventDecodeError for a short payload (#937)", () => {
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_init, [
+      GUARDIAN,
+      NEW_OWNER,
+      INITIATED_AT,
+    ]);
+    expect(() => parseRecoveryEvent(event)).toThrow(RecoveryEventDecodeError);
+  });
+
+  it("throws RecoveryEventDecodeError for an invalid guardian address (#937)", () => {
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_init, [
+      "not-an-address",
+      NEW_OWNER,
+      INITIATED_AT,
+      EXECUTABLE_AT,
+      EXPIRES_AT,
+    ]);
+    expect(() => parseRecoveryEvent(event)).toThrow(RecoveryEventDecodeError);
+  });
+
+  it("names the action on the thrown decode error (#937)", () => {
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_init, []);
+    try {
+      parseRecoveryEvent(event);
+      expect.unreachable("parseRecoveryEvent should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(RecoveryEventDecodeError);
+      expect((err as RecoveryEventDecodeError).action).toBe(RECOVERY_EVENT_TOPICS.rec_init);
+      expect((err as Error).message).toMatch(/rec_init/);
+    }
+  });
 });
 
 describe("parseRecoveryEvent — rec_exec", () => {
@@ -79,6 +200,22 @@ describe("parseRecoveryEvent — rec_exec", () => {
     const result = parseRecoveryEvent(event);
     expect(result).not.toBeNull();
     expect(result?.action).toBe("rec_exec");
+  });
+
+  it("rejects rec_exec when guardian is not a well-formed address (regression)", () => {
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_exec, [
+      "not-an-address",
+      NEW_OWNER,
+    ]);
+    expect(parseRecoveryEvent(event)).toBeNull();
+  });
+
+  it("rejects rec_exec when newOwner is not a well-formed address (regression)", () => {
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_exec, [
+      GUARDIAN,
+      "not-an-address",
+    ]);
+    expect(parseRecoveryEvent(event)).toBeNull();
   });
 });
 
@@ -148,5 +285,44 @@ describe("parseRecoveryEvent — returns null for non-recovery events", () => {
   it("returns null when address is missing", () => {
     const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.init, []);
     expect(parseRecoveryEvent(event)).toBeNull();
+  });
+});
+
+describe("parseRecoveryEvent — cancel/advance audit semantics (#758)", () => {
+  it("rec_cncl carries the cancelling actor for audit correlation", () => {
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_cncl, [GUARDIAN]);
+    const result = parseRecoveryEvent(event);
+    expect(result).not.toBeNull();
+    expect(result?.action).toBe("rec_cncl");
+    expect((result as any)?.guardian).toBe(GUARDIAN);
+  });
+
+  it("rec_exec (advance) carries guardian and new owner for audit correlation", () => {
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_exec, [
+      GUARDIAN,
+      NEW_OWNER,
+    ]);
+    const result = parseRecoveryEvent(event);
+    expect(result).not.toBeNull();
+    expect(result?.action).toBe("rec_exec");
+    expect((result as any)?.guardian).toBe(GUARDIAN);
+    expect((result as any)?.newOwner).toBe(NEW_OWNER);
+  });
+
+  it("rec_cncl with no actor is still a valid audit event", () => {
+    const event = makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_cncl, []);
+    const result = parseRecoveryEvent(event);
+    expect(result).not.toBeNull();
+    expect(result?.action).toBe("rec_cncl");
+  });
+
+  it("rec_cncl and rec_exec are distinct audit actions", () => {
+    const cancel = parseRecoveryEvent(
+      makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_cncl, [GUARDIAN]),
+    );
+    const advance = parseRecoveryEvent(
+      makeRawEvent(RECOVERY_CONTRACT_TAG, RECOVERY_EVENT_TOPICS.rec_exec, [GUARDIAN, NEW_OWNER]),
+    );
+    expect(cancel?.action).not.toBe(advance?.action);
   });
 });

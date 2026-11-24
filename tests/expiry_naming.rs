@@ -1,4 +1,4 @@
-//! Expiry field naming guard (#586).
+//! Expiry field naming guard (#586, extended by #920).
 //!
 //! The contract parameter, struct field, and `dlg_set` event payload all use
 //! `expires_at: u64` (a Unix timestamp), but the interface documentation, the
@@ -6,6 +6,13 @@
 //! `expiry_ledger` / `expiryLedger` — a name that is wrong in both spelling and
 //! unit, and that encoded the value as a `u32` ledger sequence. These tests
 //! fail if either spelling comes back.
+//!
+//! Issue #920 replaced the fixed `SURFACES` list with a recursive directory
+//! walk over `bindings/src/` and `contracts/*/src/`, so a regression in any
+//! generated client or hand-written bindings source — including files added
+//! after this guard was written — is caught. A companion test pins that the
+//! walk actually visits the known generated clients so an empty walk cannot
+//! make the guard pass vacuously.
 //!
 //! Run with: cargo test -p mux-contract-tests --test expiry_naming
 
@@ -18,18 +25,31 @@ mod expiry_naming {
     /// wrong unit: the field is a timestamp, not a ledger sequence.
     const FORBIDDEN: [&str; 2] = ["expiry_ledger", "expiryLedger"];
 
-    /// Files that define or consume the expiry field across the three surfaces
-    /// that drifted: the contract, the docs, the fixtures, and the bindings.
-    const SURFACES: [&str; 8] = [
-        "contracts/mux-account/src/lib.rs",
+    /// Doc surfaces kept as an explicit list (outside `bindings/src` and
+    /// `contracts/*/src`, which the directory walk covers). Previously part of
+    /// the fixed `SURFACES` array — retained so doc drift stays guarded.
+    const DOC_SURFACES: [&str; 3] = [
         "docs/mux-account-interface.md",
         "docs/abi_reference.md",
         "docs/audit-events.md",
-        "tests/fixtures/test_vectors.json",
-        "tests/fixtures/account_limit_vectors.json",
-        "bindings/src/types.ts",
-        "bindings/src/generated/mux-account.ts",
     ];
+
+    /// Generated clients the walk must visit (issue #920: an empty walk must
+    /// not make the forbidden-spelling guard pass vacuously).
+    const MUST_VISIT: [&str; 2] = [
+        "bindings/src/generated/mux-account.ts",
+        "bindings/src/generated/mux-delegation.ts",
+    ];
+
+    /// A doc line that only *quotes* the forbidden spelling while banning it
+    /// (the naming admonition in `docs/mux-account-interface.md`). Doc-only:
+    /// bindings and contract sources are scanned strictly.
+    fn line_quotes_the_ban(line: &str) -> bool {
+        line.contains("must not be")
+            || line.contains("must not reappear")
+            || line.contains("spelling was wrong")
+            || line.contains("enforces this")
+    }
 
     fn repo_root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -43,20 +63,119 @@ mod expiry_naming {
             .unwrap_or_else(|_| panic!("{relative} must exist"))
     }
 
+    /// Recursively collect every file under `dir` (read_dir, no extra deps).
+    fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            // A missing directory contributes no files rather than panicking:
+            // `contracts/*/src` is matched per-crate below.
+            Err(_) => return,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_files(&path, out);
+            } else if path.is_file() {
+                out.push(path);
+            }
+        }
+    }
+
+    /// Every file under `bindings/src/` (recursively) and under each
+    /// `contracts/<crate>/src/` tree, as paths relative to the repo root.
+    fn walked_surfaces() -> Vec<String> {
+        let root = repo_root();
+        let mut files: Vec<PathBuf> = Vec::new();
+
+        collect_files(&root.join("bindings/src"), &mut files);
+
+        let contracts_dir = root.join("contracts");
+        let mut contract_srcs: Vec<PathBuf> = fs::read_dir(&contracts_dir)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", contracts_dir.display()))
+            .flatten()
+            .map(|entry| entry.path().join("src"))
+            .filter(|src| src.is_dir())
+            .collect();
+        contract_srcs.sort();
+        for src in &contract_srcs {
+            collect_files(src, &mut files);
+        }
+
+        files.sort();
+        files
+            .iter()
+            .filter_map(|path| {
+                path.strip_prefix(&root)
+                    .ok()
+                    .map(|rel| rel.to_string_lossy().replace('\\', "/"))
+            })
+            .collect()
+    }
+
     #[test]
     fn no_surface_uses_the_old_expiry_spelling() {
         let mut offenders: Vec<String> = Vec::new();
-        for surface in SURFACES {
-            let text = read(surface);
+
+        // Full coverage: every file under bindings/src and contracts/*/src
+        // (strict, whole-file substring match).
+        for surface in walked_surfaces() {
+            let text = read(&surface);
             for spelling in FORBIDDEN {
                 if text.contains(spelling) {
                     offenders.push(format!("{surface} uses `{spelling}`"));
                 }
             }
         }
+
+        // Explicit doc surfaces (outside the walked trees). Docs are scanned
+        // line-by-line so the naming admonitions that *quote* the banned
+        // spelling while forbidding it (e.g. the interface doc's
+        // "…`expiry_ledger` spelling was wrong… must not be reintroduced")
+        // do not trip the guard — while any real usage still fails.
+        for surface in DOC_SURFACES {
+            let text = read(surface);
+            for (idx, line) in text.lines().enumerate() {
+                if line_quotes_the_ban(line) {
+                    continue;
+                }
+                for spelling in FORBIDDEN {
+                    if line.contains(spelling) {
+                        offenders.push(format!("{surface}:{} uses `{spelling}`", idx + 1));
+                    }
+                }
+            }
+        }
+
         assert!(
             offenders.is_empty(),
             "the expiry field is named `expires_at`: {offenders:?}"
+        );
+    }
+
+    /// Issue #920: the walk must actually visit the known generated clients —
+    /// an empty or truncated walk would let the guard above pass vacuously.
+    #[test]
+    fn expiry_walk_visits_known_generated_clients() {
+        let visited = walked_surfaces();
+
+        assert!(
+            !visited.is_empty(),
+            "directory walk visited no files — guard would pass vacuously"
+        );
+        for expected in MUST_VISIT {
+            assert!(
+                visited.iter().any(|path| path == expected),
+                "walk must visit {expected}; visited: {visited:?}"
+            );
+        }
+        // Sanity: the walk also reaches hand-written bindings sources.
+        assert!(
+            visited.iter().any(|path| path.starts_with("bindings/src/")),
+            "walk must include bindings/src files"
+        );
+        assert!(
+            visited.iter().any(|path| path.starts_with("contracts/")),
+            "walk must include contracts/*/src files"
         );
     }
 

@@ -317,10 +317,12 @@ impl MuxDelegation {
 
     /// Write-once self-registration of this contract's own address.
     ///
-    /// The `admin` parameter is the caller authorising this specific call
-    /// (`admin.require_auth()`) and is **not** the same as the `DataKey::Admin`
-    /// set by `initialize`. Any address may call `link_contract_id` by naming
-    /// itself as `admin`.
+    /// **Authorization:** the `admin` parameter must authorize this call via
+    /// `admin.require_auth()`. This is an _inline_ auth check on the supplied
+    /// address — it is entirely independent of `DataKey::Admin` set by
+    /// `initialize`. Any address may act as the `admin` argument here;
+    /// `initialize` need not have been called first. The chosen authorizer is
+    /// not stored and has no further privileges after this call succeeds.
     ///
     /// Returns `ContractIdAlreadySet` if called more than once.
     ///
@@ -553,6 +555,55 @@ mod tests {
     }
 
     #[test]
+    fn test_grant_delegate_limits_and_regrant_at_cap() {
+        let env = Env::default();
+        env.mock_all_auths();
+        env.budget().reset_unlimited();
+        let contract_id = env.register_contract(None, MuxDelegation);
+        let client = MuxDelegationClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let delegate = Address::generate(&env);
+
+        // Rejected grants must not leave any state behind.
+        let empty: Vec<Symbol> = Vec::new(&env);
+        assert!(client.try_grant_delegate(&owner, &delegate, &empty).is_err());
+        assert_eq!(client.get_delegates(&owner).len(), 0);
+
+        // Exactly MAX_DELEGATE_PERMS permissions is allowed (limit is exclusive).
+        let mut max_perms: Vec<Symbol> = Vec::new(&env);
+        for _ in 0..MAX_DELEGATE_PERMS {
+            max_perms.push_back(sym(&env, "transfer"));
+        }
+        client.grant_delegate(&owner, &delegate, &max_perms);
+        assert_eq!(
+            client.get_delegate_permissions(&owner, &delegate).len(),
+            MAX_DELEGATE_PERMS
+        );
+
+        // Fill the owner to MAX_DELEGATES_PER_OWNER unique delegates.
+        let p = perms(&env, &["transfer"]);
+        for _ in 1..MAX_DELEGATES_PER_OWNER {
+            client.grant_delegate(&owner, &Address::generate(&env), &p);
+        }
+        assert_eq!(client.get_delegates(&owner).len(), MAX_DELEGATES_PER_OWNER);
+
+        // Re-granting an existing delegate at the cap succeeds, replaces the
+        // permissions and does not add a duplicate entry.
+        let p2 = perms(&env, &["approve"]);
+        assert!(client.try_grant_delegate(&owner, &delegate, &p2).is_ok());
+        assert_eq!(client.get_delegates(&owner).len(), MAX_DELEGATES_PER_OWNER);
+        assert_eq!(client.get_delegate_permissions(&owner, &delegate), p2);
+
+        // A new delegate at the cap is rejected and not stored.
+        let overflow = Address::generate(&env);
+        assert_eq!(
+            client.try_grant_delegate(&owner, &overflow, &p),
+            Err(Ok(MuxDelegationError::TooManyDelegates))
+        );
+        assert!(!client.get_delegates(&owner).contains(&overflow));
+    }
+
+    #[test]
     fn test_grant_delegate_requires_owner_auth() {
         let env = Env::default(); // no mock_all_auths
         let contract_id = env.register_contract(None, MuxDelegation);
@@ -617,6 +668,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_revoke_delegate_removes_grant_and_requires_owner_auth() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxDelegation);
+        let client = MuxDelegationClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let delegate = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        client.grant_delegate(&owner, &delegate, &perms(&env, &["transfer"]));
+        client.grant_delegate(&owner, &other, &perms(&env, &["transfer"]));
+
+        client.revoke_delegate(&owner, &delegate);
+
+        // Owner auth was demanded for the revoke call itself.
+        assert_eq!(env.auths()[0].0, owner);
+        // Only the revoked delegate is gone; permissions are cleared.
+        assert!(!client.is_delegate(&owner, &delegate, &symbol_short!("transfer")));
+        assert!(client.is_delegate(&owner, &other, &symbol_short!("transfer")));
+        assert_eq!(client.get_delegates(&owner), soroban_sdk::vec![&env, other]);
+        // A second revoke finds no grant.
+        assert_eq!(
+            client.try_revoke_delegate(&owner, &delegate),
+            Err(Ok(MuxDelegationError::NotADelegate))
+        );
+    }
+
     // ── get_delegate_permissions / is_delegate / check_delegate ──────────────
 
     #[test]
@@ -661,6 +740,40 @@ mod tests {
     }
 
     #[test]
+    fn test_is_delegate_read_only_no_auth_no_events() {
+        // No mock_all_auths: any require_auth in is_delegate would panic.
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxDelegation);
+        let client = MuxDelegationClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let delegate = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        // Failure path: no grant for the pair -> false, not an error.
+        assert!(!client.is_delegate(&owner, &delegate, &sym(&env, "transfer")));
+
+        // Seed a grant directly in storage so no grant event is emitted.
+        env.as_contract(&contract_id, || {
+            env.storage().persistent().set(
+                &DataKey::DelegatePerms(owner.clone(), delegate.clone()),
+                &perms(&env, &["transfer"]),
+            );
+        });
+
+        assert!(client.is_delegate(&owner, &delegate, &sym(&env, "transfer")));
+        // Permission absent from the grant, and other pairs, stay false.
+        assert!(!client.is_delegate(&owner, &delegate, &sym(&env, "withdraw")));
+        assert!(!client.is_delegate(&owner, &other, &sym(&env, "transfer")));
+        assert!(!client.is_delegate(&other, &delegate, &sym(&env, "transfer")));
+
+        assert_eq!(env.events().all().len(), 0);
+        assert_eq!(
+            client.get_delegate_permissions(&owner, &delegate),
+            perms(&env, &["transfer"])
+        );
+    }
+
+    #[test]
     fn test_check_delegate_ok_when_granted() {
         let env = Env::default();
         env.mock_all_auths();
@@ -688,6 +801,42 @@ mod tests {
 
         let result = client.try_check_delegate(&owner, &delegate, &sym(&env, "transfer"));
         assert_eq!(result, Err(Ok(MuxDelegationError::NotADelegate)));
+    }
+
+    #[test]
+    fn test_check_delegate_is_permission_and_pair_specific() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxDelegation);
+        let client = MuxDelegationClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let delegate = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        client.grant_delegate(&owner, &delegate, &perms(&env, &["transfer"]));
+
+        // Granted permission passes with exactly Ok(()).
+        assert_eq!(
+            client.try_check_delegate(&owner, &delegate, &sym(&env, "transfer")),
+            Ok(Ok(()))
+        );
+        // A permission not in the grant is rejected.
+        assert_eq!(
+            client.try_check_delegate(&owner, &delegate, &sym(&env, "burn")),
+            Err(Ok(MuxDelegationError::NotADelegate))
+        );
+        // A different delegate under the same owner is rejected.
+        assert_eq!(
+            client.try_check_delegate(&owner, &other, &sym(&env, "transfer")),
+            Err(Ok(MuxDelegationError::NotADelegate))
+        );
+
+        // Revoking removes access.
+        client.revoke_delegate(&owner, &delegate);
+        assert_eq!(
+            client.try_check_delegate(&owner, &delegate, &sym(&env, "transfer")),
+            Err(Ok(MuxDelegationError::NotADelegate))
+        );
     }
 
     // ── get_delegates ─────────────────────────────────────────────────────────
@@ -784,6 +933,46 @@ mod tests {
             result.is_err(),
             "link_contract_id must reject when admin auth is absent"
         );
+    }
+
+    #[test]
+    fn test_link_contract_id_auth_is_inline_and_independent_of_stored_admin() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxDelegation);
+        let client = MuxDelegationClient::new(&env, &contract_id);
+        let stored_admin = Address::generate(&env);
+        let other = Address::generate(&env);
+        let linked = Address::generate(&env);
+        client.initialize(&stored_admin);
+
+        // An address other than DataKey::Admin may be the authorizer, and
+        // the auth required is exactly that supplied address's.
+        client.link_contract_id(&other, &linked);
+        let auths = env.auths();
+        assert_eq!(auths.len(), 1);
+        assert_eq!(auths[0].0, other);
+        assert_eq!(client.get_contract_id(), Some(linked.clone()));
+
+        // The authorizer gains no privilege: it is not the stored admin, so
+        // it cannot re-link, and a second call with any admin and a new
+        // address fails without overwriting the write-once value.
+        let another = Address::generate(&env);
+        let result = client.try_link_contract_id(&stored_admin, &another);
+        assert_eq!(result, Err(Ok(MuxDelegationError::ContractIdAlreadySet)));
+        assert_eq!(client.get_contract_id(), Some(linked));
+    }
+
+    #[test]
+    fn test_link_contract_id_works_without_initialize() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxDelegation);
+        let client = MuxDelegationClient::new(&env, &contract_id);
+        let linked = Address::generate(&env);
+
+        client.link_contract_id(&Address::generate(&env), &linked);
+        assert_eq!(client.get_contract_id(), Some(linked));
     }
 
     #[test]

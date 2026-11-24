@@ -75,8 +75,12 @@ See [funded-deployer-key.md](funded-deployer-key.md) for key setup details.
 - [ ] `Cargo.lock` committed and up to date
 - [ ] Deploy script version pinned — confirm `git log scripts/deploy.sh` matches expected commit
 
-### Dry-Run Passed
+### Automated Checklist & Dry-Run Passed
 
+- [ ] Automated fail-closed checklist verification passes:
+  ```bash
+  bash scripts/check-mainnet-deploy-checklist.sh
+  ```
 - [ ] Dry-run executed successfully with production config:
   ```bash
   DEPLOYER_PRIVATE_KEY=$DEPLOYER_PRIVATE_KEY \
@@ -92,14 +96,16 @@ See [funded-deployer-key.md](funded-deployer-key.md) for key setup details.
 ### Final Checks at Deploy Time
 
 - [ ] `SOROBAN_NETWORK` confirmed as `mainnet` (not testnet/localnet)
+- [ ] Immutable mainnet deploy flag set: `export MUX_MAINNET_DEPLOY_FLAG=I_ACKNOWLEDGE_MAINNET_DEPLOY`
 - [ ] No unrelated staged changes in the working tree (`git status` clean)
 - [ ] Team notified that mainnet deploy is beginning (Slack/Discord/etc.)
 - [ ] Rollback plan reviewed — prior WASM hashes retained and documented
 
 ### Execute Deploy
 
-- [ ] Run deploy script:
+- [ ] Run deploy script with immutable flag:
   ```bash
+  MUX_MAINNET_DEPLOY_FLAG=I_ACKNOWLEDGE_MAINNET_DEPLOY \
   DEPLOYER_PRIVATE_KEY=S... \
   ADMIN_ADDRESS=G... \
   bash scripts/deploy.sh --network mainnet
@@ -187,9 +193,13 @@ All three sign-offs are required before the deployment window begins.
 
 ## Related
 
+- [Rollback Deploy Notes](rollback-deploy.md) — Rollback strategies and procedures
+- [Rollback Log Discipline](../ops/rollback-log.md) — Operational logging for rollback
+- [Security Policy](../SECURITY.md) — Security guidelines and rollback security
 - [Funded deployer key setup](funded-deployer-key.md)
 - [Deploy dry-run flag](../scripts/deploy.sh) — `--dry-run` usage
 - [WASM hash verification](../scripts/verify-wasm-hash.sh) — post-deploy hash check
+- [Upgrade verification](../scripts/verify-upgrade.sh) — Pre-upgrade authorization checks
 - [Audit prep](audit-prep.md) — pre-audit requirements
 - [Access Control Checklist](access-control-checklist.md)
 - [Architecture Overview](architecture-overview.md)

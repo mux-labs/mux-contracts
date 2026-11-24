@@ -54,6 +54,12 @@ assert_output_contains "dry-run plans mux-account::owner" "mux-account::owner" \
 assert_output_contains "dry-run --contract mux-account mentions account" "mux-account::owner" \
   bash "$SCRIPT" --dry-run --contract mux-account
 
+assert_output_contains "dry-run plans factory account count" "mux-account-factory::account_count" \
+  bash "$SCRIPT" --dry-run --contract mux-account-factory
+
+assert_output_contains "dry-run plans policy read" "mux-policy::get_daily_limit" \
+  bash "$SCRIPT" --dry-run --contract mux-policy --policy-wallet GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF
+
 # Unknown flag exits 2
 assert_exit "unknown flag exits 2" 2 \
   bash "$SCRIPT" --dry-run --not-a-real-flag

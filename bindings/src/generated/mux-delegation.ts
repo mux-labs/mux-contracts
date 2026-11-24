@@ -125,6 +125,73 @@ export class DelegationExpiryError extends Error {
   }
 }
 
+// ── Named-permission error codes ──────────────────────────────────────────────
+
+/**
+ * Stable error codes for named-permission grant/revoke failures.
+ *
+ * These are surfaced by the contract and mapped to typed errors by the client
+ * so callers can branch on a stable code rather than parsing free-form text.
+ *
+ * - `DELEGATION_UNAUTHORIZED` — caller is not owner/authorized delegate/guardian.
+ * - `DELEGATION_PERMISSION_UNKNOWN` — permission name is not in the allow-list.
+ * - `DELEGATION_PERMISSION_INVALID` — permission name is malformed/empty.
+ * - `DELEGATION_BATCH_TOO_LARGE` — batch exceeds the max permissions per call.
+ * - `DELEGATION_DELEGATE_REVOKED` — delegate was revoked/expired; deny-by-default.
+ * - `DELEGATION_RPC_UNAVAILABLE` — dependency outage; writes fail closed.
+ */
+export const DELEGATION_PERMISSION_ERROR_CODES = {
+  DELEGATION_UNAUTHORIZED: "DELEGATION_UNAUTHORIZED",
+  DELEGATION_PERMISSION_UNKNOWN: "DELEGATION_PERMISSION_UNKNOWN",
+  DELEGATION_PERMISSION_INVALID: "DELEGATION_PERMISSION_INVALID",
+  DELEGATION_BATCH_TOO_LARGE: "DELEGATION_BATCH_TOO_LARGE",
+  DELEGATION_DELEGATE_REVOKED: "DELEGATION_DELEGATE_REVOKED",
+  DELEGATION_RPC_UNAVAILABLE: "DELEGATION_RPC_UNAVAILABLE",
+} as const;
+
+export type DelegationPermissionErrorCode =
+  (typeof DELEGATION_PERMISSION_ERROR_CODES)[keyof typeof DELEGATION_PERMISSION_ERROR_CODES];
+
+/**
+ * Typed error thrown by named-permission grant/revoke operations.
+ *
+ * Carries a stable {@link DelegationPermissionErrorCode} plus an optional
+ * `correlationId` so ops can trace a failure across logs without exposing
+ * secrets or raw key material.
+ */
+export class DelegationPermissionError extends Error {
+  readonly code: DelegationPermissionErrorCode;
+  readonly correlationId?: string;
+
+  constructor(code: DelegationPermissionErrorCode, correlationId?: string) {
+    super(code);
+    this.name = "DelegationPermissionError";
+    this.code = code;
+    this.correlationId = correlationId;
+  }
+}
+
+/**
+ * Named permissions recognized by the delegation model.
+ *
+ * See `docs/delegation-permission-model.md` for the authoritative list and
+ * semantics. Granting an unknown name fails closed with
+ * `DELEGATION_PERMISSION_UNKNOWN`.
+ */
+export const DELEGATION_NAMED_PERMISSIONS = [
+  "spend",
+  "recover",
+  "admin",
+  "withdraw",
+  "sign",
+] as const;
+
+export type DelegationNamedPermission =
+  (typeof DELEGATION_NAMED_PERMISSIONS)[number];
+
+/** Maximum number of permissions accepted in a single grant/revoke batch. */
+export const DELEGATION_MAX_PERMISSIONS_PER_CALL = 32;
+
 // ── Event types ───────────────────────────────────────────────────────────────
 
 /**
@@ -227,6 +294,52 @@ export interface MuxDelegationClientOptions {
   contractId: string;
   networkPassphrase: string;
   rpcUrl: string;
+}
+
+// ── Named-permission grant/revoke types ───────────────────────────────────────
+
+/**
+ * Request to grant one or more named permissions from `owner` to `delegate`.
+ *
+ * `permissions` must be a non-empty subset of {@link DELEGATION_NAMED_PERMISSIONS}
+ * and at most {@link DELEGATION_MAX_PERMISSIONS_PER_CALL} entries. `expiresAt`
+ * (unix seconds), when provided, MUST be strictly in the future.
+ */
+export interface GrantPermissionsRequest {
+  owner: string;
+  delegate: string;
+  permissions: DelegationNamedPermission[];
+  /** Optional unix-seconds expiry; must be strictly in the future. */
+  expiresAt?: number;
+  /** Optional idempotency key to make retries safe. */
+  idempotencyKey?: string;
+  /** Optional correlation id propagated to logs/errors (never a secret). */
+  correlationId?: string;
+}
+
+/**
+ * Request to revoke one or more named permissions from `owner` to `delegate`.
+ *
+ * Revoking a permission that is not currently granted is a no-op (idempotent).
+ */
+export interface RevokePermissionsRequest {
+  owner: string;
+  delegate: string;
+  permissions: DelegationNamedPermission[];
+  /** Optional idempotency key to make retries safe. */
+  idempotencyKey?: string;
+  /** Optional correlation id propagated to logs/errors (never a secret). */
+  correlationId?: string;
+}
+
+/** Result of a successful grant/revoke call. */
+export interface PermissionMutationResult {
+  /** Transaction hash of the submitted operation. */
+  txHash: string;
+  /** Permissions that were effectively granted/revoked. */
+  permissions: DelegationNamedPermission[];
+  /** Correlation id echoed back for tracing. */
+  correlationId?: string;
 }
 
 // ── Client ────────────────────────────────────────────────────────────────────

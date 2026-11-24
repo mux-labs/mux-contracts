@@ -95,6 +95,23 @@ if ! curl --silent --fail --max-time 5 \
 fi
 echo "  ✓ getNetwork passed"
 
+# 4. Optional contract smoke: CI or operators can provide a deployed factory,
+# policy, signer, and policy wallet. Never guess IDs or submit writes here.
+if [[ "${RUN_CONTRACT_SMOKE:-false}" == "true" ]]; then
+  : "${SMOKE_SECRET_KEY:?RUN_CONTRACT_SMOKE=true requires SMOKE_SECRET_KEY}"
+  : "${POLICY_WALLET:?RUN_CONTRACT_SMOKE=true requires POLICY_WALLET}"
+  : "${LOCALNET_MUX_ACCOUNT_FACTORY_ID:?RUN_CONTRACT_SMOKE=true requires LOCALNET_MUX_ACCOUNT_FACTORY_ID}"
+  : "${LOCALNET_MUX_POLICY_ID:?RUN_CONTRACT_SMOKE=true requires LOCALNET_MUX_POLICY_ID}"
+  echo ""
+  echo "==> Running factory and policy simulate-only smoke checks..."
+  SOROBAN_NETWORK=localnet SECRET_KEY="$SMOKE_SECRET_KEY" \
+    bash scripts/local-invoke-smoke.sh --contract mux-account-factory
+  SOROBAN_NETWORK=localnet SECRET_KEY="$SMOKE_SECRET_KEY" \
+    POLICY_WALLET="$POLICY_WALLET" \
+    bash scripts/local-invoke-smoke.sh --contract mux-policy --policy-wallet "$POLICY_WALLET"
+  echo "  ✓ factory and policy smoke checks passed"
+fi
+
 echo ""
 echo "==> All smoke checks passed ✓"
 echo "Docker-compose localnet is functional and ready for contract deployment."

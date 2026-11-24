@@ -71,6 +71,7 @@ export type RegistryEvent =
 
 // Import shared RawSorobanEvent from factory-events to avoid duplication
 import type { RawSorobanEvent } from "./factory-events";
+import { normaliseData, resolveAddress, resolveSymbol, resolveString } from "./event-decode";
 
 // ── Parser ─────────────────────────────────────────────────────────────────────
 
@@ -125,51 +126,3 @@ export function parseRegistryEvent(event: RawSorobanEvent): RegistryEvent | null
 }
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
-
-function normaliseData(raw: unknown): unknown[] | null {
-  if (Array.isArray(raw)) return raw as unknown[];
-
-  if (raw && typeof raw === "object") {
-    const obj = raw as Record<string, unknown>;
-    if (Array.isArray(obj["vec"])) return obj["vec"] as unknown[];
-    if (Array.isArray(obj["_value"])) return obj["_value"] as unknown[];
-  }
-
-  if (typeof raw === "string") {
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed as unknown[];
-    } catch {
-      // Not JSON — fall through.
-    }
-  }
-
-  return null;
-}
-
-function resolveAddress(raw: unknown): string | null {
-  if (typeof raw === "string" && raw.startsWith("C")) return raw;
-  if (raw && typeof raw === "object") {
-    const obj = raw as Record<string, unknown>;
-    if (typeof obj["address"] === "string") return obj["address"];
-  }
-  return null;
-}
-
-function resolveSymbol(raw: unknown): string | null {
-  if (typeof raw === "string") return raw;
-  if (raw && typeof raw === "object") {
-    const obj = raw as Record<string, unknown>;
-    if (typeof obj["sym"] === "string") return obj["sym"];
-  }
-  return null;
-}
-
-function resolveString(raw: unknown): string | null {
-  if (typeof raw === "string") return raw;
-  if (raw && typeof raw === "object") {
-    const obj = raw as Record<string, unknown>;
-    if (typeof obj["string"] === "string") return obj["string"];
-  }
-  return null;
-}

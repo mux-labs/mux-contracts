@@ -139,4 +139,86 @@ describe('guardian N-of-M threshold specification', () => {
       expect(second).toEqual(first);
     });
   });
+
+  describe('RecoveryClient.cancelRecovery', () => {
+    let client: RecoveryClient;
+
+    beforeEach(() => {
+      client = new RecoveryClient({ owner });
+    });
+
+    it('allows the owner to cancel an in-flight recovery', async () => {
+      const result = await client.cancelRecovery(
+        { recoveryId: 'rec-1' },
+        { caller: owner },
+      );
+      expect(result.recoveryId).toBe('rec-1');
+      expect(result.status).toBe('cancelled');
+    });
+
+    it('denies a non-owner caller by default', async () => {
+      await expect(
+        client.cancelRecovery({ recoveryId: 'rec-1' }, { caller: stranger }),
+      ).rejects.toMatchObject({ code: RecoveryErrorCode.Unauthorized });
+    });
+
+    it('fails closed on an unknown recovery id', async () => {
+      await expect(
+        client.cancelRecovery({ recoveryId: 'missing' }, { caller: owner }),
+      ).rejects.toMatchObject({ code: RecoveryErrorCode.RecoveryNotFound });
+    });
+
+    it('is idempotent for a repeated cancel of the same recovery', async () => {
+      const first = await client.cancelRecovery(
+        { recoveryId: 'rec-1' },
+        { caller: owner },
+      );
+      const second = await client.cancelRecovery(
+        { recoveryId: 'rec-1' },
+        { caller: owner },
+      );
+      expect(second).toEqual(first);
+    });
+  });
+
+  describe('RecoveryClient.advanceRecovery', () => {
+    let client: RecoveryClient;
+
+    beforeEach(() => {
+      client = new RecoveryClient({ owner });
+    });
+
+    it('allows the owner to advance a recovery to the next stage', async () => {
+      const result = await client.advanceRecovery(
+        { recoveryId: 'rec-1' },
+        { caller: owner },
+      );
+      expect(result.recoveryId).toBe('rec-1');
+      expect(result.status).toBe('advanced');
+    });
+
+    it('denies a non-owner caller by default', async () => {
+      await expect(
+        client.advanceRecovery({ recoveryId: 'rec-1' }, { caller: stranger }),
+      ).rejects.toMatchObject({ code: RecoveryErrorCode.Unauthorized });
+    });
+
+    it('fails closed on an unknown recovery id', async () => {
+      await expect(
+        client.advanceRecovery({ recoveryId: 'missing' }, { caller: owner }),
+      ).rejects.toMatchObject({ code: RecoveryErrorCode.RecoveryNotFound });
+    });
+
+    it('is idempotent for a repeated advance of the same recovery', async () => {
+      const first = await client.advanceRecovery(
+        { recoveryId: 'rec-1' },
+        { caller: owner },
+      );
+      const second = await client.advanceRecovery(
+        { recoveryId: 'rec-1' },
+        { caller: owner },
+      );
+      expect(second).toEqual(first);
+    });
+  });
 });

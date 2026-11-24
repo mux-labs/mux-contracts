@@ -1,0 +1,11 @@
+{
+  "operations": [
+    {
+      "target": "C_REPLACE_WITH_TARGET_CONTRACT_ID",
+      "fnName": "owner",
+      "args": [],
+      "requireSuccess": true,
+      "kind": "Invoke"
+    }
+  ]
+}

@@ -11,7 +11,7 @@
 //!
 //! Run with: cargo test -p mux-contract-tests --test fixture_vectors
 
-use mux_account::{MuxAccount, MuxAccountClient, MuxAccountError};
+use mux_account::{MuxAccount, MuxAccountClient, MuxAccountError, Scope};
 use mux_batcher::{BatchOperationKind, MuxBatcher, MuxBatcherClient, MuxBatcherError, Operation};
 use mux_permissions::{MuxPermissions, MuxPermissionsClient, MuxPermissionsError};
 use serde_json::Value;
@@ -85,11 +85,83 @@ fn documented_constants_match_batcher_cap_getter() {
     );
 }
 
+/// mux-account's caps have no public getter, so they are cross-checked
+/// behaviourally: flooding to the documented cap succeeds and one past it
+/// fails closed with the corresponding error. Reads the cap values from
+/// `account_limit_vectors.json` so fixture drift fails this test.
+#[test]
+fn documented_constants_match_mux_account_caps() {
+    let limits = load(ACCOUNT_LIMIT_VECTORS_JSON);
+
+    let max_delegates =
+        limits["constants"]["mux_account"]["MAX_DELEGATES"].as_u64().unwrap() as u32;
+    let max_session_keys =
+        limits["constants"]["mux_account"]["MAX_SESSION_KEYS"].as_u64().unwrap() as u32;
+
+    let (env, client) = setup_account();
+    env.budget().reset_unlimited();
+
+    // ── Delegates: at cap succeeds, one past fails closed ──
+    for i in 0..max_delegates {
+        let delegate = Address::generate(&env);
+        assert!(
+            client
+                .try_set_delegate(&delegate, &1000_u64, &false)
+                .is_ok(),
+            "delegate {i} must succeed at cap"
+        );
+    }
+    let overflow_delegate = Address::generate(&env);
+    let result = client
+        .try_set_delegate(&overflow_delegate, &1000_u64, &false);
+    assert_eq!(
+        result,
+        Err(Ok(MuxAccountError::TooManyDelegates)),
+        "delegate {max} must fail closed with TooManyDelegates",
+        max = max_delegates + 1
+    );
+
+    // ── Session keys: at cap succeeds, one past fails closed ──
+    for i in 0..max_session_keys {
+        let sk = Address::generate(&env);
+        assert!(
+            client
+                .try_register_session_key(&sk, &(1_000_000_u64 + i as u64), &pay_scope(&env))
+                .is_ok(),
+            "session key {i} must succeed at cap"
+        );
+    }
+    let overflow_sk = Address::generate(&env);
+    let result = client.try_register_session_key(
+        &overflow_sk,
+        &2_000_000_u64,
+        &pay_scope(&env),
+    );
+    assert_eq!(
+        result,
+        Err(Ok(MuxAccountError::TooManySessionKeys)),
+        "session key {max} must fail closed with TooManySessionKeys",
+        max = max_session_keys + 1
+    );
+}
+
+/// Single-scope list granting the `pay` method, mirroring the contract's
+/// test helper so session-key happy-path registrations are valid.
+fn pay_scope(env: &Env) -> soroban_sdk::Vec<Scope> {
+    soroban_sdk::vec![
+        &env,
+        Scope {
+            method: symbol_short!("pay"),
+        },
+    ]
+}
+
 // ── mux_account: spend_limit vectors (tests/fixtures/test_vectors.json) ───────
 
 fn setup_account() -> (Env, MuxAccountClient<'static>) {
-    let env = Env::default();
-    env.mock_all_auths();
+    // Shared helper (issue #919): same `Env::default() + mock_all_auths`
+    // dance as before, imported from the crate's library target.
+    let env = mux_contract_tests::mock_env::make_env();
     let contract_id = env.register_contract(None, MuxAccount);
     let client = MuxAccountClient::new(&env, &contract_id);
     let owner = Address::generate(&env);

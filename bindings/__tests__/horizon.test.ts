@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SorobanRpc } from "@stellar/stellar-sdk";
 import {
   DEFAULT_MAX_ATTEMPTS,
+  NonRetryableRpcError,
   TransactionFailedError,
   TransactionTimeoutError,
   pollTransaction,
@@ -42,6 +43,21 @@ describe("pollTransaction Horizon/RPC reliability", () => {
     await expect(
       pollTransaction(server, "abc123", { intervalMs: 0, maxAttempts: 5 }),
     ).resolves.toBe(success);
+    expect(server.getTransaction).toHaveBeenCalledTimes(3);
+  });
+
+  it("retries an unrecognised transaction status through maxAttempts", async () => {
+    const unexpected = {
+      status: "DUPLICATE",
+    } as unknown as SorobanRpc.Api.GetTransactionResponse;
+    const server = makeServer([unexpected]);
+    const error = await pollTransaction(server, "myhash", {
+      intervalMs: 0,
+      maxAttempts: 3,
+    }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(TransactionTimeoutError);
+    expect(error).toMatchObject({ hash: "myhash", attempts: 3 });
     expect(server.getTransaction).toHaveBeenCalledTimes(3);
   });
 
@@ -96,5 +112,44 @@ describe("pollTransaction Horizon/RPC reliability", () => {
     await expect(pollTransaction(server, "hash", { intervalMs: -1 })).rejects.toThrow(
       "intervalMs must be a non-negative",
     );
+  });
+});
+
+/**
+ * Regression suite for #986: a malformed hash or a permanent RPC rejection
+ * must fail immediately instead of burning all `maxAttempts` retries.
+ */
+describe("pollTransaction — non-retryable errors (#986)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("fails fast on a permanent JSON-RPC rejection code (invalid params) instead of retrying", async () => {
+    const permanentError = Object.assign(new Error("invalid params"), { code: -32602 });
+    const server = makeServer([permanentError, success]);
+    const error = await pollTransaction(server, "myhash", {
+      intervalMs: 0,
+      maxAttempts: 5,
+    }).catch((e) => e);
+    expect(error).toBeInstanceOf(NonRetryableRpcError);
+    expect(server.getTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails fast on an HTTP 4xx-style rejection instead of retrying", async () => {
+    const rejection = Object.assign(new Error("bad request"), { status: 400 });
+    const server = makeServer([rejection, success]);
+    const error = await pollTransaction(server, "myhash", {
+      intervalMs: 0,
+      maxAttempts: 5,
+    }).catch((e) => e);
+    expect(error).toBeInstanceOf(NonRetryableRpcError);
+    expect(server.getTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it("still retries a transient transport error (no code/status) rather than treating it as permanent", async () => {
+    const transient = new Error("ECONNRESET");
+    const server = makeServer([transient, success]);
+    await expect(
+      pollTransaction(server, "myhash", { intervalMs: 0, maxAttempts: 3 }),
+    ).resolves.toBe(success);
+    expect(server.getTransaction).toHaveBeenCalledTimes(2);
   });
 });

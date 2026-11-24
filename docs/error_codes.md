@@ -1,167 +1,173 @@
-# Error Codes Reference
+# Error Codes
 
-This document provides a comprehensive reference for all error codes used within the Mux Protocol contracts.
+This document catalogues the error enums returned by the Mux Protocol
+contracts. Each section is keyed `<crate>::<EnumName>` and lists every
+variant with its stable numeric code.
 
-## Mux Account (`contracts/mux-account`)
+This file is machine-checked: `tests/error_codes_coverage.rs` parses the
+`pub enum *Error` declarations in every `contracts/*/src/lib.rs` and asserts
+set equality against the tables below. Adding, renaming, or removing a
+variant without updating this document fails the test.
 
-Errors are defined in `MuxAccountError` (`contracts/mux-account/src/lib.rs`).
+| Crate | Enum | Variants |
+|-------|------|----------|
+| mux-account | `MuxAccountError` | 15 |
+| mux-account-factory | `MuxAccountFactoryError` | 7 |
+| mux-batcher | `MuxBatcherError` | 8 |
+| mux-delegation | `MuxDelegationError` | 7 |
+| mux-permissions | `MuxPermissionsError` | 11 |
+| mux-policy | `MuxPolicyError` | 9 |
+| mux-recovery | `RecoveryError` | 15 |
+| mux-registry | `RegistryError` | 5 |
+| mux-registry | `MuxRegistryError` | 5 |
+| mux-spending-policy | `SpendingPolicyError` | 7 |
+| mux-wallet-registry | `WalletRegistryError` | 5 |
 
-| Variant | Code | HTTP | Description |
-|---|---|---|---|
-| `NotInitialized` | 1 | 500 | Contract not yet initialized; call `initialize` first |
-| `AlreadyInitialized` | 2 | 409 | `initialize` called more than once |
-| `Unauthorized` | 3 | 401 | Caller is not the owner or contract is paused |
-| `DelegateNotFound` | 4 | 404 | Delegate does not exist in the delegate map |
-| `DelegateExpired` | 5 | 400 | Delegate has expired (ledger timestamp >= `expires_at`) |
-| `SpendLimitExceeded` | 6 | 400 | Spend would exceed the configured per-asset limit |
-| `InvalidAmount` | 7 | 400 | Spend limit amount is zero or negative |
-| `InvalidPeriod` | 8 | 400 | Spend limit period is zero |
-| `TooManyDelegates` | 9 | 409 | Delegate map has reached `MAX_DELEGATES` (64) |
-| `ReentrancyDetected` | 10 | 409 | Reentrant `debit_spend` call detected |
-| `ArithmeticOverflow` | 11 | 500 | Arithmetic overflow in spend tracking |
-| `TooManySessionKeys` | 12 | 409 | Session key map has reached capacity |
-| `ScopeNotGranted` | 13 | 403 | Invoked method is not in the session key's `scopes` list |
-| `SponsorNotAuthorized` | 14 | 403 | Relayer is not on the account's sponsor allowlist |
-| `InvalidNonce` | 15 | 409 | Supplied nonce does not match the account's current nonce |
+## mux-account::MuxAccountError
 
-## Mux Account Factory (`contracts/mux-account-factory`)
+| Code | Variant | Description |
+|------|---------|-------------|
+| 1 | `NotInitialized` | `initialize()` has not been called on this instance. |
+| 2 | `AlreadyInitialized` | `initialize()` was called more than once. |
+| 3 | `Unauthorized` | The caller lacks the owner/admin/session authorization required for the operation. |
+| 4 | `DelegateNotFound` | No delegate record exists for the `(owner, delegate)` pair. |
+| 5 | `DelegateExpired` | The delegate's `expires_at` timestamp is in the past. |
+| 6 | `SpendLimitExceeded` | The requested spend exceeds the rolling limit for the window. |
+| 7 | `InvalidAmount` | The amount is non-positive or otherwise malformed. |
+| 8 | `InvalidPeriod` | The supplied period is zero or otherwise invalid. |
+| 9 | `TooManyDelegates` | The owner has reached the per-owner delegate cap. |
+| 10 | `ReentrancyDetected` | A reentrant call pattern was detected and rejected. |
+| 11 | `ArithmeticOverflow` | A checked arithmetic operation overflowed. |
+| 12 | `TooManySessionKeys` | The per-owner session-key cap has been reached. |
+| 13 | `ScopeNotGranted` | The session key's `scopes` do not authorize the target contract/method. `execute_with_session` fails closed with this variant when the target method is not explicitly listed in the session key's scopes (an empty scope list authorizes nothing). |
+| 14 | `SponsorNotAuthorized` | The sponsor is not authorized to sponsor this operation (not on the owner-managed relayer allowlist). |
+| 15 | `InvalidNonce` | The supplied nonce is stale, replayed, or out of order. |
 
-Errors are defined in `MuxAccountFactoryError` (`contracts/mux-account-factory/src/lib.rs`).
+## mux-account-factory::MuxAccountFactoryError
 
-| Variant | Code | HTTP | Description |
-|---|---|---|---|
-| `Unauthorized` | 1 | 401 | Caller is not the registered owner |
-| `InvalidAccount` | 2 | 400 | `account_address` must differ from `owner` |
-| `TooManyAccounts` | 3 | 409 | Owner has reached the 64-account cap |
-| `MetadataNotFound` | 4 | 404 | No metadata stored for the account |
-| `MetadataTooLarge` | 5 | 400 | A metadata field (`version`, `description`, or `author`) exceeds its size limit |
+| Code | Variant | Description |
+|------|---------|-------------|
+| 1 | `Unauthorized` | The caller is not the factory admin. |
+| 2 | `InvalidAccount` | The account address must differ from the owner address. |
+| 3 | `TooManyAccounts` | The per-owner account cap has been reached. |
+| 4 | `MetadataNotFound` | No metadata is stored for the requested account. |
+| 5 | `MetadataTooLarge` | The supplied metadata exceeds the size limit. |
+| 6 | `NotInitialized` | `upgrade()` was called before `initialize()`. |
+| 7 | `AlreadyInitialized` | `initialize()` was called more than once. |
 
-## Mux Batcher (`contracts/mux-batcher`)
+## mux-batcher::MuxBatcherError
 
-Errors are defined in `MuxBatcherError` (`contracts/mux-batcher/src/lib.rs`).
+| Code | Variant | Description |
+|------|---------|-------------|
+| 1 | `EmptyBatch` | The submitted batch contains no operations. |
+| 2 | `BatchTooLarge` | The batch exceeds `MAX_BATCH_SIZE`. |
+| 3 | `RequiredOperationFailed` | A required operation inside the batch failed. |
+| 4 | `Unauthorized` | The caller is not authorized to submit this batch. |
+| 5 | `ReentrancyDetected` | A reentrant call pattern was detected and rejected. |
+| 6 | `MetadataAlreadySet` | Registry metadata has already been set for this batcher. |
+| 7 | `NotInitialized` | `initialize()` has not been called. |
+| 8 | `AlreadyInitialized` | `initialize()` was called more than once. |
 
-| Variant | Code | HTTP | Description |
-|---|---|---|---|
-| `EmptyBatch` | 1 | 400 | The batch contains no operations |
-| `BatchTooLarge` | 2 | 400 | The batch exceeds the 50-operation cap |
-| `RequiredOperationFailed` | 3 | 500 | A required operation failed; the batch was aborted |
-| `Unauthorized` | 4 | 401 | `require_auth()` failed for the caller |
-| `ReentrancyDetected` | 5 | 409 | A reentrant call into the batcher was detected |
-| `MetadataAlreadySet` | 6 | 409 | Metadata has already been set for this batch |
-| `NotInitialized` | 7 | 500 | `upgrade` called before `initialize`; no admin to authorise it |
-| `AlreadyInitialized` | 8 | 409 | `initialize` called more than once |
+## mux-delegation::MuxDelegationError
 
-## Mux Delegation (`contracts/mux-delegation`)
+| Code | Variant | Description |
+|------|---------|-------------|
+| 6001 | `NotADelegate` | No grant exists for the `(owner, delegate)` pair. |
+| 6002 | `TooManyPermissions` | `permissions` exceeds the per-delegate cap. |
+| 6003 | `EmptyPermissions` | `permissions` is empty. |
+| 6004 | `TooManyDelegates` | The owner has reached the per-owner delegate cap. |
+| 6005 | `ContractIdAlreadySet` | `link_contract_id` was called after the id was already set. |
+| 6006 | `NotInitialized` | `upgrade` was called before `initialize`. |
+| 6007 | `AlreadyInitialized` | `initialize` was called more than once. |
 
-Errors are defined in `MuxDelegationError` (`contracts/mux-delegation/src/lib.rs`).
+## mux-permissions::MuxPermissionsError
 
-Note: This contract uses a non-sequential numbering scheme starting at 6001.
+| Code | Variant | Description |
+|------|---------|-------------|
+| 1 | `NotInitialized` | `initialize()` has not been called. |
+| 2 | `AlreadyInitialized` | `initialize()` was called more than once. |
+| 3 | `Unauthorized` | The caller lacks the required admin role. |
+| 4 | `RoleNotFound` | The requested role does not exist. |
+| 5 | `AccountNotInRole` | The account is not a member of the role. |
+| 6 | `PermissionNotFound` | The requested permission does not exist. |
+| 7 | `TooManyMembers` | The role has reached the member cap. |
+| 8 | `TooManyRoles` | The account has reached the role-count cap. |
+| 9 | `AdminNotFound` | The requested admin does not exist. |
+| 10 | `AlreadyApproved` | The pending admin change was already approved. |
+| 11 | `TooManyPendingAdmins` | The pending-admin queue is full. |
 
-| Variant | Code | HTTP | Description |
-|---|---|---|---|
-| `NotADelegate` | 6001 | 404 | The caller is not a delegate for the delegator |
-| `TooManyPermissions` | 6002 | 400 | Permission list exceeds the allowed maximum |
-| `EmptyPermissions` | 6003 | 400 | An empty permission list was provided |
-| `TooManyDelegates` | 6004 | 409 | Delegate list has reached capacity |
-| `ContractIdAlreadySet` | 6005 | 409 | `link_contract_id` called more than once |
-| `NotInitialized` | 6006 | 500 | `upgrade` called before `initialize`; no admin to authorise it |
-| `AlreadyInitialized` | 6007 | 409 | `initialize` called more than once |
+## mux-policy::MuxPolicyError
 
-## Mux Permissions (`contracts/mux-permissions`)
+| Code | Variant | Description |
+|------|---------|-------------|
+| 1 | `NotInitialized` | `initialize()` has not been called. |
+| 2 | `AlreadyInitialized` | `initialize()` was called more than once. |
+| 3 | `Unauthorized` | The caller is not the policy admin. |
+| 4 | `LimitNotFound` | No daily limit is configured for the wallet. |
+| 5 | `LimitExceeded` | The spend would exceed the wallet's daily limit. |
+| 6 | `InvalidAmount` | The amount is non-positive or otherwise malformed. |
+| 7 | `InvalidPeriod` | `day_ledgers` is zero. |
+| 8 | `TooManyWallets` | The wallet-limit table has reached its cap. |
+| 9 | `RegistryNotFound` | The linked registry contract is unreachable or not a valid mux-registry deployment. |
 
-Errors are defined in `MuxPermissionsError` (`contracts/mux-permissions/src/lib.rs`).
+## mux-recovery::RecoveryError
 
-| Variant | Code | HTTP | Description |
-|---|---|---|---|
-| `NotInitialized` | 1 | 500 | Contract not yet initialized |
-| `AlreadyInitialized` | 2 | 409 | `initialize` called more than once |
-| `Unauthorized` | 3 | 401 | Caller is not an authorized admin |
-| `RoleNotFound` | 4 | 404 | The specified role does not exist |
-| `AccountNotInRole` | 5 | 404 | Account is not a member of the role |
-| `PermissionNotFound` | 6 | 404 | The specified permission does not exist |
-| `TooManyMembers` | 7 | 409 | Role has too many members |
-| `TooManyRoles` | 8 | 409 | Account holds too many roles |
-| `AdminNotFound` | 9 | 404 | Pending admin not found |
-| `AlreadyApproved` | 10 | 409 | Approver has already approved this candidate |
-| `TooManyPendingAdmins` | 11 | 409 | Too many pending admin approvals |
+| Code | Variant | Description |
+|------|---------|-------------|
+| 1 | `NotInitialized` | `initialize()` has not been called. |
+| 2 | `AlreadyInitialized` | `initialize()` was called more than once. |
+| 3 | `Unauthorized` | The caller lacks the required owner/guardian authorization. |
+| 4 | `RecoveryAlreadyPending` | A recovery is already in progress. |
+| 5 | `NoActiveRecovery` | No recovery request is currently active. |
+| 6 | `TimelockNotExpired` | The recovery timelock has not yet elapsed. |
+| 7 | `TooManyGuardians` | The guardian set has reached its cap. |
+| 8 | `GuardianAlreadyExists` | The address is already a guardian. |
+| 9 | `GuardianNotFound` | The address is not a guardian. |
+| 10 | `MinGuardiansRequired` | Fewer than the minimum number of guardians are configured. |
+| 11 | `RecoveryExpired` | The recovery request outlived its validity window. |
+| 12 | `QuorumNotReached` | Guardian approvals have not reached the quorum threshold. |
+| 13 | `DuplicateApproval` | The guardian already approved this recovery. |
+| 14 | `InvalidQuorumThreshold` | The quorum threshold is out of range. |
+| 15 | `RegistryNotFound` | The address passed to `set_registry` failed cross-contract validation. |
 
-## Mux Policy (`contracts/mux-policy`)
+## mux-registry::RegistryError
 
-Errors are defined in `MuxPolicyError` (`contracts/mux-policy/src/lib.rs`).
+| Code | Variant | Description |
+|------|---------|-------------|
+| 1 | `NotInitialized` | The contract has not been initialised. |
+| 2 | `AlreadyInitialized` | The contract has already been initialised. |
+| 3 | `Unauthorized` | The caller is not the contract admin. |
+| 4 | `ContractNotFound` | No entry exists for the requested contract name. |
+| 5 | `InvalidVersion` | The supplied version string is empty or invalid. |
 
-| Variant | Code | HTTP | Description |
-|---|---|---|---|
-| `NotInitialized` | 1 | 500 | Contract not yet initialized |
-| `AlreadyInitialized` | 2 | 409 | `initialize` called more than once |
-| `Unauthorized` | 3 | 401 | Caller is not the admin |
-| `LimitNotFound` | 4 | 404 | No daily limit configured for the wallet |
-| `LimitExceeded` | 5 | 400 | Spend would exceed the daily limit |
-| `InvalidAmount` | 6 | 400 | Amount is zero or negative |
-| `InvalidPeriod` | 7 | 400 | `day_ledgers` is zero |
-| `TooManyWallets` | 8 | 409 | Wallet cap (256) reached |
+## mux-registry::MuxRegistryError
 
-## Mux Recovery (`contracts/mux-recovery`)
+| Code | Variant | Description |
+|------|---------|-------------|
+| 1 | `NotInitialized` | The contract has not been initialised. |
+| 2 | `AlreadyInitialized` | The contract has already been initialised. |
+| 3 | `Unauthorized` | The caller is not the contract admin. |
+| 4 | `ContractNotFound` | No entry exists for the requested contract name. |
+| 5 | `TooManyContracts` | The registry has reached the maximum number of registered contracts. |
 
-Errors are defined in `RecoveryError` (`contracts/mux-recovery/src/lib.rs`).
+## mux-spending-policy::SpendingPolicyError
 
-| Variant | Code | HTTP | Description |
-|---|---|---|---|
-| `NotInitialized` | 1 | 500 | Contract not yet initialized |
-| `AlreadyInitialized` | 2 | 409 | `initialize` called more than once |
-| `Unauthorized` | 3 | 401 | Caller is not an authorized admin |
-| `RecoveryAlreadyPending` | 4 | 409 | A recovery request is already pending for this account |
-| `NoActiveRecovery` | 5 | 404 | No recovery request found with the given ID |
-| `TimelockNotExpired` | 6 | 400 | Recovery timelock has not yet elapsed |
-| `TooManyGuardians` | 7 | 409 | Guardian cap (16) reached |
-| `GuardianAlreadyExists` | 8 | 409 | Address is already a registered guardian |
-| `GuardianNotFound` | 9 | 404 | Address is not a registered guardian |
-| `MinGuardiansRequired` | 10 | 400 | Cannot remove the last remaining guardian |
-| `RecoveryExpired` | 11 | 400 | Recovery execution window has elapsed |
+| Code | Variant | Description |
+|------|---------|-------------|
+| 1 | `NotInitialized` | The contract has not been initialized. |
+| 2 | `AlreadyInitialized` | The contract was already initialized. |
+| 3 | `Unauthorized` | The caller is not authorized to perform the requested action. |
+| 4 | `PolicyNotFound` | No spend policy exists for the requested account/asset pair. |
+| 5 | `SpendLimitExceeded` | The requested spend exceeds the configured policy limit. |
+| 6 | `InvalidInput` | The supplied input is invalid (for example a non-positive limit). |
+| 7 | `InvalidPeriod` | The supplied period is invalid (zero is not allowed). |
 
-## Mux Registry (`contracts/mux-registry`)
+## mux-wallet-registry::WalletRegistryError
 
-Errors are defined in `MuxRegistryError` (`contracts/mux-registry/src/lib.rs`).
-
-| Variant | Code | HTTP | Description |
-|---|---|---|---|
-| `NotInitialized` | 1 | 500 | Contract not yet initialized |
-| `AlreadyInitialized` | 2 | 409 | `initialize` called more than once |
-| `Unauthorized` | 3 | 401 | Caller is not the admin |
-| `ContractNotFound` | 4 | 404 | No contract registered under the given name |
-| `TooManyContracts` | 5 | 409 | Registry cap (128) reached |
-
-## Mux Spending Policy (`contracts/mux-spending-policy`)
-
-Errors are defined in `SpendingPolicyError` (`contracts/mux-spending-policy/src/lib.rs`).
-
-| Variant | Code | HTTP | Description |
-|---|---|---|---|
-| `NotInitialized` | 1 | 500 | Contract not yet initialized |
-| `AlreadyInitialized` | 2 | 409 | `initialize` called more than once |
-| `Unauthorized` | 3 | 401 | Caller is not the admin |
-| `PolicyNotFound` | 4 | 404 | No spend policy for the account/asset pair |
-| `SpendLimitExceeded` | 5 | 400 | Requested spend exceeds the configured limit |
-| `InvalidInput` | 6 | 400 | Limit is not positive or spend amount is negative |
-| `InvalidPeriod` | 7 | 400 | `period_ledgers` is zero |
-
-## Mux Wallet Registry (`contracts/mux-wallet-registry`)
-
-Errors are defined in `WalletRegistryError` (`contracts/mux-wallet-registry/src/lib.rs`).
-
-| Variant | Code | HTTP | Description |
-|---|---|---|---|
-| `NotInitialized` | 1 | 500 | The registry has not been initialized |
-| `AlreadyInitialized` | 2 | 409 | The registry has already been initialized |
-| `Unauthorized` | 3 | 401 | The caller is not the registry owner |
-| `WalletNotFound` | 4 | 404 | No wallet is registered under the given name |
-| `TooManyWallets` | 5 | 409 | Wallet registry capacity reached |
-
-## HTTP Status Code Conventions
-
-| Status | Category | Typical Error Names |
-|--------|----------|-------------------|
-| **401** | Authentication / authorization | `Unauthorized` |
-| **400** | Invalid input / constraint violation | `InvalidAmount`, `InvalidPeriod`, `SpendLimitExceeded`, `EmptyBatch`, `BatchTooLarge`, `DelegateExpired`, `InvalidInput` |
-| **404** | Resource not found | `*NotFound`, `*NotInRole`, `NotADelegate` |
-| **409** | State conflict / capacity limit | `AlreadyInitialized`, `TooMany*`, `ReentrancyDetected`, `RecoveryAlreadyPending`, `MetadataAlreadySet` |
-| **500** | Internal / uninitialized | `NotInitialized`, `ArithmeticOverflow`, `RequiredOperationFailed` |
+| Code | Variant | Description |
+|------|---------|-------------|
+| 1 | `NotInitialized` | `initialize` has not been called yet; the owner is unknown. |
+| 2 | `AlreadyInitialized` | `initialize` was called more than once on the same instance. |
+| 3 | `Unauthorized` | Reserved for future use; auth failures surface as host-level errors from `Address::require_auth`. |
+| 4 | `WalletNotFound` | No wallet is registered under the requested name. |
+| 5 | `TooManyWallets` | The registry has reached the maximum number of wallets. |

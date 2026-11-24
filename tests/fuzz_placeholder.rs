@@ -263,7 +263,7 @@ mod fuzz_account {
         let args: Vec<Val> = Vec::new(&env);
         let overflow_exec =
             client.try_execute_with_session(&overflow, &target, &pay, &args, &client.nonce());
-        assert_eq!(overflow_exec, Err(Ok(MuxAccountError::Unauthorized)));
+        assert_eq!(overflow_exec.unwrap_err(), Ok(MuxAccountError::Unauthorized));
 
         // Every key registered before the cap was hit must still authorize —
         // rejecting the flood must not have silently skipped or corrupted
@@ -312,6 +312,10 @@ mod fuzz_account {
 }
 
 /// mux-batcher: batch_execute size / emptiness invariants.
+/// The batch-size cap is read from `client.max_batch_size()` (the on-chain
+/// getter) rather than hard-coded, so the tests stay in sync if the cap ever
+/// changes. See `documented_constants_match_batcher_cap_getter` in
+/// `tests/fixture_vectors.rs`.
 #[cfg(test)]
 mod fuzz_batcher {
     use mux_batcher::{
@@ -320,15 +324,14 @@ mod fuzz_batcher {
     use soroban_sdk::{symbol_short, testutils::Address as _, Address, Env, Val, Vec};
     use soroban_test_helpers::assert_contract_err;
 
-    const MAX_BATCH_SIZE: u32 = 50;
-
-    fn setup() -> (Env, MuxBatcherClient<'static>, Address) {
+    fn setup() -> (Env, MuxBatcherClient<'static>, Address, u32) {
         let env = Env::default();
         env.mock_all_auths();
         let contract_id = env.register_contract(None, MuxBatcher);
         let client = MuxBatcherClient::new(&env, &contract_id);
         let caller = Address::generate(&env);
-        (env, client, caller)
+        let cap = client.max_batch_size();
+        (env, client, caller, cap)
     }
 
     fn make_ops(env: &Env, n: u32) -> Vec<Operation> {
@@ -348,7 +351,7 @@ mod fuzz_batcher {
     /// Invariant: empty batch is always rejected.
     #[test]
     fn empty_batch_rejected() {
-        let (env, client, caller) = setup();
+        let (env, client, caller, _cap) = setup();
         let ops = Vec::new(&env);
         assert_contract_err(
             client.try_execute_batch(&caller, &ops),
@@ -356,15 +359,16 @@ mod fuzz_batcher {
         );
     }
 
-    /// Invariant: batches larger than MAX_BATCH_SIZE are rejected for a sweep
-    /// of oversized lengths; in-bound sizes are accepted at the size gate.
+    /// Invariant: batches larger than `max_batch_size()` are rejected for a
+    /// sweep of oversized lengths; in-bound sizes are accepted at the size
+    /// gate, including a batch of exactly `max_batch_size()`.
     #[test]
     fn batch_size_gate_holds() {
-        let (env, client, caller) = setup();
+        let (env, client, caller, cap) = setup();
         env.budget().reset_unlimited();
 
         // Oversized
-        for n in [MAX_BATCH_SIZE + 1, MAX_BATCH_SIZE + 5, 100_u32, 255] {
+        for n in [cap + 1, cap + 5, 100_u32, 255] {
             let ops = make_ops(&env, n);
             assert_contract_err(
                 client.try_execute_batch(&caller, &ops),
@@ -374,7 +378,7 @@ mod fuzz_batcher {
 
         // In-bound sizes must pass the size gate (invocation of missing targets
         // may still count as soft failures when require_success=false).
-        for n in [1_u32, 2, 10, MAX_BATCH_SIZE] {
+        for n in [1_u32, 2, 10, cap] {
             let ops = make_ops(&env, n);
             let result = client.try_execute_batch(&caller, &ops);
             assert!(
@@ -382,24 +386,22 @@ mod fuzz_batcher {
                 "ops_count={n} should pass size gate: {result:?}"
             );
         }
-
-        assert_eq!(client.max_batch_size(), MAX_BATCH_SIZE);
     }
 
     /// Invariant: estimate_fees mirrors the execute_batch size gate.
     #[test]
     fn estimate_fees_mirrors_batch_gate() {
-        let (_, client, _) = setup();
+        let (_, client, _, cap) = setup();
 
         assert_contract_err(
             client.try_estimate_fees(&0_u32),
             MuxBatcherError::EmptyBatch,
         );
         assert_contract_err(
-            client.try_estimate_fees(&(MAX_BATCH_SIZE + 1)),
+            client.try_estimate_fees(&(cap + 1)),
             MuxBatcherError::BatchTooLarge,
         );
-        for n in [1_u32, 25, MAX_BATCH_SIZE] {
+        for n in [1_u32, 25, cap] {
             assert!(
                 client.try_estimate_fees(&n).is_ok(),
                 "estimate_fees({n}) should succeed"
@@ -409,14 +411,13 @@ mod fuzz_batcher {
 
     /// Invariant: `simulate_batch` mirrors the `execute_batch` size gate for a
     /// sweep of oversized lengths, without writing any state or invoking any
-    /// target contract. Closes the "no test for simulate_batch with an
-    /// oversized batch" gap tracked in docs/audit-prep.md.
+    /// target contract.
     #[test]
     fn simulate_batch_oversized_gate_holds() {
-        let (env, client, caller) = setup();
+        let (env, client, caller, cap) = setup();
         env.budget().reset_unlimited();
 
-        for n in [MAX_BATCH_SIZE + 1, MAX_BATCH_SIZE + 5, 100_u32, 255] {
+        for n in [cap + 1, cap + 5, 100_u32, 255] {
             let ops = make_ops(&env, n);
             assert_contract_err(
                 client.try_simulate_batch(&caller, &ops),
@@ -425,7 +426,7 @@ mod fuzz_batcher {
         }
 
         // In-bound sizes, including the boundary itself, must still pass.
-        for n in [1_u32, 2, 10, MAX_BATCH_SIZE] {
+        for n in [1_u32, 2, 10, cap] {
             let ops = make_ops(&env, n);
             let result = client.try_simulate_batch(&caller, &ops);
             assert!(
@@ -445,10 +446,10 @@ mod fuzz_batcher {
     /// the `execute_batch` size gate for a sweep of oversized lengths.
     #[test]
     fn submit_batch_oversized_gate_holds() {
-        let (env, client, _) = setup();
+        let (env, client, _, cap) = setup();
         env.budget().reset_unlimited();
 
-        for n in [MAX_BATCH_SIZE + 1, MAX_BATCH_SIZE + 5, 100_u32, 255] {
+        for n in [cap + 1, cap + 5, 100_u32, 255] {
             let ops = make_ops(&env, n);
             assert_contract_err(
                 client.try_submit_batch(&ops),
@@ -456,7 +457,7 @@ mod fuzz_batcher {
             );
         }
 
-        for n in [1_u32, 2, 10, MAX_BATCH_SIZE] {
+        for n in [1_u32, 2, 10, cap] {
             let ops = make_ops(&env, n);
             let result = client.try_submit_batch(&ops);
             assert!(
@@ -475,15 +476,14 @@ mod fuzz_batcher {
 /// mux-policy: daily spend window boundary and reset invariants.
 #[cfg(test)]
 mod fuzz_policy {
+    use mux_contract_tests::mock_env::{advance_ledger, make_env};
     use mux_policy::{MuxPolicy, MuxPolicyClient, MuxPolicyError};
-    use soroban_sdk::{
-        testutils::{Address as _, Ledger as _},
-        Address, Env,
-    };
+    use soroban_sdk::{testutils::Address as _, Address, Env};
 
     fn setup() -> (Env, MuxPolicyClient<'static>, Address) {
-        let env = Env::default();
-        env.mock_all_auths();
+        // Shared helper (issue #919): imported from the crate's library
+        // target instead of re-implementing the setup dance inline.
+        let env = make_env();
         let contract_id = env.register_contract(None, MuxPolicy);
         let client = MuxPolicyClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
@@ -539,7 +539,7 @@ mod fuzz_policy {
 
             // One ledger before the window elapses: spend still accumulates
             // in the same window, so a further 500 would exceed the limit.
-            env.ledger().with_mut(|l| l.sequence_number += day_ledgers - 1);
+            advance_ledger(&env, day_ledgers - 1);
             assert_eq!(
                 client.try_record_spend(&wallet, &500_i128),
                 Err(Ok(MuxPolicyError::LimitExceeded)),
@@ -547,7 +547,7 @@ mod fuzz_policy {
             );
 
             // At the window boundary: counter resets, so the same spend now succeeds.
-            env.ledger().with_mut(|l| l.sequence_number += 1);
+            advance_ledger(&env, 1);
             let result = client.try_record_spend(&wallet, &500_i128);
             assert!(
                 result.is_ok(),

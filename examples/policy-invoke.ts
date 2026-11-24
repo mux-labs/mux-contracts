@@ -27,6 +27,7 @@ import {
   TransactionBuilder,
   Operation,
   rpc,
+  xdr,
 } from "@stellar/stellar-sdk";
 
 // ── Configuration ────────────────────────────────────────────────────────────
@@ -36,6 +37,11 @@ const SERVER_SECRET_KEY = process.env.SERVER_SECRET_KEY;
 const SOROBAN_NETWORK = process.env.SOROBAN_NETWORK || "localnet";
 const CONTRACT_ADDRESS = process.env.CONTRACT_ADDRESS;
 const WALLET_ADDRESS = process.env.WALLET_ADDRESS;
+
+// The policy contract measures its daily window in ledgers, not wall-clock
+// time (see docs/policy-semantics.md: the `day_ledgers` unit). At the
+// expected ~5-second ledger close time, one day ≈ 17 280 ledgers.
+const DAY_LEDGERS = 17280;
 
 if (!SERVER_SECRET_KEY) {
   console.error("Error: SERVER_SECRET_KEY is not set");
@@ -142,9 +148,9 @@ async function invokeContract(
     ]);
     console.log("   Contract initialized. Ledger:", initResult.ledger);
 
-    // 2. Set a daily limit of 5000 units over ~1 day (17280 ledgers)
+    // 2. Set a daily limit of 5000 units over ~1 day (see DAY_LEDGERS above;
+    //    the contract's period unit is documented in docs/policy-semantics.md)
     console.log("\n2. Setting daily spend limit...");
-    const DAY_LEDGERS = 17280;
     const limitResult = await invokeContract("set_daily_limit", [
       nativeToScVal(WALLET_ADDRESS, { type: "address" }),
       nativeToScVal(BigInt(5000), { type: "i128" }),

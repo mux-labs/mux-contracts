@@ -90,7 +90,7 @@ TMPDIR_WASM="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_WASM"' EXIT
 
 FACTORY_WASM="${TMPDIR_WASM}/mux_account_factory.wasm"
-LIMIT=65536   # must match check-contract-sizes.sh
+LIMIT="${WASM_SIZE_BUDGET_BYTES:-65536}"   # must match check-contract-sizes.sh default
 
 # 2a. Missing WASM → script exits 0 and prints SKIP (missing artifacts are not fatal)
 assert_exit "missing WASM exits 0" 0 \
@@ -131,6 +131,28 @@ assert_output_contains "over-budget WASM prints FAIL" "FAIL" \
 # 2e. Output always includes mux_account_factory in the report
 python3 -c "open('${FACTORY_WASM}','wb').write(b'\\x00'*1024)"
 assert_output_contains "report includes mux_account_factory.wasm entry" "mux_account_factory" \
+  bash "$SIZE_SCRIPT" --wasm-dir "$TMPDIR_WASM"
+
+
+# ── Part 2f: Budget read from WASM_SIZE_BUDGET_BYTES env var ─────────────────
+
+echo ""
+echo "Part 2f: Budget consumed from WASM_SIZE_BUDGET_BYTES env var"
+
+# 2f-a. Custom budget via env var is honored: a 20 KiB wasm passes 64 KiB but
+#       fails a 10 KiB budget.
+CUSTOM_LIMIT=10240  # 10 KiB
+python3 -c "open('${FACTORY_WASM}','wb').write(b'\\x00'*20480)"  # 20 KiB
+assert_exit "over custom budget exits non-zero" 1 \
+  env WASM_SIZE_BUDGET_BYTES="$CUSTOM_LIMIT" bash "$SIZE_SCRIPT" --wasm-dir "$TMPDIR_WASM"
+assert_output_contains "over custom budget prints FAIL" "FAIL" \
+  env WASM_SIZE_BUDGET_BYTES="$CUSTOM_LIMIT" bash "$SIZE_SCRIPT" --wasm-dir "$TMPDIR_WASM"
+
+# 2f-b. Same 20 KiB wasm passes under default 64 KiB budget.
+python3 -c "open('${FACTORY_WASM}','wb').write(b'\\x00'*20480)"  # 20 KiB
+assert_exit "under default budget exits 0" 0 \
+  bash "$SIZE_SCRIPT" --wasm-dir "$TMPDIR_WASM"
+assert_output_contains "under default budget prints OK" "OK" \
   bash "$SIZE_SCRIPT" --wasm-dir "$TMPDIR_WASM"
 
 # ── Summary ───────────────────────────────────────────────────────────────────

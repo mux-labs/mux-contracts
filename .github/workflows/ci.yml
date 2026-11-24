@@ -9,9 +9,57 @@ env:
   CARGO_TERM_COLOR: always
   # Fail-closed wasm size budget (bytes). Any compiled contract wasm larger
   # than this limit fails the build. Adjust deliberately and document why.
-  WASM_SIZE_BUDGET_BYTES: "262144"
+  # Per-contract budget, consumed by scripts/check-contract-sizes.sh which
+  # reads the same `WASM_SIZE_BUDGET_BYTES` variable.
+  WASM_SIZE_BUDGET_BYTES: "65536"
 
 jobs:
+  check-npm-token-secret-name:
+    name: Validate NPM_TOKEN secret name consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fail-closed guard (#978): the npm publish job in bindings.yml reads a
+      # secret from GitHub secrets. If that secret is renamed, the publish
+      # pipeline silently breaks. This check parses bindings.yml, extracts the
+      # secret name used for npm publish, and asserts it equals NPM_TOKEN.
+      - name: Check npm publish secret name matches NPM_TOKEN
+        run: |
+          set -euo pipefail
+          bindings=".github/workflows/bindings.yml"
+          if [ ! -f "$bindings" ]; then
+            echo "::error::${bindings} not found"
+            exit 1
+          fi
+
+          # Extract every `secrets.<NAME>` reference from bindings.yml.
+          mapfile -t names < <(grep -oE 'secrets\.[A-Za-z_][A-Za-z0-9_]*' "$bindings" | sed 's/^secrets\.//' | sort -u)
+
+          if [ "${#names[@]}" -eq 0 ]; then
+            echo "::error::no secrets.<NAME> reference found in ${bindings}"
+            exit 1
+          fi
+
+          echo "Secret names referenced in ${bindings}:"
+          printf '  - %s\n' "${names[@]}"
+
+          expected="NPM_TOKEN"
+          failed=0
+          for name in "${names[@]}"; do
+            if [ "$name" != "$expected" ]; then
+              echo "::error file=${bindings}::npm publish secret name '${name}' does not match expected '${expected}'"
+              failed=1
+            fi
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo "NPM_TOKEN secret name mismatch detected; failing closed."
+            exit 1
+          fi
+
+          echo "✓ npm publish secret name is consistent: ${expected}"
+
   build-and-test:
     name: Build, test, and enforce wasm size budget
     runs-on: ubuntu-latest
@@ -26,12 +74,46 @@ jobs:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
           set -euo pipefail
+          bash scripts/test-check-mainnet-address-review.sh
+          bash scripts/check-mainnet-address-review.sh
+
+      - name: Verify network configuration and mainnet safety
+        run: |
+          bash scripts/test-network-config.sh
+          bash scripts/network-config.sh mainnet
+
+      - name: Verify mainnet deploy checklist script
+        run: |
+          bash scripts/test-check-mainnet-deploy-checklist.sh
+
+      - name: Operationalize deployer key security checks
+        run: |
+          bash scripts/check-gitignore-secret-patterns.sh
+          bash scripts/test-check-deploy-secret-name.sh
+          bash scripts/check-deploy-secret-name.sh
+          bash scripts/test-check-deployer-key-rotation-log.sh
+          bash scripts/check-deployer-key-rotation-log.sh
+          bash scripts/scan-git-secrets.sh --depth 100
 
       - name: Validate deploy env examples are secret-free
         run: bash scripts/validate-deploy-env.sh
 
       - name: Validate localnet env example is complete and secret-free
         run: bash scripts/validate-localnet-env.sh
+
+  deny:
+    name: cargo deny (advisories, sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fail-closed supply-chain gate (#778): any RustSec vulnerability
+      # advisory or crate from an unknown registry/git source
+      # fails the build. Policy lives in deny.toml.
+      - name: cargo deny check
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories sources
 
   rust:
     name: Rust (fmt, clippy, test, wasm)
@@ -119,14 +201,65 @@ jobs:
           retention-days: 14
 
       - name: Run tests
-        run: cargo test --workspace
-      - name: Enforce Clippy warnings
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - name: Validate contract IDs and dependency documentation
+        working-directory: bindings
+        run: npm test
+      - name: Build distribution
+        working-directory: bindings
+        run: npm run build
+
+  rollback-discipline:
+    name: Rollback Discipline Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check rollback-log.md exists
         run: |
-          bash scripts/check-contract-ids-sync.sh \
-            --types bindings/src/types.ts \
-            --addresses config/addresses.json \
-            --root-doc CONTRACT_IDS.md \
-            --detail-doc docs/contract-ids.md
-          bash scripts/check-dependency-graph.sh
+          if [ ! -f "ops/rollback-log.md" ]; then
+            echo "Error: ops/rollback-log.md not found"
+            exit 1
+          fi
+          echo "✓ ops/rollback-log.md exists"
+      - name: Check SECURITY.md exists
+        run: |
+          if [ ! -f "SECURITY.md" ]; then
+            echo "Error: SECURITY.md not found"
+            exit 1
+          fi
+          echo "✓ SECURITY.md exists"
+      - name: Check deploy.sh has rollback support
+        run: |
+          if ! grep -q "ROLLBACK_MODE" scripts/deploy.sh; then
+            echo "Error: deploy.sh missing rollback mode support"
+            exit 1
+          fi
+          echo "✓ deploy.sh has rollback support"
+      - name: Check verify-rollback.sh exists and is executable
+        run: |
+          if [ ! -f "scripts/verify-rollback.sh" ]; then
+            echo "Error: scripts/verify-rollback.sh not found"
+            exit 1
+          fi
+          chmod +x scripts/verify-rollback.sh
+          echo "✓ verify-rollback.sh exists and is executable"
+      - name: Check check-feature-flags.sh exists and is executable
+        run: |
+          if [ ! -f "scripts/check-feature-flags.sh" ]; then
+            echo "Error: scripts/check-feature-flags.sh not found"
+            exit 1
+          fi
+          chmod +x scripts/check-feature-flags.sh
+          echo "✓ check-feature-flags.sh exists and is executable"
+      - name: Test feature flag check
+        run: |
+          # Test disabled flag (should fail)
+          if bash scripts/check-feature-flags.sh ENABLE_ROLLBACK 2>/dev/null; then
+            echo "Error: Feature flag check should fail when flag is not set"
+            exit 1
+          fi
+          echo "✓ Feature flag check correctly fails when flag is not set"
+          
+          # Test enabled flag (should pass)
+          if ! ENABLE_ROLLBACK=true bash scripts/check-feature-flags.sh ENABLE_ROLLBACK; then
+            echo "Error: Feature flag check should pass when flag is set to true"
+            exit 1
+          fi

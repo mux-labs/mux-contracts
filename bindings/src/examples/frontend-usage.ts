@@ -23,6 +23,7 @@ import {
   type NetworkConfig,
   type MuxAccountError,
   type MuxBatcherError,
+  type MuxContractIds,
 } from ".."; // replace with "@mux-protocol/contracts" in your project
 
 // ---------------------------------------------------------------------------
@@ -30,16 +31,33 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * Returns the active NetworkConfig (RPC URL, passphrase, contract IDs).
- * Reads SOROBAN_NETWORK from the environment; falls back to "localnet".
+ * The result of `bootstrapNetwork`: the resolved network config, the
+ * validated contract addresses, and the network name that was resolved.
  */
-export function bootstrapNetwork(): NetworkConfig {
-  // Validate that all three contract addresses are populated before proceeding.
-  getValidatedAddresses(
-    process.env.SOROBAN_NETWORK ?? "localnet",
-    DEFAULT_ADDRESSES
-  );
-  return getNetworkConfig();
+export interface BootstrapResult {
+  /** Resolved network config (RPC URL, network passphrase, contract IDs). */
+  network: NetworkConfig;
+  /** Contract addresses validated for the resolved network. */
+  addresses: MuxContractIds;
+  /** Network name read from `SOROBAN_NETWORK` (defaults to "localnet"). */
+  networkName: string;
+}
+
+/**
+ * Returns the active NetworkConfig plus the validated contract addresses.
+ * Reads SOROBAN_NETWORK from the environment; falls back to "localnet".
+ * The resolved network name is surfaced so callers can log which network
+ * they are actually connected to.
+ */
+export function bootstrapNetwork(): BootstrapResult {
+  const networkName = process.env.SOROBAN_NETWORK ?? "localnet";
+  // Validate that all required contract addresses are populated before proceeding.
+  const addresses = getValidatedAddresses(networkName, DEFAULT_ADDRESSES);
+  return {
+    network: getNetworkConfig(),
+    addresses,
+    networkName,
+  };
 }
 
 // ---------------------------------------------------------------------------

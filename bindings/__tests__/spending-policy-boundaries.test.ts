@@ -12,6 +12,13 @@
  *   - period_ledgers == 0 -> InvalidPeriod (code 7)
  *   - period_ledgers == u32::MAX -> valid maximum period
  *   - auth precedence: unauthorized caller rejected before validation
+ *
+ * Issue #755 adds exact daily spend window reset timing tests:
+ *   - spend at the exact reset boundary (ledger == window_start + period)
+ *   - spend just before the boundary (window still active)
+ *   - spend just after the boundary (window reset, spent resets to 0)
+ *   - replayed/concurrent spends within and across window boundaries
+ *   - fail-closed behavior on limit exhaustion
  */
 
 import {
@@ -189,6 +196,180 @@ describe("In-memory policy check_spend boundary evaluation", () => {
   });
 });
 
+/**
+ * Issue #755: exact daily spend window reset timing.
+ *
+ * Models the on-chain window semantics: a policy tracks `window_start`
+ * (ledger) and `spent` (amount consumed in the current window). The
+ * window is active while `current_ledger < window_start + period_ledgers`.
+ * At or after the boundary the window resets: `spent` returns to 0 and
+ * `window_start` advances to the current ledger. Reset is fail-closed:
+ * a spend that would exceed the limit within an active window is rejected
+ * with SpendLimitExceeded and does not mutate `spent`.
+ */
+describe("Daily spend window reset exact timing (Issue #755)", () => {
+  interface WindowPolicy {
+    limit: bigint;
+    periodLedgers: number;
+    windowStart: number;
+    spent: bigint;
+  }
+
+  interface WindowState {
+    windowStart: number;
+    spent: bigint;
+  }
+
+  /**
+   * Evaluate a spend against the windowed policy, applying the exact
+   * reset boundary semantics. Returns the resulting state and outcome.
+   * On rejection the state is returned unchanged (fail-closed).
+   */
+  function evaluateWindowedSpend(
+    policy: WindowPolicy,
+    amount: bigint,
+    currentLedger: number
+  ): { ok: boolean; error?: string; state: WindowState } {
+    validateSpendAmountBoundaries(amount);
+
+    const boundary = policy.windowStart + policy.periodLedgers;
+    // Window is active strictly before the boundary; at/after it resets.
+    const windowActive = currentLedger < boundary;
+
+    const effectiveStart = windowActive ? policy.windowStart : currentLedger;
+    const effectiveSpent = windowActive ? policy.spent : 0n;
+
+    if (effectiveSpent + amount > policy.limit) {
+      return {
+        ok: false,
+        error: "SpendLimitExceeded",
+        state: { windowStart: policy.windowStart, spent: policy.spent },
+      };
+    }
+
+    return {
+      ok: true,
+      state: { windowStart: effectiveStart, spent: effectiveSpent + amount },
+    };
+  }
+
+  const basePolicy = (): WindowPolicy => ({
+    limit: 1000n,
+    periodLedgers: 100,
+    windowStart: 1000,
+    spent: 0n,
+  });
+
+  it("just before the boundary: window still active, spent accumulates", () => {
+    const policy = { ...basePolicy(), spent: 900n };
+    const res = evaluateWindowedSpend(policy, 100n, 1099);
+    expect(res.ok).toBe(true);
+    expect(res.state.windowStart).toBe(1000);
+    expect(res.state.spent).toBe(1000n);
+  });
+
+  it("just before the boundary: exceeding limit fails closed and does not mutate spent", () => {
+    const policy = { ...basePolicy(), spent: 900n };
+    const res = evaluateWindowedSpend(policy, 101n, 1099);
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe("SpendLimitExceeded");
+    expect(res.state.windowStart).toBe(1000);
+    expect(res.state.spent).toBe(900n);
+  });
+
+  it("exact boundary: window resets, spent returns to 0 before applying spend", () => {
+    const policy = { ...basePolicy(), spent: 1000n };
+    const res = evaluateWindowedSpend(policy, 1000n, 1100);
+    expect(res.ok).toBe(true);
+    expect(res.state.windowStart).toBe(1100);
+    expect(res.state.spent).toBe(1000n);
+  });
+
+  it("exact boundary: full limit is available again after reset", () => {
+    const policy = { ...basePolicy(), spent: 1000n };
+    const res = evaluateWindowedSpend(policy, 1000n, 1100);
+    expect(res.ok).toBe(true);
+    expect(res.state.spent).toBe(1000n);
+  });
+
+  it("exact boundary: one over the limit still fails closed after reset", () => {
+    const policy = { ...basePolicy(), spent: 1000n };
+    const res = evaluateWindowedSpend(policy, 1001n, 1100);
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe("SpendLimitExceeded");
+    expect(res.state.windowStart).toBe(1000);
+    expect(res.state.spent).toBe(1000n);
+  });
+
+  it("just after the boundary: window reset, spent starts fresh", () => {
+    const policy = { ...basePolicy(), spent: 1000n };
+    const res = evaluateWindowedSpend(policy, 500n, 1101);
+    expect(res.ok).toBe(true);
+    expect(res.state.windowStart).toBe(1101);
+    expect(res.state.spent).toBe(500n);
+  });
+
+  it("just after the boundary: new window enforces the limit independently", () => {
+    const policy = { ...basePolicy(), spent: 1000n };
+    const res = evaluateWindowedSpend(policy, 1001n, 1101);
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe("SpendLimitExceeded");
+  });
+
+  it("replayed spend within the same window is rejected once limit is exhausted", () => {
+    const policy = { ...basePolicy(), spent: 1000n };
+    const first = evaluateWindowedSpend(policy, 1n, 1050);
+    expect(first.ok).toBe(false);
+    expect(first.error).toBe("SpendLimitExceeded");
+    // Replay of the same request yields the same fail-closed outcome.
+    const replay = evaluateWindowedSpend(policy, 1n, 1050);
+    expect(replay.ok).toBe(false);
+    expect(replay.error).toBe("SpendLimitExceeded");
+    expect(replay.state.spent).toBe(1000n);
+  });
+
+  it("concurrent spends within a window cannot jointly exceed the limit", () => {
+    const policy = { ...basePolicy(), spent: 0n };
+    const a = evaluateWindowedSpend(policy, 600n, 1050);
+    expect(a.ok).toBe(true);
+    // Second concurrent spend sees the first's committed state.
+    const b = evaluateWindowedSpend(
+      { ...policy, windowStart: a.state.windowStart, spent: a.state.spent },
+      600n,
+      1050
+    );
+    expect(b.ok).toBe(false);
+    expect(b.error).toBe("SpendLimitExceeded");
+    expect(b.state.spent).toBe(600n);
+  });
+
+  it("spends across a window boundary reset and re-accumulate independently", () => {
+    const policy = { ...basePolicy(), spent: 0n };
+    const before = evaluateWindowedSpend(policy, 1000n, 1099);
+    expect(before.ok).toBe(true);
+    expect(before.state.spent).toBe(1000n);
+
+    // At the boundary the window resets, so a fresh full-limit spend is allowed.
+    const after = evaluateWindowedSpend(
+      { ...policy, windowStart: before.state.windowStart, spent: before.state.spent },
+      1000n,
+      1100
+    );
+    expect(after.ok).toBe(true);
+    expect(after.state.windowStart).toBe(1100);
+    expect(after.state.spent).toBe(1000n);
+  });
+
+  it("fail-closed on limit exhaustion: rejected spend leaves window state untouched", () => {
+    const policy = { ...basePolicy(), spent: 999n };
+    const res = evaluateWindowedSpend(policy, 2n, 1050);
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe("SpendLimitExceeded");
+    expect(res.state.windowStart).toBe(policy.windowStart);
+    expect(res.state.spent).toBe(policy.spent);
+  });
+});
+
 describe("Error code and HTTP mappings for spend boundaries", () => {
   it("spendingPolicyErrorMessage handles InvalidInput and code 6", () => {
     expect(spendingPolicyErrorMessage("InvalidInput")).toBe("invalid input");
@@ -205,9 +386,9 @@ describe("Error code and HTTP mappings for spend boundaries", () => {
     expect(spendingPolicyErrorMessage(5)).toBe("spend limit exceeded");
   });
 
-  it("maps boundary errors to HTTP 400 in ERROR_HTTP_MAP", () => {
-    expect(ERROR_HTTP_MAP.InvalidInput).toBe(400);
-    expect(ERROR_HTTP_MAP.InvalidPeriod).toBe(400);
-    expect(ERROR_HTTP_MAP.SpendLimitExceeded).toBe(400);
+  it("ERROR_HTTP_MAP maps spend boundary errors to client-safe statuses", () => {
+    expect(ERROR_HTTP_MAP["InvalidInput"]).toBe(400);
+    expect(ERROR_HTTP_MAP["InvalidPeriod"]).toBe(400);
+    expect(ERROR_HTTP_MAP["SpendLimitExceeded"]).toBe(403);
   });
 });

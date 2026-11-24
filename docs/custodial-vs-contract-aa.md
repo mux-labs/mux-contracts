@@ -181,6 +181,29 @@ If `mux-account` or `mux-policy` contracts are upgradeable:
 
 ---
 
+## Enforcement Gates (#775)
+
+Each gate below states where the decision is made. A gate marked **on-chain** cannot be bypassed by mux-backend, a relayer, or a client; the backend may pre-check it for UX but must treat the contract's answer as final.
+
+| Gate | Enforced by | Fail-closed behavior |
+|---|---|---|
+| Owner authorization for account writes | **on-chain** — `mux-account` `owner.require_auth()` | Missing signature aborts the transaction; no state or event change |
+| Spend limit per asset/period | **on-chain** — `mux-account::debit_spend`, `mux-policy::record_spend`, `mux-spending-policy::check_spend` | Over-limit or overflow returns a typed error; backend spend tracking is advisory only |
+| Delegate validity / expiry | **on-chain** — `expires_at` checked on every call | Expired or revoked delegate is rejected |
+| Session-key scopes | **on-chain** — `execute_with_session` | Empty scopes → `Unauthorized`; unlisted method → `ScopeNotGranted` |
+| Account pause (circuit breaker) | **on-chain** — `pause` / `unpause`, owner only | Paused account rejects all state-mutating execution paths |
+| Recovery | **on-chain** — `mux-recovery` quorum + timelock | Below quorum or before `executable_at` is rejected |
+| Relayer fee sponsorship | **backend** + on-chain sponsor allowlist | Backend refuses to relay when RPC/Horizon is unreachable; the contract still enforces scopes and limits |
+| API-key / JWT authentication | **backend** only | Requests without a valid credential are rejected before any transaction is built; credentials are never logged |
+| Idempotency of relayed submissions | **backend** (idempotency key) + on-chain nonce/sequence | A replayed submission fails on the nonce; the backend returns the original result |
+| Network selection (testnet vs mainnet) | **ops** — `scripts/network-config.sh`, [mainnet deploy checklist](MAINNET_DEPLOY_CHECKLIST.md) | Misconfigured network fails the CI mainnet safety check |
+
+**Invariant:** custodial convenience never widens on-chain authority. If a backend control and an on-chain control disagree, the on-chain result wins, and the backend must surface the contract error code unchanged (see [error_codes.md](error_codes.md)). The threat mapping for these gates is in [threat-model.md](threat-model.md) §5.1.
+
+**Rollback:** these gates are documentation of existing contract behavior; no contract code or mainnet state changes with this section.
+
+---
+
 ## Summary
 
 | Feature | Custodial AA | Contract AA (Mux) | Mux-Backend Split |

@@ -252,6 +252,28 @@ All contracts use **instance storage** (and, for `mux-policy` / `mux-delegation`
 | Drift check: committed bindings vs generated | CI `check-binding-drift` job |
 | RBAC admin-only mutation | `mux-permissions` |
 
+### 5.1 STRIDE → Controls Mapping (#776)
+
+Every threat in §4 is classified under one STRIDE category. This matrix maps each
+category to the controls in §5 that mitigate it and to the automated evidence that
+keeps the control from regressing. A new threat row must reuse one of these controls
+or add a new control **and** its evidence before merge (deny-by-default).
+
+| STRIDE | Threat IDs | Controls | Evidence (fail-closed gate) |
+|---|---|---|---|
+| **S**poofing | T-01, T-02, T-04, T-24, T-28, T-31, T-41 | `require_auth()` on the acting principal; M-of-N guardian quorum; delegate `expires_at`; write-once `link_contract_id` | Per-contract unauthorized-caller tests (no `mock_all_auths()`), see [audit-prep.md](audit-prep.md) §8 |
+| **T**ampering | T-06, T-09, T-10, T-12, T-14, T-15, T-16, T-27, T-32, T-34, T-37 | `checked_add` / `overflow-checks = true`; `require_success` rollback; registry fail-closed (`RegistryNotFound`); recovery timelock; npm provenance; pinned `Cargo.lock`; `cargo deny` advisories + sources policy (`deny.toml`) | `cargo test --workspace`; CI `deny` job; CI `check-binding-drift` job |
+| **R**epudiation | All write paths | Every successful state change emits a tagged Soroban event; failed calls emit nothing | [audit-events.md](audit-events.md); `bindings/__tests__/audit-events-gap.test.ts` |
+| **I**nformation Disclosure | T-13 | Reads return live storage state; no secrets or key material stored on-chain or in logs | `scripts/scan-git-secrets.sh`, `scripts/validate-deploy-env.sh` (CI `build-and-test`) |
+| **D**enial of Service | T-08, T-17…T-23, T-36, T-45…T-49, T-52 | `MAX_*` storage caps with dedicated errors; `MAX_BATCH_SIZE`; TTL extension on write; `RECOVERY_EXPIRY`; owner-only `pause` | `tests/fuzz_placeholder.rs`; cap tests listed in [audit-prep.md](audit-prep.md) §8; [storage-griefing.md](storage-griefing.md) |
+| **E**levation of Privilege | T-03, T-05, T-07, T-11, T-25, T-26, T-29, T-30, T-33, T-35, T-38, T-39, T-40, T-50, T-51 | Admin-only `require_admin`; stored-admin `upgrade()` gate with `NotInitialized` fail-closed; `DataKey::Executing` reentrancy guard; fail-closed session scopes; per-account circuit breaker; no global freeze backdoor | Unit tests named in §4 rows; `tests/threat_model_coverage.rs` |
+
+**Invariants**
+
+1. The contract is the source of truth for spends, recovery, and admin actions; no off-chain component can bypass an on-chain check ([custodial-vs-contract-aa.md](custodial-vs-contract-aa.md)).
+2. Every privileged entrypoint fails closed: missing auth, missing initialization, or an unreachable dependency returns a typed error from [error_codes.md](error_codes.md) and mutates nothing.
+3. No mainnet-affecting change ships without the [mainnet deploy checklist](MAINNET_DEPLOY_CHECKLIST.md) and a documented rollback ([rollback-guide.md](rollback-guide.md)).
+
 ---
 
 ## 6. Out-of-Scope / Residual Risks
@@ -279,3 +301,4 @@ All contracts use **instance storage** (and, for `mux-policy` / `mux-delegation`
 | 2026-05-30 | 0.1.2 | Added `docs/audit-prep.md` — scope, entry points, known limitations, auditor checklist |
 | 2026-08-26 | 0.2.0 | **Expanded to all ten production contracts** — previously covered only `mux-account`, `mux-batcher`, `mux-permissions`. Added §4.7 (factory), §4.8 (delegation), §4.9 (policy), §4.10 (recovery), §4.11 (registry), §4.12 (spending policy), §4.13 (wallet registry); added storage-griefing rows T-45…T-49; added T-40 fail-closed session-scope enforcement (`execute_with_session` rejects empty-scope keys) and its unit test; added threat-model coverage guard (`tests/threat_model_coverage.rs`) |
 | 2026-09-24 | 0.2.1 | Added §4.14 Emergency Pause and Freeze threats (T-50…T-52); documented architectural decision rejecting global freeze backdoor in favor of per-account self-custodial circuit breaker; cross-referenced `docs/pause-freeze-decision.md` (#845) |
+| 2026-09-28 | 0.2.2 | Added §5.1 STRIDE → controls mapping with invariants and CI evidence per category (#776) |

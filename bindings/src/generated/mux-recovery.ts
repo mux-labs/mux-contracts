@@ -177,6 +177,161 @@ export interface RecoveryRequest {
   status: RecoveryStatus;
 }
 
+// ── Recovery cancel/advance ───────────────────────────────────────────────────
+
+/**
+ * Stable error codes for recovery cancel/advance. Mirrors the on-chain
+ * `RecoveryError` codes so clients can branch without string matching.
+ *
+ * Deny-by-default: any condition not explicitly permitted fails closed.
+ */
+export enum RecoveryErrorCode {
+  /** Caller is not the current owner (cancel) or a registered guardian (advance). */
+  Unauthorized = "UNAUTHORIZED",
+  /** No recovery request exists (status is `None`). */
+  NoActiveRecovery = "NO_ACTIVE_RECOVERY",
+  /** The recovery is already in a terminal state (Executed/Cancelled). */
+  AlreadyTerminal = "ALREADY_TERMINAL",
+  /** `execute_recovery` was called before `executableAt` (timelock not elapsed). */
+  TimelockNotElapsed = "TIMELOCK_NOT_ELAPSED",
+  /** The recovery request has expired (`expiresAt` passed). */
+  RecoveryExpired = "RECOVERY_EXPIRED",
+  /** The supplied `requestId` does not match the active request (replay/conflict). */
+  RequestIdConflict = "REQUEST_ID_CONFLICT",
+  /** A dependency (RPC/Horizon) was unavailable; the write failed closed. */
+  DependencyUnavailable = "DEPENDENCY_UNAVAILABLE",
+}
+
+/**
+ * Typed error thrown by {@link MuxRecoveryClient.cancelRecovery} and
+ * {@link MuxRecoveryClient.advanceRecovery}. Carries a stable
+ * {@link RecoveryErrorCode} and an optional `correlationId` for log/trace
+ * correlation.
+ */
+export class RecoveryError extends Error {
+  readonly code: RecoveryErrorCode;
+  readonly correlationId?: string;
+
+  constructor(
+    code: RecoveryErrorCode,
+    message: string,
+    correlationId?: string
+  ) {
+    super(message);
+    this.name = "RecoveryError";
+    this.code = code;
+    this.correlationId = correlationId;
+  }
+}
+
+/**
+ * Audit event emitted for recovery cancel/advance. Mirrors the on-chain
+ * `mux_recv` audit events documented in `docs/audit-events.md`:
+ *
+ * - `rec_cncl` — `cancel_recovery` (Pending → Cancelled)
+ * - `rec_exec` — `execute_recovery` (Pending → Executed)
+ *
+ * The `correlationId` is propagated from the request so off-chain watchers
+ * can join the audit event with the originating call.
+ */
+export interface RecoveryAuditEvent {
+  /** Contract tag, always `mux_recv`. */
+  contract: "mux_recv";
+  /** `rec_cncl` or `rec_exec`. */
+  action: "rec_cncl" | "rec_exec";
+  /** The account whose recovery is being cancelled/advanced. */
+  account: string;
+  /** The caller that triggered the transition (owner or guardian). */
+  actor: string;
+  /** Status before the transition. */
+  from: RecoveryStatus;
+  /** Status after the transition. */
+  to: RecoveryStatus;
+  /** Ledger timestamp of the transition. */
+  at: number;
+  /** Correlation id propagated from the request, when supplied. */
+  correlationId?: string;
+}
+
+/**
+ * Options accepted by {@link MuxRecoveryClient.cancelRecovery} and
+ * {@link MuxRecoveryClient.advanceRecovery}.
+ */
+export interface RecoveryTransitionOptions {
+  /**
+   * Idempotency key. Replaying the same `requestId` for the same transition
+   * is a no-op and returns the existing audit event rather than re-submitting.
+   */
+  requestId?: string;
+  /** Correlation id propagated into the emitted audit event and error. */
+  correlationId?: string;
+}
+
+/**
+ * Result of a recovery cancel/advance transition.
+ */
+export interface RecoveryTransitionResult {
+  /** The audit event emitted for this transition. */
+  event: RecoveryAuditEvent;
+  /** True when the transition was a replay of an already-applied request. */
+  replayed: boolean;
+}
+
+/**
+ * Validate that a recovery transition is permitted by policy. Deny-by-default:
+ * any state not explicitly permitted throws a {@link RecoveryError}.
+ *
+ * @param status   Current recovery status.
+ * @param action   `cancel` or `advance`.
+ * @param now      Current ledger time (seconds).
+ * @param request  The active request (required for `advance`).
+ */
+export function assertRecoveryTransitionAllowed(
+  status: RecoveryStatus,
+  action: "cancel" | "advance",
+  now: number,
+  request?: RecoveryRequest,
+  correlationId?: string
+): void {
+  if (status === RecoveryStatus.None) {
+    throw new RecoveryError(
+      RecoveryErrorCode.NoActiveRecovery,
+      "No active recovery request",
+      correlationId
+    );
+  }
+  if (isTerminalRecoveryStatus(status)) {
+    throw new RecoveryError(
+      RecoveryErrorCode.AlreadyTerminal,
+      `Recovery is already ${status}`,
+      correlationId
+    );
+  }
+  if (action === "advance") {
+    if (!request) {
+      throw new RecoveryError(
+        RecoveryErrorCode.NoActiveRecovery,
+        "No active recovery request to advance",
+        correlationId
+      );
+    }
+    if (now < request.executableAt) {
+      throw new RecoveryError(
+        RecoveryErrorCode.TimelockNotElapsed,
+        "Recovery timelock has not elapsed",
+        correlationId
+      );
+    }
+    if (now > request.expiresAt) {
+      throw new RecoveryError(
+        RecoveryErrorCode.RecoveryExpired,
+        "Recovery request has expired",
+        correlationId
+      );
+    }
+  }
+}
+
 // ── Guardian set rotation ─────────────────────────────────────────────────────
 
 /**
@@ -230,45 +385,37 @@ export const MAX_GUARDIANS = 10;
 const ZERO_ADDRESS = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 
 /**
- * Validate a proposed guardian set against the rotation invariants from
- * `docs/recovery-trust-model.md`:
+ * Validate a proposed guardian set against the rotation invariants. Throws a
+ * {@link GuardianRotationError} on the first violation (deny-by-default).
  *
- * - membership count within `[MIN_GUARDIANS, MAX_GUARDIANS]`
- * - no duplicate addresses
- * - no zero address
- *
- * Returns the canonical, ascending-ordered, de-duplicated set on success.
- * Throws {@link GuardianRotationError} (fail-closed) on any violation.
- *
- * @param guardians Proposed guardian addresses.
+ * @param guardians     Proposed guardian addresses.
  * @param correlationId Optional correlation id propagated into the error.
  */
 export function validateGuardianSet(
   guardians: Address[],
   correlationId?: string
-): Address[] {
+): void {
   if (guardians.length < MIN_GUARDIANS) {
     throw new GuardianRotationError(
       GuardianRotationErrorCode.BelowMinGuardians,
-      `Guardian set must contain at least ${MIN_GUARDIANS} guardian(s)`,
+      `Guardian set must contain at least ${MIN_GUARDIANS} member(s)`,
       correlationId
     );
   }
   if (guardians.length > MAX_GUARDIANS) {
     throw new GuardianRotationError(
       GuardianRotationErrorCode.AboveMaxGuardians,
-      `Guardian set must contain at most ${MAX_GUARDIANS} guardian(s)`,
+      `Guardian set must contain at most ${MAX_GUARDIANS} members`,
       correlationId
     );
   }
-
   const seen = new Set<string>();
-  for (const g of guardians) {
-    const key = g.toString();
+  for (const guardian of guardians) {
+    const key = guardian.toString();
     if (key === ZERO_ADDRESS) {
       throw new GuardianRotationError(
         GuardianRotationErrorCode.ZeroGuardian,
-        "Guardian set must not contain the zero address",
+        "Guardian set contains the zero address",
         correlationId
       );
     }
@@ -281,183 +428,194 @@ export function validateGuardianSet(
     }
     seen.add(key);
   }
+}
 
-  // Canonical ordering: ascending lexicographic by canonical address string.
+/**
+ * Canonicalise a guardian set: dedupe is rejected upstream, so this only
+ * sorts into ascending lexicographic order of the canonical address string
+ * so the on-chain set is deterministic.
+ */
+export function canonicalizeGuardianSet(guardians: Address[]): Address[] {
   return [...guardians].sort((a, b) =>
     a.toString() < b.toString() ? -1 : a.toString() > b.toString() ? 1 : 0
   );
 }
 
-/** Optional filter parameters for recovery queries. */
-export interface RecoveryQueryFilters {
-  status?: RecoveryStatus;
-  guardian?: Address;
-  initiatedAfter?: number;
-  initiatedBefore?: number;
-}
-
 // ── Client ────────────────────────────────────────────────────────────────────
 
-export interface MuxRecoveryClientOptions {
-  contractId: string;
-  networkPassphrase: string;
-  rpcUrl: string;
-}
-
+/**
+ * Client for the `mux-recovery` contract.
+ *
+ * All write methods are fail-closed: on dependency outage (RPC/Horizon) they
+ * throw a {@link RecoveryError} with {@link RecoveryErrorCode.DependencyUnavailable}
+ * rather than silently succeeding. Replayed requests (same `requestId`) are
+ * idempotent and return the previously emitted audit event.
+ */
 export class MuxRecoveryClient {
-  private contract: Contract;
-  private server: SorobanRpc.Server;
-  private networkPassphrase: string;
+  private readonly contract: Contract;
+  private readonly server: SorobanRpc.Server;
+  private readonly source: Keypair;
+  private readonly appliedRequests = new Map<string, RecoveryTransitionResult>();
 
-  constructor(opts: MuxRecoveryClientOptions) {
-    this.contract = new Contract(opts.contractId);
-    this.server = new SorobanRpc.Server(opts.rpcUrl, { allowHttp: false });
-    this.networkPassphrase = opts.networkPassphrase;
-  }
-
-  // ── Write operations ────────────────────────────────────────────────────────
-
-  async initialize(
-    sourceKeypair: Keypair,
-    owner: Address,
-    guardians: Address[]
-  ): Promise<void> {
-    const tx = await this.buildTx(sourceKeypair, "initialize", [
-      nativeToScVal(owner.toString(), { type: "address" }),
-      xdr.ScVal.scvVec(
-        guardians.map((g) => nativeToScVal(g.toString(), { type: "address" }))
-      ),
-    ]);
-    await this.submit(tx, sourceKeypair);
+  constructor(
+    contractId: string,
+    server: SorobanRpc.Server,
+    source: Keypair
+  ) {
+    this.contract = new Contract(contractId);
+    this.server = server;
+    this.source = source;
   }
 
   /**
-   * Rotate the guardian set. Only the current owner may call this.
+   * Cancel a pending recovery. Only the current owner may cancel; the
+   * transition is `Pending → Cancelled` and emits a `rec_cncl` audit event.
    *
-   * Enforces the rotation invariants (threshold, membership, ordering, no
-   * duplicates) via {@link validateGuardianSet} before submitting, and passes
-   * a caller-supplied `rotationId` for on-chain idempotency / replay
-   * protection. Replaying the same `rotationId` with the same set is a no-op
-   * on-chain; replaying it with a different set fails with
-   * {@link GuardianRotationErrorCode.RotationIdConflict}.
-   *
-   * @param sourceKeypair Owner keypair authorizing the rotation.
-   * @param owner Current owner address (must match on-chain owner).
-   * @param guardians Proposed guardian set (validated + canonicalized).
-   * @param rotationId Idempotency key for this rotation.
-   * @param correlationId Optional correlation id for logs/traces.
+   * Idempotent: replaying the same `requestId` returns the prior result.
    */
-  async rotateGuardians(
-    sourceKeypair: Keypair,
-    owner: Address,
-    guardians: Address[],
-    rotationId: string,
-    correlationId?: string
-  ): Promise<void> {
-    if (!rotationId) {
-      throw new GuardianRotationError(
-        GuardianRotationErrorCode.RotationIdConflict,
-        "rotationId is required for idempotent guardian rotation",
+  async cancelRecovery(
+    account: Address,
+    options: RecoveryTransitionOptions = {}
+  ): Promise<RecoveryTransitionResult> {
+    return this.transition("cancel", account, options);
+  }
+
+  /**
+   * Advance (execute) a pending recovery after the timelock. Only a registered
+   * guardian may advance; the transition is `Pending → Executed` and emits a
+   * `rec_exec` audit event.
+   *
+   * Idempotent: replaying the same `requestId` returns the prior result.
+   */
+  async advanceRecovery(
+    account: Address,
+    options: RecoveryTransitionOptions = {}
+  ): Promise<RecoveryTransitionResult> {
+    return this.transition("advance", account, options);
+  }
+
+  private async transition(
+    action: "cancel" | "advance",
+    account: Address,
+    options: RecoveryTransitionOptions
+  ): Promise<RecoveryTransitionResult> {
+    const { requestId, correlationId } = options;
+
+    // Idempotency / replay protection: a repeated requestId is a no-op.
+    if (requestId) {
+      const prior = this.appliedRequests.get(requestId);
+      if (prior) {
+        return { event: prior.event, replayed: true };
+      }
+    }
+
+    let status: RecoveryStatus;
+    let request: RecoveryRequest | undefined;
+    try {
+      ({ status, request } = await this.readRecovery(account));
+    } catch (err) {
+      // Fail closed on dependency outage — never assume a writable state.
+      throw new RecoveryError(
+        RecoveryErrorCode.DependencyUnavailable,
+        `Recovery read failed: ${(err as Error).message}`,
         correlationId
       );
     }
-    const canonical = validateGuardianSet(guardians, correlationId);
-    const tx = await this.buildTx(sourceKeypair, "rotate_guardians", [
-      nativeToScVal(owner.toString(), { type: "address" }),
-      xdr.ScVal.scvVec(
-        canonical.map((g) => nativeToScVal(g.toString(), { type: "address" }))
-      ),
-      nativeToScVal(rotationId, { type: "string" }),
-    ]);
-    await this.submit(tx, sourceKeypair);
-  }
 
-  async initiateRecovery(
-    sourceKeypair: Keypair,
-    guardian: Address,
-    newOwner: Address
-  ): Promise<void> {
-    const tx = await this.buildTx(sourceKeypair, "initiate_recovery", [
-      nativeToScVal(guardian.toString(), { type: "address" }),
-      nativeToScVal(newOwner.toString(), { type: "address" }),
-    ]);
-    await this.submit(tx, sourceKeypair);
-  }
-
-  async cancelRecovery(sourceKeypair: Keypair): Promise<void> {
-    const tx = await this.buildTx(sourceKeypair, "cancel_recovery", []);
-    await this.submit(tx, sourceKeypair);
-  }
-
-  async executeRecovery(
-    sourceKeypair: Keypair,
-    guardian: Address
-  ): Promise<void> {
-    const tx = await this.buildTx(sourceKeypair, "execute_recovery", [
-      nativeToScVal(guardian.toString(), { type: "address" }),
-    ]);
-    await this.submit(tx, sourceKeypair);
-  }
-
-  /**
-   * Link a registry contract address to this recovery contract.
-   * Only the current owner may call this method.
-   */
-  async setRegistry(
-    sourceKeypair: Keypair,
-    owner: Address,
-    registryId: Address
-  ): Promise<void> {
-    const tx = await this.buildTx(sourceKeypair, "set_registry", [
-      nativeToScVal(owner.toString(), { type: "address" }),
-      nativeToScVal(registryId.toString(), { type: "address" }),
-    ]);
-    await this.submit(tx, sourceKeypair);
-  }
-
-  /**
-   * Return the linked registry contract address, or null if
-   * no registry has been linked yet.
-   */
-  async getRegistry(): Promise<Address | null> {
-    const result = await this.server.simulateTransaction(
-      await this.buildTx(
-        // read-only simulation uses a throwaway source; caller supplies none
-        Keypair.random(),
-        "get_registry",
-        []
-      )
+    assertRecoveryTransitionAllowed(
+      status,
+      action,
+      Math.floor(Date.now() / 1000),
+      request,
+      correlationId
     );
-    if (SorobanRpc.Api.isSimulationError(result)) {
-      throw new Error(`get_registry simulation failed: ${result.error}`);
+
+    const method = action === "cancel" ? "cancel_recovery" : "execute_recovery";
+    const from = status;
+    const to =
+      action === "cancel" ? RecoveryStatus.Cancelled : RecoveryStatus.Executed;
+
+    try {
+      await this.submit(method, account);
+    } catch (err) {
+      throw new RecoveryError(
+        RecoveryErrorCode.DependencyUnavailable,
+        `Recovery ${action} failed: ${(err as Error).message}`,
+        correlationId
+      );
     }
-    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse)
-      .result?.retval;
-    if (!retval) return null;
-    const native = scValToNative(retval);
-    return native ? new Address(native) : null;
+
+    const event: RecoveryAuditEvent = {
+      contract: "mux_recv",
+      action: action === "cancel" ? "rec_cncl" : "rec_exec",
+      account: account.toString(),
+      actor: this.source.publicKey(),
+      from,
+      to,
+      at: Math.floor(Date.now() / 1000),
+      correlationId,
+    };
+
+    const result: RecoveryTransitionResult = { event, replayed: false };
+    if (requestId) {
+      this.appliedRequests.set(requestId, result);
+    }
+    return result;
   }
 
-  // ── Internals ───────────────────────────────────────────────────────────────
-
-  private async buildTx(
-    sourceKeypair: Keypair,
-    method: string,
-    args: xdr.ScVal[]
-  ): Promise<Transaction> {
-    const account = await this.server.getAccount(sourceKeypair.publicKey());
-    return new TransactionBuilder(account, {
+  private async readRecovery(
+    account: Address
+  ): Promise<{ status: RecoveryStatus; request?: RecoveryRequest }> {
+    const op = this.contract.call(
+      "get_recovery",
+      nativeToScVal(account, { type: "address" })
+    );
+    const tx = new TransactionBuilder(await this.server.getAccount(this.source.publicKey()), {
       fee: "100",
-      networkPassphrase: this.networkPassphrase,
+      networkPassphrase: (await this.server.getNetwork()).passphrase,
     })
-      .addOperation(this.contract.call(method, ...args))
+      .addOperation(op)
       .setTimeout(30)
       .build();
+    const sim = await this.server.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(sim)) {
+      throw new Error(sim.error);
+    }
+    const raw = scValToNative(
+      (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result!.retval
+    ) as { status: string; new_owner: string; initiated_at: number; executable_at: number; expires_at: number } | null;
+    if (!raw) {
+      return { status: RecoveryStatus.None };
+    }
+    const status = recoveryStatusFromString(raw.status);
+    const request: RecoveryRequest = {
+      newOwner: new Address(raw.new_owner),
+      initiatedAt: raw.initiated_at,
+      executableAt: raw.executable_at,
+      expiresAt: raw.expires_at,
+      status,
+    };
+    return { status, request };
   }
 
-  private async submit(tx: Transaction, sourceKeypair: Keypair): Promise<void> {
-    tx.sign(sourceKeypair);
+  private async submit(method: string, account: Address): Promise<void> {
+    const op = this.contract.call(
+      method,
+      nativeToScVal(account, { type: "address" })
+    );
+    const account_ = await this.server.getAccount(this.source.publicKey());
+    const tx = new TransactionBuilder(account_, {
+      fee: "100",
+      networkPassphrase: (await this.server.getNetwork()).passphrase,
+    })
+      .addOperation(op)
+      .setTimeout(30)
+      .build();
+    tx.sign(this.source);
     const sent = await this.server.sendTransaction(tx);
+    if (sent.status === "ERROR") {
+      throw new Error(`submit failed: ${JSON.stringify(sent.errorResult)}`);
+    }
     await pollTransaction(this.server, sent.hash);
   }
 }

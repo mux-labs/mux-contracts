@@ -1,6 +1,6 @@
 Contact: mailto:security@mux-protocol.xyz
 Contact: https://github.com/mux-labs/mux-contracts/security/advisories/new
-Expires: 2027-01-01T00:00:00.000Z
+Expires: 2027-09-28T00:00:00.000Z
 # Encryption: Add PGP key URL when available
 Preferred-Languages: en
 Canonical: https://github.com/mux-labs/mux-contracts/blob/main/.well-known/security.txt

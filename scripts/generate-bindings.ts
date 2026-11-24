@@ -23,13 +23,18 @@
  *   - npx / ts-node available (devDependency in bindings/package.json)
  */
 
-import { execSync, ExecSyncOptions } from "child_process";
+import { execSync } from "child_process";
+import type { ExecSyncOptions } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const REPO_ROOT = path.resolve(__dirname, "..");
+const SCRIPT_PATH = process.argv[1];
+if (!SCRIPT_PATH) {
+  throw new Error("Unable to determine the generate-bindings.ts script path");
+}
+const REPO_ROOT = path.resolve(path.dirname(SCRIPT_PATH), "..");
 const WASM_DIR = path.join(
   REPO_ROOT,
   "target",
@@ -44,11 +49,14 @@ const ALL_CONTRACTS = [
   "mux-batcher",
   "mux-delegation",
   "mux-permissions",
+  "mux-policy",
   "mux-recovery",
   "mux-registry",
   "mux-spending-policy",
   "mux-wallet-registry",
 ] as const;
+
+const SUPPORTED_NETWORKS = ["testnet", "mainnet", "localnet"] as const;
 
 type ContractName = (typeof ALL_CONTRACTS)[number];
 
@@ -101,6 +109,12 @@ function parseArgs(argv: string[]): Options {
   ) {
     die(
       `Unknown contract: ${opts.contract}. Valid: ${ALL_CONTRACTS.join(", ")}`,
+    );
+  }
+
+  if (!(SUPPORTED_NETWORKS as readonly string[]).includes(opts.network)) {
+    die(
+      `Unknown network: ${opts.network}. Valid: ${SUPPORTED_NETWORKS.join(", ")}`,
     );
   }
 

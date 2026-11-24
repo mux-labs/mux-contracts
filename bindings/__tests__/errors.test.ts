@@ -177,6 +177,66 @@ describe("Error Mapping", () => {
         expect(response.statusCode).toBeLessThan(600);
       });
     });
+
+    it("handles all MuxPolicyError variants", () => {
+      const policyErrors: string[] = [
+        "NotInitialized",
+        "AlreadyInitialized",
+        "Unauthorized",
+        "LimitNotFound",
+        "LimitExceeded",
+        "InvalidAmount",
+        "InvalidPeriod",
+        "TooManyWallets",
+        "RegistryNotFound",
+      ];
+
+      policyErrors.forEach((error) => {
+        const response = contractErrorToHttp(error);
+        expect(response.statusCode).toBeGreaterThanOrEqual(400);
+        expect(response.statusCode).toBeLessThan(600);
+      });
+
+      // Caller-side policy rejections must be 4xx, not 500.
+      expect(ERROR_HTTP_MAP.LimitNotFound).toBeGreaterThanOrEqual(400);
+      expect(ERROR_HTTP_MAP.LimitNotFound).toBeLessThan(500);
+      expect(ERROR_HTTP_MAP.LimitExceeded).toBeGreaterThanOrEqual(400);
+      expect(ERROR_HTTP_MAP.LimitExceeded).toBeLessThan(500);
+      expect(ERROR_HTTP_MAP.RegistryNotFound).toBeGreaterThanOrEqual(400);
+      expect(ERROR_HTTP_MAP.RegistryNotFound).toBeLessThan(500);
+    });
+
+    it("handles all MuxRecoveryError variants", () => {
+      const recoveryErrors: string[] = [
+        "NotInitialized",
+        "AlreadyInitialized",
+        "Unauthorized",
+        "RecoveryAlreadyPending",
+        "NoActiveRecovery",
+        "TimelockNotExpired",
+        "TooManyGuardians",
+        "GuardianAlreadyExists",
+        "GuardianNotFound",
+        "MinGuardiansRequired",
+        "RecoveryExpired",
+        "QuorumNotReached",
+        "DuplicateApproval",
+        "InvalidQuorumThreshold",
+        "RegistryNotFound",
+      ];
+
+      recoveryErrors.forEach((error) => {
+        const response = contractErrorToHttp(error);
+        expect(response.statusCode).toBeGreaterThanOrEqual(400);
+        expect(response.statusCode).toBeLessThan(600);
+      });
+
+      // Timelock and quorum rejections are caller-side, must be 4xx.
+      expect(ERROR_HTTP_MAP.TimelockNotExpired).toBeGreaterThanOrEqual(400);
+      expect(ERROR_HTTP_MAP.TimelockNotExpired).toBeLessThan(500);
+      expect(ERROR_HTTP_MAP.QuorumNotReached).toBeGreaterThanOrEqual(400);
+      expect(ERROR_HTTP_MAP.QuorumNotReached).toBeLessThan(500);
+    });
   });
 
   describe("isContractError", () => {

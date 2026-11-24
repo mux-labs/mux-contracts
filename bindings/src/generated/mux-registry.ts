@@ -16,6 +16,17 @@ import {
 } from "@stellar/stellar-sdk";
 import { pollTransaction } from "../horizon";
 
+/**
+ * Version metadata for the mux-registry contract.
+ *
+ * `CONTRACT_VERSION` is the single source of truth for the version this
+ * generated binding was produced from. It MUST match the on-chain
+ * `contract_version()` entrypoint; `assertContractVersion` fails closed when
+ * they diverge so callers never silently operate against a mismatched
+ * contract.
+ */
+export const CONTRACT_VERSION = "1.0.0";
+
 export interface MuxRegistryClientOptions {
   contractId: string;
   networkPassphrase: string;
@@ -27,7 +38,30 @@ export type MuxRegistryError =
   | "AlreadyInitialized"
   | "Unauthorized"
   | "ContractNotFound"
-  | "TooManyContracts";
+  | "TooManyContracts"
+  | "VersionMismatch";
+
+/**
+ * Stable error code raised when the on-chain contract version does not match
+ * the version this binding was generated from. Fail-closed: callers must not
+ * proceed on a mismatch.
+ */
+export const VERSION_MISMATCH_ERROR_CODE = "VersionMismatch";
+
+export class MuxRegistryVersionMismatchError extends Error {
+  readonly code = VERSION_MISMATCH_ERROR_CODE;
+  readonly expected: string;
+  readonly actual: string;
+
+  constructor(expected: string, actual: string) {
+    super(
+      `mux-registry version mismatch: binding expects ${expected}, contract reports ${actual}`
+    );
+    this.name = "MuxRegistryVersionMismatchError";
+    this.expected = expected;
+    this.actual = actual;
+  }
+}
 
 export interface ContractMetadata {
   version: string;
@@ -79,6 +113,35 @@ export class MuxRegistryClient {
       nativeToScVal(author, { type: "string" }),
     ]);
     await this.submitAndRead<void>(tx, sourceKeypair);
+  }
+
+  /**
+   * Read the contract's own version metadata via the `contract_version`
+   * entrypoint. This is the authoritative on-chain value used for
+   * consistency checks against `CONTRACT_VERSION`.
+   */
+  async contractVersion(sourceKeypair: Keypair): Promise<string> {
+    const tx = await this.buildTx(sourceKeypair, "contract_version", []);
+    const result = await this.server.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(result)) {
+      throw new Error(`Simulation failed: ${result.error}`);
+    }
+    const retval = (result as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+    if (!retval) throw new Error("No return value");
+    return retval.value() as unknown as string;
+  }
+
+  /**
+   * Fail-closed version consistency check. Throws
+   * `MuxRegistryVersionMismatchError` (stable code `VersionMismatch`) when the
+   * on-chain version differs from the binding's `CONTRACT_VERSION`.
+   */
+  async assertContractVersion(sourceKeypair: Keypair): Promise<string> {
+    const actual = await this.contractVersion(sourceKeypair);
+    if (actual !== CONTRACT_VERSION) {
+      throw new MuxRegistryVersionMismatchError(CONTRACT_VERSION, actual);
+    }
+    return actual;
   }
 
   async getVersion(sourceKeypair: Keypair, name: string): Promise<string> {

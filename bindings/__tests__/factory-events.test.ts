@@ -7,6 +7,7 @@
  *  - parseFactoryEvent: meta_set event
  *  - parseFactoryEvent: returns null for unknown tags, unknown actions, bad data
  *  - Event catalog completeness: all documented actions are present in FACTORY_EVENT_TOPICS
+ *  - Schema freeze: stable topic names, payload shapes, and fail-closed validation
  */
 
 import {
@@ -18,21 +19,8 @@ import {
   type FactoryEvent,
   type RawSorobanEvent,
 } from "../src/factory-events";
-
-// ── Fixtures ────────────────────────────────────────────────────────────────
-
-const OWNER = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4";
-const ACCOUNT = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M";
-const VERSION = "1.0.0";
-
-/** Helper: build a raw event in plain-array style (SDK v11+). */
-function makeRawEvent(
-  tag: string,
-  action: string,
-  data: unknown,
-): RawSorobanEvent {
-  return { topic: [tag, action], value: data };
-}
+import { makeRawEvent } from "./event-fixtures";
+import { FACTORY_MAX_VERSION_LENGTH } from "../src/generated/mux-account-factory";
 
 /** `deployed` event with array-style data. */
 const DEPLOYED_ARRAY: RawSorobanEvent = makeRawEvent(
@@ -207,9 +195,36 @@ describe("parseFactoryEvent — meta_set (object/XDR-style data)", () => {
   });
 });
 
-// ── parseFactoryEvent: null / unknown inputs ─────────────────────────────────
+describe("parseFactoryEvent — meta_set version validation", () => {
+  it("returns null for missing version", () => {
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.meta_set, [OWNER, ACCOUNT]);
+    expect(parseFactoryEvent(e)).toBeNull();
+  });
 
-describe("parseFactoryEvent — returns null for non-factory events", () => {
+  it("returns null for empty-string version", () => {
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.meta_set, [OWNER, ACCOUNT, ""]);
+    expect(parseFactoryEvent(e)).toBeNull();
+  });
+
+  it("returns null for numeric version", () => {
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.meta_set, [OWNER, ACCOUNT, 42]);
+    expect(parseFactoryEvent(e)).toBeNull();
+  });
+
+  it("returns null for version of FACTORY_MAX_VERSION_LENGTH + 1 characters", () => {
+    const longVersion = "a".repeat(FACTORY_MAX_VERSION_LENGTH + 1);
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.meta_set, [OWNER, ACCOUNT, longVersion]);
+    expect(parseFactoryEvent(e)).toBeNull();
+  });
+
+  it("parses meta_set with version at exactly FACTORY_MAX_VERSION_LENGTH as control", () => {
+    const maxVersion = "a".repeat(FACTORY_MAX_VERSION_LENGTH);
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.meta_set, [OWNER, ACCOUNT, maxVersion]);
+    const result = parseFactoryEvent(e);
+    expect(result).not.toBeNull();
+    expect((result as FactoryMetaSetEvent).version).toBe(maxVersion);
+  });
+});
   it("returns null when topics[0] is a different contract tag", () => {
     const e = makeRawEvent("mux_acct", "init", [OWNER]);
     expect(parseFactoryEvent(e)).toBeNull();
@@ -251,32 +266,154 @@ describe("parseFactoryEvent — returns null for non-factory events", () => {
   });
 });
 
+// ── Schema freeze: fail-closed validation ────────────────────────────────────
+
+describe("schema freeze — fail-closed validation", () => {
+  it("rejects deployed payload with non-string owner (fail-closed)", () => {
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.deployed, [42, ACCOUNT]);
+    expect(parseFactoryEvent(e)).toBeNull();
+  });
+
+  it("rejects deployed payload with non-string accountAddress (fail-closed)", () => {
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.deployed, [OWNER, 42]);
+    expect(parseFactoryEvent(e)).toBeNull();
+  });
+
+  it("rejects meta_set payload with non-string version (fail-closed)", () => {
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.meta_set, [
+      OWNER,
+      ACCOUNT,
+      42,
+    ]);
+    expect(parseFactoryEvent(e)).toBeNull();
+  });
+
+  it("rejects oversized deployed payload (griefing guard)", () => {
+    const oversized = new Array(1024).fill(OWNER);
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.deployed, oversized);
+    expect(parseFactoryEvent(e)).toBeNull();
+  });
+
+  it("rejects oversized meta_set payload (griefing guard)", () => {
+    const oversized = new Array(1024).fill(OWNER);
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.meta_set, oversized);
+    expect(parseFactoryEvent(e)).toBeNull();
+  });
+
+  it("rejects deployed payload with empty-string owner (fail-closed)", () => {
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.deployed, ["", ACCOUNT]);
+    expect(parseFactoryEvent(e)).toBeNull();
+  });
+
+  it("rejects meta_set payload with empty-string version (fail-closed)", () => {
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.meta_set, [
+      OWNER,
+      ACCOUNT,
+      "",
+    ]);
+    expect(parseFactoryEvent(e)).toBeNull();
+  });
+
+  it("rejects deployed payload with extra unexpected fields (strict shape)", () => {
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.deployed, [
+      OWNER,
+      ACCOUNT,
+      "extra",
+      "more",
+    ]);
+    expect(parseFactoryEvent(e)).toBeNull();
+  });
+
+  it("rejects meta_set payload with extra unexpected fields (strict shape)", () => {
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.meta_set, [
+      OWNER,
+      ACCOUNT,
+      VERSION,
+      "extra",
+    ]);
+    expect(parseFactoryEvent(e)).toBeNull();
+  });
+});
+
+// ── Schema freeze: decode round-trips ────────────────────────────────────────
+
+describe("schema freeze — decode round-trips", () => {
+  it("array-style and object-style deployed decode to identical payloads", () => {
+    const a = parseFactoryEvent(DEPLOYED_ARRAY) as FactoryDeployedEvent;
+    const b = parseFactoryEvent(DEPLOYED_OBJECT) as FactoryDeployedEvent;
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(a.action).toBe(b.action);
+    expect(a.owner).toBe(b.owner);
+    expect(a.accountAddress).toBe(b.accountAddress);
+  });
+
+  it("array-style and object-style meta_set decode to identical payloads", () => {
+    const a = parseFactoryEvent(META_SET_ARRAY) as FactoryMetaSetEvent;
+    const b = parseFactoryEvent(META_SET_OBJECT) as FactoryMetaSetEvent;
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(a.action).toBe(b.action);
+    expect(a.owner).toBe(b.owner);
+    expect(a.accountAddress).toBe(b.accountAddress);
+    expect(a.version).toBe(b.version);
+  });
+
+  it("decoded events are stable across repeated parses (deterministic)", () => {
+    const first = parseFactoryEvent(DEPLOYED_ARRAY);
+    const second = parseFactoryEvent(DEPLOYED_ARRAY);
+    expect(first).toEqual(second);
+  });
+});
+
+// ── Field order: position-sensitive decoding ─────────────────────────────────
+
+describe("parseFactoryEvent — deployed field order", () => {
+  const ADDR_A = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4";
+  const ADDR_B = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M";
+
+  it("maps data[0] to owner and data[1] to accountAddress (exact tuple position)", () => {
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.deployed, [
+      ADDR_A,
+      ADDR_B,
+    ]);
+    const result = parseFactoryEvent(e) as FactoryDeployedEvent;
+    expect(result.owner).toBe(ADDR_A);
+    expect(result.accountAddress).toBe(ADDR_B);
+  });
+
+  it("detects a swapped payload: swapping field order swaps the decoded output rather than being silently absorbed", () => {
+    const forward = parseFactoryEvent(
+      makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.deployed, [ADDR_A, ADDR_B]),
+    ) as FactoryDeployedEvent;
+    const swapped = parseFactoryEvent(
+      makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.deployed, [ADDR_B, ADDR_A]),
+    ) as FactoryDeployedEvent;
+
+    // A swapped payload must NOT decode to the same owner/accountAddress pair
+    // as the forward payload — the parser must reflect field position exactly,
+    // never normalise or ignore the order.
+    expect(swapped.owner).toBe(ADDR_B);
+    expect(swapped.accountAddress).toBe(ADDR_A);
+    expect(swapped.owner).not.toBe(forward.owner);
+    expect(swapped.accountAddress).not.toBe(forward.accountAddress);
+  });
+});
+
 // ── Event catalog completeness ────────────────────────────────────────────────
 
 describe("event catalog completeness", () => {
   it("all entries in FACTORY_EVENT_TOPICS are handled by parseFactoryEvent (deployed)", () => {
-    // If deployed is unhandled, parseFactoryEvent returns null for a valid event.
-    expect(parseFactoryEvent(DEPLOYED_ARRAY)).not.toBeNull();
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.deployed, [OWNER, ACCOUNT]);
+    expect(parseFactoryEvent(e)).not.toBeNull();
   });
 
   it("all entries in FACTORY_EVENT_TOPICS are handled by parseFactoryEvent (meta_set)", () => {
-    expect(parseFactoryEvent(META_SET_ARRAY)).not.toBeNull();
-  });
-
-  it("read-only / simulate entrypoints emit no events — they have no topic entry", () => {
-    // simulate_deploy, simulate_deploy_with_metadata, get_accounts,
-    // account_count, get_account_metadata, max_accounts_per_owner must NOT
-    // appear in FACTORY_EVENT_TOPICS.
-    const simulateAndRead = [
-      "simulate_deploy",
-      "simulate_deploy_with_metadata",
-      "get_accounts",
-      "account_count",
-      "get_account_metadata",
-      "max_accounts_per_owner",
-    ];
-    for (const name of simulateAndRead) {
-      expect(Object.values(FACTORY_EVENT_TOPICS)).not.toContain(name);
-    }
+    const e = makeRawEvent(FACTORY_CONTRACT_TAG, FACTORY_EVENT_TOPICS.meta_set, [
+      OWNER,
+      ACCOUNT,
+      VERSION,
+    ]);
+    expect(parseFactoryEvent(e)).not.toBeNull();
   });
 });

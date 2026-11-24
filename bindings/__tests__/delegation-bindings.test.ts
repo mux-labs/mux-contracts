@@ -857,3 +857,44 @@ describe("Delegation bindings auth negatives (closes #796)", () => {
     });
   });
 });
+
+// ── DelegationExpiryError shape (closes #917) ─────────────────────────────────
+
+describe("DelegationExpiryError — code and correlationId (closes #917)", () => {
+  it("preserves code for every DELEGATION_EXPIRY_ERROR_CODES value", () => {
+    for (const code of Object.values(DELEGATION_EXPIRY_ERROR_CODES)) {
+      const err = new DelegationExpiryError(code);
+      expect(err.code).toBe(code);
+    }
+  });
+
+  it("correlationId is undefined when omitted", () => {
+    const err = new DelegationExpiryError(DELEGATION_EXPIRY_ERROR_CODES.DELEGATION_EXPIRED);
+    expect(err.correlationId).toBeUndefined();
+  });
+
+  it("correlationId is preserved when supplied", () => {
+    const err = new DelegationExpiryError(
+      DELEGATION_EXPIRY_ERROR_CODES.DELEGATION_NOT_FOUND,
+      "trace-abc-123",
+    );
+    expect(err.correlationId).toBe("trace-abc-123");
+  });
+
+  it("name is 'DelegationExpiryError'", () => {
+    const err = new DelegationExpiryError(DELEGATION_EXPIRY_ERROR_CODES.DELEGATION_REVOKED);
+    expect(err.name).toBe("DelegationExpiryError");
+  });
+
+  it("is an instanceof Error", () => {
+    const err = new DelegationExpiryError(DELEGATION_EXPIRY_ERROR_CODES.DELEGATION_EXPIRY_INVALID);
+    expect(err).toBeInstanceOf(Error);
+  });
+
+  it("preserves each code value verbatim", () => {
+    expect(new DelegationExpiryError("DELEGATION_EXPIRED").code).toBe("DELEGATION_EXPIRED");
+    expect(new DelegationExpiryError("DELEGATION_REVOKED").code).toBe("DELEGATION_REVOKED");
+    expect(new DelegationExpiryError("DELEGATION_NOT_FOUND").code).toBe("DELEGATION_NOT_FOUND");
+    expect(new DelegationExpiryError("DELEGATION_EXPIRY_INVALID").code).toBe("DELEGATION_EXPIRY_INVALID");
+  });
+});

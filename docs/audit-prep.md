@@ -241,6 +241,10 @@ Workspace-level tests, run via `cargo test -p mux-contract-tests`:
 
 TypeScript side: `bindings/__tests__/test-vectors.test.ts` loads the same two fixture files and cross-checks every `expect.err` / `expect.code` against `muxAccountErrorMessage` / `muxBatcherErrorMessage` / `muxPermissionsErrorMessage` in `bindings/src/types.ts`, so a fixture and a binding drifting apart fails CI on both sides.
 
+TypeScript doc/implementation guard: `bindings/__tests__/audit-events-gap.test.ts` fails CI if [audit-events.md](audit-events.md) is missing a per-contract section or contract tag, if the `mux-policy` / `mux-registry` event tables drift from the implementation, or if `mux-policy` / `mux-registry` lose their `require_admin` → `require_auth` gate or gain a `panic!` / `todo!`. Run it with `cd bindings && npx vitest run __tests__/audit-events-gap.test.ts`.
+
+Supply chain: `cargo deny check` (`make deny`) enforces [`deny.toml`](../deny.toml); the CI `deny` job fails the build on any RustSec vulnerability advisory, unknown registry, or unknown git source.
+
 ### Coverage gaps (known before audit)
 
 - Unauthorized-caller coverage is enforced for the principal write paths in `mux-account`, `mux-account-factory`, `mux-batcher`, `mux-delegation`, `mux-permissions`, `mux-policy`, `mux-recovery`, `mux-registry`, `mux-spending-policy`, and `mux-wallet-registry`. These tests deliberately omit `mock_all_auths()` after setup and assert rejection plus no state/event mutation. New write paths must add the same negative test before merging.
@@ -256,6 +260,8 @@ TypeScript side: `bindings/__tests__/test-vectors.test.ts` loads the same two fi
 | [access-control-checklist.md](access-control-checklist.md) | Pre-deployment and pre-audit checklist |
 | [storage-griefing.md](storage-griefing.md) | Storage cap rationale, TTL constants, keeper runbook |
 | [audit-events.md](audit-events.md) | On-chain event schema for all contracts |
+| [custodial-vs-contract-aa.md](custodial-vs-contract-aa.md) | On-chain vs backend enforcement gates |
+| [`deny.toml`](../deny.toml) | Supply-chain advisory, license, and source policy |
 
 ---
 
@@ -274,4 +280,7 @@ Items the audit team should verify independently:
 - [ ] No contract reads or writes another contract's storage directly.
 - [ ] Release WASM does not include `testutils` or `#[cfg(test)]` code (run `make check-no-testutils`; see [no-testutils-wasm.md](no-testutils-wasm.md)).
 - [ ] Error discriminants start at 1; no variant uses 0.
+- [ ] `bindings/__tests__/audit-events-gap.test.ts` passes and every write path in §5 has an event row in [audit-events.md](audit-events.md).
+- [ ] `cargo deny check` passes with no unreviewed entries in `deny.toml` `ignore`.
+- [ ] STRIDE → controls mapping in [threat-model.md](threat-model.md) §5.1 covers every threat ID in §4.
 - [ ] Known limitations in §6 are acceptable for the current deployment scope.
