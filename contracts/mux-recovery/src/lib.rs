@@ -726,6 +726,8 @@ impl MuxRecovery {
 
 #[cfg(test)]
 mod tests {
+    extern crate alloc;
+
     use super::*;
     use soroban_sdk::{
         symbol_short,
@@ -755,6 +757,88 @@ mod tests {
         let guardian = Address::generate(&env);
         client.initialize(&owner, &vec![&env, guardian.clone()], &1_u32);
         (env, client, owner, guardian)
+    }
+
+    #[test]
+    fn test_upgrade_before_initialize_returns_not_initialized() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxRecovery);
+        let client = MuxRecoveryClient::new(&env, &contract_id);
+        let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+        assert_eq!(
+            client.try_upgrade(&fake_hash),
+            Err(Ok(RecoveryError::NotInitialized))
+        );
+    }
+
+    #[test]
+    fn test_upgrade_requires_owner_authorization() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxRecovery);
+        let client = MuxRecoveryClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        env.as_contract(&contract_id, || {
+            env.storage().instance().set(&DataKey::Owner, &owner);
+        });
+        let fake_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+        assert!(
+            client.try_upgrade(&fake_hash).is_err(),
+            "upgrade must reject when owner authorization is absent"
+        );
+    }
+
+    #[test]
+    fn test_upgrade_preserves_recovery_storage_and_extends_instance_ttl() {
+        let (env, client, owner, guardian) = setup();
+        let registry_id = Address::generate(&env);
+        let recovery = RecoveryRequest {
+            new_owner: Address::generate(&env),
+            initiated_at: env.ledger().sequence(),
+            executable_at: env.ledger().sequence() + RECOVERY_TIMELOCK,
+            expires_at: env.ledger().sequence() + RECOVERY_EXPIRY,
+            status: RecoveryStatus::Cancelled,
+            approvals: vec![&env, guardian.clone()],
+        };
+        env.as_contract(&client.address, || {
+            env.storage()
+                .instance()
+                .set(&DataKey::RegistryId, &registry_id);
+            env.storage().instance().set(&DataKey::Recovery, &recovery);
+        });
+        assert_eq!(client.recovery_status(), RecoveryStatus::Cancelled);
+
+        env.ledger()
+            .with_mut(|ledger| ledger.sequence_number += TTL_EXTEND_TO - 1_000);
+        let ttl_before = env.as_contract(&client.address, || env.storage().instance().get_ttl());
+        assert!(ttl_before < TTL_THRESHOLD);
+
+        let mut wasm = alloc::vec![
+            0x00u8, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x00, 0x1e, 0x11,
+        ];
+        wasm.extend_from_slice(b"contractenvmetav0");
+        wasm.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 21, 0, 0, 0, 0]);
+        let new_hash = env
+            .deployer()
+            .upload_contract_wasm(soroban_sdk::Bytes::from_slice(&env, &wasm));
+        client.upgrade(&new_hash);
+
+        env.as_contract(&client.address, || {
+            let stored_owner: Address = env.storage().instance().get(&DataKey::Owner).unwrap();
+            let stored_guardians: Vec<Address> =
+                env.storage().instance().get(&DataKey::Guardians).unwrap();
+            let stored_registry: Address =
+                env.storage().instance().get(&DataKey::RegistryId).unwrap();
+            let stored_recovery: RecoveryRequest =
+                env.storage().instance().get(&DataKey::Recovery).unwrap();
+            assert_eq!(stored_owner, owner);
+            assert_eq!(stored_guardians, vec![&env, guardian]);
+            assert_eq!(stored_registry, registry_id);
+            assert_eq!(stored_recovery, recovery);
+            assert_eq!(env.storage().instance().get_ttl(), TTL_EXTEND_TO);
+        });
     }
 
     // ── initialize ────────────────────────────────────────────────────────────
