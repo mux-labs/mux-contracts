@@ -10,7 +10,7 @@
  * Every state-mutating entrypoint requires `require_admin` to pass before
  * any state is modified. `require_admin` calls `admin.require_auth()` on the
  * stored admin address, failing closed: if no admin has been initialised, or
- * if the caller is not the admin, the call reverts with `Unauthorized` before
+ * if the caller is not the admin, authorization fails before
  * touching any storage.
  *
  * # Audit Events
@@ -49,7 +49,7 @@
  *
  * - `initialize(admin)` — One-time setup with admin authorization
  * - `register(name, version)` — Register/update version only (admin)
- * - `register_with_metadata(name, version, description, author)` — Register with full metadata (admin)
+ * - `register_with_metadata(name, version, description, author, repository)` — Register with full metadata (admin)
  * - `check_version(name, version)` — Dry-run validation without state mutation
  * - `get_version(name)` — Query registered version (public)
  * - `get_metadata(name)` — Query full metadata (public)
@@ -69,19 +69,6 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec};
-use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String,
-    Symbol, Vec,
-};
-
-// ── Audit events ──────────────────────────────────────────────────────────────
-
-fn emit(
-    env: &Env,
-    action: soroban_sdk::Symbol,
-    data: impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>,
-) {
 extern crate alloc;
 
 use soroban_sdk::{
@@ -90,58 +77,24 @@ use soroban_sdk::{
 };
 
 // ── Audit events ──────────────────────────────────────────────────────────────
+
 fn emit(env: &Env, action: Symbol, data: impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>) {
     env.events()
         .publish((symbol_short!("mux_reg"), action), data);
 }
 
-// ── TTL constants ─────────────────────────────────────────────────────────────
+// ── Storage keys ──────────────────────────────────────────────────────────────
 
-/// Minimum TTL threshold (ledgers) before auto-extend triggers.
-/// At ~5 s per ledger: 17 280 ≈ 1 day.
-const TTL_THRESHOLD: u32 = 17_280;
-
-/// Target TTL (ledgers) after auto-extend.
-/// At ~5 s per ledger: 518 400 ≈ 30 days.
-const TTL_EXTEND_TO: u32 = 518_400;
-
-// ── Error codes ───────────────────────────────────────────────────────────────
-
-/// Stable error codes returned by mux-registry.
-///
-/// These codes are on-chain ABI — changing an existing variant is a
-/// breaking change. New variants may be appended.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum RegistryError {
-    /// The contract has not been initialised.
     NotInitialized = 1,
-    /// The contract has already been initialised.
     AlreadyInitialized = 2,
-    /// The caller is not the contract admin.
     Unauthorized = 3,
-    /// No entry found for the requested contract name.
     ContractNotFound = 4,
-    /// A version string that is empty or otherwise invalid was supplied.
     InvalidVersion = 5,
 }
-
-// ── Storage keys ──────────────────────────────────────────────────────────────
-
-/// Storage keys for the mux-registry contract.
-#[contracttype]
-#[derive(Clone)]
-pub enum DataKey {
-    /// Admin address (`Address`).
-    Admin,
-    /// Per-contract version record keyed by contract name (`Symbol`).
-    Contract(Symbol),
-    /// Per-contract extended metadata keyed by contract name (`Symbol`).
-    Metadata(Symbol),
-    /// Ordered list of registered contract names.
-    ContractList,
-// ── Storage keys ──────────────────────────────────────────────────────────────
 
 #[contracttype]
 pub enum DataKey {
@@ -152,26 +105,6 @@ pub enum DataKey {
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-
-/// A version record stored for each registered contract.
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct VersionRecord {
-    /// Semver version string (e.g. `"0.1.0"`).
-    pub version: String,
-    /// Ledger at which this version was registered.
-    pub registered_at: u32,
-}
-
-/// Optional extended metadata for a registered contract.
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct ContractMeta {
-    /// Human-readable description of the contract.
-    pub description: String,
-    /// Additional free-form tags or notes.
-    pub notes: String,
-}
 
 /// Metadata associated with a registered contract.
 #[contracttype]
@@ -203,8 +136,6 @@ pub enum MuxRegistryError {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const MAX_CONTRACTS: u32 = 128;
-
 /// Maximum number of registered contract names to bound the Names vec.
 const MAX_CONTRACTS: u32 = 128;
 
@@ -218,122 +149,13 @@ const TTL_EXTEND_TO: u32 = 518_400; // ~30 days
 pub struct MuxRegistry;
 
 #[contractimpl]
+#[allow(clippy::must_use_candidate, clippy::needless_pass_by_value)]
 impl MuxRegistry {
-    // ── Auth helpers ──────────────────────────────────────────────────────────
-
-    /// Fail-closed admin guard.
-    ///
-    /// Reads the stored admin address and calls `require_auth()` on it.
-    /// Reverts with [`RegistryError::NotInitialized`] if no admin is stored,
-    /// or with [`RegistryError::Unauthorized`] if the caller is not the admin.
-    ///
-    /// Every state-mutating entrypoint MUST call `require_admin` before
-    /// reading or writing any other storage key.
-    fn require_admin(env: &Env) -> Result<Address, RegistryError> {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .ok_or(RegistryError::NotInitialized)?;
-        admin.require_auth();
-        Ok(admin)
-    }
-
-    // ── Lifecycle ─────────────────────────────────────────────────────────────
-
-    /// Initialise the contract and set the admin address.
-    ///
-    /// Fails with [`RegistryError::AlreadyInitialized`] if called more than once.
-    ///
-    /// Emits: `init`
-    pub fn initialize(env: Env, admin: Address) -> Result<(), RegistryError> {
-        if env.storage().instance().has(&DataKey::Admin) {
-            return Err(RegistryError::AlreadyInitialized);
-        }
-        admin.require_auth();
-        env.storage()
-            .instance()
-            .set(&DataKey::Admin, &admin);
-        // Initialise the contract list as empty.
-        let empty: Vec<Symbol> = Vec::new(&env);
-        env.storage()
-            .instance()
-            .set(&DataKey::ContractList, &empty);
-        env.storage()
-            .instance()
-            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
-        emit(&env, symbol_short!("init"), admin);
-        Ok(())
-    }
-
-    /// Upgrade the contract WASM.
-    ///
-    /// Requires admin authorisation. Extends instance TTL after the upgrade.
-    /// Does not emit an audit event — the upload/invoke transaction is the
-    /// on-chain audit record.
-    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), RegistryError> {
-        Self::require_admin(&env)?;
-        env.deployer().update_current_contract_wasm(new_wasm_hash);
-        env.storage()
-            .instance()
-            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
-        Ok(())
-    }
-
-    // ── Admin entrypoints ─────────────────────────────────────────────────────
-
-    /// Register or update a contract's version entry.
-    ///
-    /// Requires admin authorisation (fail-closed via [`Self::require_admin`]).
-    /// Creates a new entry if `name` is not already registered; otherwise
-    /// updates the existing entry.
-    ///
-    /// Emits: `reg`
-    pub fn register(env: Env, name: Symbol, version: String) -> Result<(), RegistryError> {
-        Self::require_admin(&env)?;
-        if version.len() == 0 {
-            return Err(RegistryError::InvalidVersion);
-        }
-        let record = VersionRecord {
-            version: version.clone(),
-            registered_at: env.ledger().sequence(),
-        };
-        let is_new = !env
-            .storage()
-            .persistent()
-            .has(&DataKey::Contract(name.clone()));
-        env.storage()
-            .persistent()
-            .set(&DataKey::Contract(name.clone()), &record);
-
-        if is_new {
-            let mut list: Vec<Symbol> = env
-                .storage()
-                .instance()
-                .get(&DataKey::ContractList)
-                .unwrap_or_else(|| Vec::new(&env));
-            list.push_back(name.clone());
-            env.storage()
-                .instance()
-                .set(&DataKey::ContractList, &list);
-        }
-
-        env.storage()
-            .instance()
-            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
-        emit(&env, symbol_short!("reg"), (name, version));
-        Ok(())
-    }
-
-    /// Register or update a contract entry with extended metadata.
-    ///
-    /// Behaves identically to [`Self::register`] for the version record and
-    /// additionally stores `description` and `notes` in a separate metadata
-    /// entry. Requires admin authorisation.
-    ///
-    /// Emits: `regmeta`
     /// Initialize the registry with an admin address.
     /// Must be called exactly once; subsequent calls return `AlreadyInitialized`.
+    ///
+    /// # Errors
+    /// Returns `AlreadyInitialized` if the contract already has an admin.
     pub fn initialize(env: Env, admin: Address) -> Result<(), MuxRegistryError> {
         if env.storage().instance().has(&DataKey::Admin) {
             return Err(MuxRegistryError::AlreadyInitialized);
@@ -343,8 +165,6 @@ impl MuxRegistry {
         env.storage()
             .instance()
             .set(&DataKey::Names, &Vec::<Symbol>::new(&env));
-        env.events()
-            .publish((symbol_short!("mux_reg"), symbol_short!("init")), admin);
         emit(&env, symbol_short!("init"), admin);
         Self::extend_ttl(&env);
         Ok(())
@@ -358,19 +178,24 @@ impl MuxRegistry {
     ///
     /// Extends the instance storage TTL so an upgrade performed just before a
     /// long quiet period does not leave storage at risk of expiry (T-21).
+    ///
+    /// # Errors
+    /// Returns `NotInitialized` unless an admin has been set.
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), MuxRegistryError> {
-        Self::require_admin(&env)?;
+        Self::require_admin(&env).map_err(Self::map_admin_error)?;
         env.deployer().update_current_contract_wasm(new_wasm_hash);
         Self::extend_ttl(&env);
         Ok(())
     }
 
     /// Register or update a contract version. Admin only.
-    /// If the name is new, it is added to the registry (up to MAX_CONTRACTS).
+    /// If the name is new, it is added to the registry (up to `MAX_CONTRACTS`).
     /// If already registered, the version is updated without duplicating the name.
-    /// Returns `TooManyContracts` if the registry is at capacity.
+    ///
+    /// # Errors
+    /// Returns `NotInitialized` without an admin or `TooManyContracts` at capacity.
     pub fn register(env: Env, name: Symbol, version: String) -> Result<(), MuxRegistryError> {
-        Self::require_admin(&env)?;
+        Self::require_admin(&env).map_err(Self::map_admin_error)?;
         let mut names: Vec<Symbol> = env
             .storage()
             .instance()
@@ -393,116 +218,35 @@ impl MuxRegistry {
         Ok(())
     }
 
-    /// Register or update a contract with full metadata. Admin only.
+    /// Register or update a contract and its full metadata. Admin only.
+    ///
+    /// # Errors
+    /// Returns `NotInitialized` without an admin or `TooManyContracts` at capacity.
     pub fn register_with_metadata(
         env: Env,
         name: Symbol,
         version: String,
         description: String,
-        notes: String,
-    ) -> Result<(), RegistryError> {
-        Self::require_admin(&env)?;
-        if version.len() == 0 {
-            return Err(RegistryError::InvalidVersion);
-        }
-        let record = VersionRecord {
-            version: version.clone(),
-            registered_at: env.ledger().sequence(),
-        };
-        let is_new = !env
-            .storage()
-            .persistent()
-            .has(&DataKey::Contract(name.clone()));
-        env.storage()
-            .persistent()
-            .set(&DataKey::Contract(name.clone()), &record);
-
-        let meta = ContractMeta {
-            description,
-            notes,
-        };
-        env.storage()
-            .persistent()
-            .set(&DataKey::Metadata(name.clone()), &meta);
-
-        if is_new {
-            let mut list: Vec<Symbol> = env
-                .storage()
-                .instance()
-                .get(&DataKey::ContractList)
-                .unwrap_or_else(|| Vec::new(&env));
-            list.push_back(name.clone());
-            env.storage()
-                .instance()
-                .set(&DataKey::ContractList, &list);
-        }
-
-        env.storage()
-            .instance()
-            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
-        emit(&env, symbol_short!("regmeta"), (name, version));
-        Ok(())
-    }
-
-    // ── Read-only entrypoints ─────────────────────────────────────────────────
-    //
-    // None of the following emit events — they are pure reads.
-
-    /// Return the version record for `name`, or `None` if not registered.
-    pub fn get_version(env: Env, name: Symbol) -> Option<VersionRecord> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Contract(name))
-    }
-
-    /// Return `true` if `name` is registered with exactly `expected_version`.
-    pub fn check_version(env: Env, name: Symbol, expected_version: String) -> bool {
-        match env
-            .storage()
-            .persistent()
-            .get::<DataKey, VersionRecord>(&DataKey::Contract(name))
-        {
-            Some(record) => record.version == expected_version,
-            None => false,
-        }
-    }
-
-    /// Return the extended metadata for `name`, or `None` if not stored.
-    pub fn get_metadata(env: Env, name: Symbol) -> Option<ContractMeta> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Metadata(name))
-    }
-
-    /// Return all registered contract names in insertion order.
-    pub fn list_contracts(env: Env) -> Vec<Symbol> {
-        env.storage()
-            .instance()
-            .get(&DataKey::ContractList)
-            .unwrap_or_else(|| Vec::new(&env))
-    }
         author: String,
         repository: String,
     ) -> Result<(), MuxRegistryError> {
-        Self::require_admin(&env)?;
+        Self::require_admin(&env).map_err(Self::map_admin_error)?;
         let mut names: Vec<Symbol> = env
             .storage()
             .instance()
             .get(&DataKey::Names)
             .unwrap_or_else(|| Vec::new(&env));
         if !names.contains(&name) {
-            // STORAGE-GRIEFING: cap the Names vec to bound instance storage growth.
             if names.len() >= MAX_CONTRACTS {
                 return Err(MuxRegistryError::TooManyContracts);
             }
             names.push_back(name.clone());
             env.storage().instance().set(&DataKey::Names, &names);
         }
-        let version_clone = version.clone();
         env.storage()
             .instance()
-            .set(&DataKey::Version(name.clone()), &version_clone);
-        let meta = ContractMetadata {
+            .set(&DataKey::Version(name.clone()), &version);
+        let metadata = ContractMetadata {
             version: version.clone(),
             description,
             author,
@@ -510,36 +254,16 @@ impl MuxRegistry {
         };
         env.storage()
             .instance()
-            .set(&DataKey::Version(name.clone()), &version);
-        env.events()
-            .publish((symbol_short!("mux_reg"), symbol_short!("reg")), (name, version));
-        Ok(())
-    }
-
-    /// Register a contract with metadata (description and author). Admin only.
-    pub fn register_with_metadata(
-        env: Env,
-        name: Symbol,
-        version: String,
-        description: String,
-        author: String,
-    ) -> Result<(), MuxRegistryError> {
-        Self::register(env.clone(), name.clone(), version.clone())?;
-        env.storage()
-            .instance()
-            .set(&DataKey::Metadata(name.clone()), &(description, author));
-        env.events()
-            .publish(
-                (symbol_short!("mux_reg"), symbol_short!("regmeta")),
-                (name, version),
-            );
-            .set(&DataKey::Metadata(name.clone()), &meta);
+            .set(&DataKey::Metadata(name.clone()), &metadata);
         emit(&env, symbol_short!("regmeta"), (name, version));
         Self::extend_ttl(&env);
         Ok(())
     }
 
-    /// Get the version string for a registered contract.
+    /// Get the version for a registered contract.
+    ///
+    /// # Errors
+    /// Returns `ContractNotFound` if the contract name is not registered.
     pub fn get_version(env: Env, name: Symbol) -> Result<String, MuxRegistryError> {
         env.storage()
             .instance()
@@ -548,27 +272,14 @@ impl MuxRegistry {
     }
 
     /// Check whether a contract's version matches the expected string.
-    /// Read-only: does not mutate storage.
     pub fn check_version(env: Env, name: Symbol, expected: String) -> bool {
-        match Self::get_version(env, name) {
-            Ok(v) => v == expected,
-            Err(_) => false,
-        }
-    }
-
-    /// Get the metadata (description, author) for a registered contract.
-    pub fn get_metadata(env: Env, name: Symbol) -> Result<(String, String), MuxRegistryError> {
-    /// Dry-run validation of a version query without state mutation.
-    /// Returns the version if registered, otherwise returns `ContractNotFound`.
-    /// This is useful for preflight checks and deployment validation.
-    pub fn check_version(env: Env, name: Symbol) -> Result<String, MuxRegistryError> {
-        env.storage()
-            .instance()
-            .get(&DataKey::Version(name))
-            .ok_or(MuxRegistryError::ContractNotFound)
+        Self::get_version(env, name).is_ok_and(|version| version == expected)
     }
 
     /// Get the full metadata for a registered contract.
+    ///
+    /// # Errors
+    /// Returns `ContractNotFound` if the contract name has no metadata.
     pub fn get_metadata(env: Env, name: Symbol) -> Result<ContractMetadata, MuxRegistryError> {
         env.storage()
             .instance()
@@ -586,14 +297,26 @@ impl MuxRegistry {
 
     // ── Private helpers ────────────────────────────────────────────────────────
 
-    fn require_admin(env: &Env) -> Result<(), MuxRegistryError> {
+    /// Reads the stored admin and requires its authorization before any other storage access.
+    fn require_admin(env: &Env) -> Result<Address, RegistryError> {
         let admin: Address = env
             .storage()
             .instance()
             .get(&DataKey::Admin)
-            .ok_or(MuxRegistryError::NotInitialized)?;
+            .ok_or(RegistryError::NotInitialized)?;
         admin.require_auth();
-        Ok(())
+        Ok(admin)
+    }
+
+    fn map_admin_error(error: RegistryError) -> MuxRegistryError {
+        match error {
+            RegistryError::NotInitialized => MuxRegistryError::NotInitialized,
+            RegistryError::AlreadyInitialized => MuxRegistryError::AlreadyInitialized,
+            RegistryError::Unauthorized | RegistryError::InvalidVersion => {
+                MuxRegistryError::Unauthorized
+            }
+            RegistryError::ContractNotFound => MuxRegistryError::ContractNotFound,
+        }
     }
 
     fn extend_ttl(env: &Env) {
@@ -607,13 +330,15 @@ impl MuxRegistry {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use alloc::format;
+
     use soroban_sdk::{
         symbol_short,
-        testutils::{Address as _, Events},
+        testutils::{storage::Instance as _, Address as _, Events},
         Env, FromVal, String,
     };
+
+    use super::*;
 
     fn setup() -> (Env, MuxRegistryClient<'static>, Address) {
         let env = Env::default();
@@ -635,7 +360,11 @@ mod tests {
         assert!(client.try_initialize(&admin).is_ok());
         assert!(client.try_initialize(&admin).is_err());
         let events = env.events().all();
-        assert!(events.iter().any(|e| e.topics.iter().any(|t| *t == symbol_short!("mux_reg").into())));
+        assert!(events.iter().any(|(_, topics, _)| {
+            topics
+                .iter()
+                .any(|topic| Symbol::from_val(&env, &topic) == symbol_short!("mux_reg"))
+        }));
     }
 
     #[test]
@@ -646,6 +375,158 @@ mod tests {
         client.register(&name, &version);
         assert_eq!(client.get_version(&name), version);
         assert!(client.list_contracts().contains(&name));
+    }
+
+    /// The admin guard fails closed before a write when no admin is stored,
+    /// and lets the stored admin authorize a registration.
+    #[test]
+    fn test_require_admin_fails_closed_and_accepts_admin() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxRegistry);
+        let client = MuxRegistryClient::new(&env, &contract_id);
+        let name = symbol_short!("closed");
+        let version = String::from_str(&env, "1.0.0");
+
+        assert_eq!(
+            env.as_contract(&contract_id, || MuxRegistry::require_admin(&env)),
+            Err(RegistryError::NotInitialized)
+        );
+        assert_eq!(
+            client.try_register(&name, &version),
+            Err(Ok(MuxRegistryError::NotInitialized))
+        );
+        assert!(client.list_contracts().is_empty());
+        assert!(env.events().all().is_empty());
+
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        assert_eq!(
+            env.as_contract(&contract_id, || MuxRegistry::require_admin(&env)),
+            Ok(admin.clone())
+        );
+        client.register(&name, &version);
+        assert_eq!(client.get_version(&name), version);
+
+        let unauthorized_env = Env::default();
+        let unauthorized_id = unauthorized_env.register_contract(None, MuxRegistry);
+        let unauthorized_client = MuxRegistryClient::new(&unauthorized_env, &unauthorized_id);
+        let stored_admin = Address::generate(&unauthorized_env);
+        let unauthorized_name = symbol_short!("closed");
+        unauthorized_env.as_contract(&unauthorized_id, || {
+            unauthorized_env
+                .storage()
+                .instance()
+                .set(&DataKey::Admin, &stored_admin);
+        });
+        assert!(unauthorized_client
+            .try_register(
+                &unauthorized_name,
+                &String::from_str(&unauthorized_env, "1.0.0")
+            )
+            .is_err());
+        assert!(unauthorized_client.list_contracts().is_empty());
+        assert!(unauthorized_env.events().all().is_empty());
+    }
+
+    /// Upgrade requires admin authorization, extends instance TTL, and emits
+    /// no event of its own.
+    #[test]
+    fn test_upgrade_requires_admin_extends_ttl_without_event() {
+        use soroban_sdk::testutils::Ledger;
+
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxRegistry);
+        let client = MuxRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+
+        // Age the instance storage so the upgrade must extend its TTL.
+        env.ledger()
+            .with_mut(|ledger| ledger.sequence_number += TTL_EXTEND_TO - 1_000);
+        let ttl_before = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+        assert!(ttl_before < TTL_THRESHOLD);
+
+        // Minimal valid Soroban module with contract environment metadata.
+        let mut wasm =
+            alloc::vec![0x00u8, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x00, 0x1e, 0x11];
+        wasm.extend_from_slice(b"contractenvmetav0");
+        wasm.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 21, 0, 0, 0, 0]);
+        let wasm_hash = env
+            .deployer()
+            .upload_contract_wasm(soroban_sdk::Bytes::from_slice(&env, &wasm));
+
+        let event_count = env.events().all().len();
+        client.upgrade(&wasm_hash);
+        assert_eq!(
+            env.as_contract(&contract_id, || env.storage().instance().get_ttl()),
+            TTL_EXTEND_TO
+        );
+        assert_eq!(env.events().all().len(), event_count);
+
+        // An unauthenticated upgrade is rejected before the deployer is used.
+        let unauth_env = Env::default();
+        let unauth_id = unauth_env.register_contract(None, MuxRegistry);
+        let unauth_client = MuxRegistryClient::new(&unauth_env, &unauth_id);
+        let unauth_admin = Address::generate(&unauth_env);
+        unauth_env.as_contract(&unauth_id, || {
+            unauth_env
+                .storage()
+                .instance()
+                .set(&DataKey::Admin, &unauth_admin);
+        });
+        let dummy_hash = soroban_sdk::BytesN::from_array(&unauth_env, &[0; 32]);
+        assert!(unauth_client.try_upgrade(&dummy_hash).is_err());
+        assert!(unauth_env.events().all().is_empty());
+    }
+
+    /// New registrations add one name; updates replace its version without
+    /// duplicating the name, and both operations emit `reg`.
+    #[test]
+    fn test_register_creates_updates_and_emits_reg() {
+        let (env, client, _) = setup();
+        let name = symbol_short!("account");
+        let first = String::from_str(&env, "1.0.0");
+        let second = String::from_str(&env, "1.1.0");
+
+        client.register(&name, &first);
+        assert_eq!(client.get_version(&name), first);
+        assert_eq!(client.list_contracts().len(), 1);
+        client.register(&name, &second);
+        assert_eq!(client.get_version(&name), second);
+        assert_eq!(client.list_contracts().len(), 1);
+
+        let events = env.events().all();
+        let reg_count = events
+            .iter()
+            .filter(|(_, topics, _)| {
+                topics
+                    .iter()
+                    .any(|topic| Symbol::from_val(&env, &topic) == symbol_short!("reg"))
+            })
+            .count();
+        assert_eq!(reg_count, 2);
+
+        let unauthorized_env = Env::default();
+        let unauthorized_id = unauthorized_env.register_contract(None, MuxRegistry);
+        let unauthorized_client = MuxRegistryClient::new(&unauthorized_env, &unauthorized_id);
+        let admin = Address::generate(&unauthorized_env);
+        let unauthorized_name = symbol_short!("blocked");
+        unauthorized_env.as_contract(&unauthorized_id, || {
+            unauthorized_env
+                .storage()
+                .instance()
+                .set(&DataKey::Admin, &admin);
+        });
+        assert!(unauthorized_client
+            .try_register(
+                &unauthorized_name,
+                &String::from_str(&unauthorized_env, "1.0.0")
+            )
+            .is_err());
+        assert!(unauthorized_client.list_contracts().is_empty());
+        assert!(unauthorized_env.events().all().is_empty());
     }
 
     #[test]
@@ -693,7 +574,7 @@ mod tests {
         assert_eq!(result, Err(Ok(MuxRegistryError::ContractNotFound)));
     }
 
-    /// Uninitialized registry has no metadata keys — miss returns ContractNotFound
+    /// Uninitialized registry has no metadata keys — miss returns `ContractNotFound`
     /// (same public error as an unknown name; does not require admin auth).
     #[test]
     fn test_get_metadata_on_uninitialized_returns_not_found() {
@@ -706,7 +587,7 @@ mod tests {
         );
     }
 
-    /// `register` writes Version only — get_metadata must still miss with ContractNotFound.
+    /// `register` writes `Version` only — `get_metadata` must still miss with `ContractNotFound`.
     #[test]
     fn test_get_metadata_missing_after_register_without_metadata() {
         let (env, client, _) = setup();
@@ -759,8 +640,8 @@ mod tests {
         assert_eq!(count, 1);
     }
 
-    /// Filling the registry to MAX_CONTRACTS via register() and then calling
-    /// register_with_metadata() with a new name must return TooManyContracts.
+    /// Filling the registry to `MAX_CONTRACTS` via `register()` and then calling
+    /// `register_with_metadata()` with a new name must return `TooManyContracts`.
     #[test]
     fn test_too_many_contracts_via_register_with_metadata() {
         let env = Env::default();
@@ -778,26 +659,18 @@ mod tests {
         // Fill the registry to exactly MAX_CONTRACTS (128) entries.
         // Two-letter base-26 symbols: "aa"=0 … "ex"=127, "ey"=128.
         for i in 0u32..128 {
-            let sym = soroban_sdk::Symbol::new(
-                &env,
-                &format!(
-                    "{}{}",
-                    (b'a' + (i / 26) as u8) as char,
-                    (b'a' + (i % 26) as u8) as char
-                ),
-            );
+            let sym = soroban_sdk::Symbol::new(&env, &format!("n{i}"));
             client.register(&sym, &version);
         }
 
         // One more new name must be rejected by register_with_metadata.
         let overflow = soroban_sdk::Symbol::new(&env, "ey");
         let repo = String::from_str(&env, "https://github.com/mux-protocol/mux-contracts");
-        let result =
-            client.try_register_with_metadata(&overflow, &version, &desc, &author, &repo);
+        let result = client.try_register_with_metadata(&overflow, &version, &desc, &author, &repo);
         assert_eq!(result, Err(Ok(MuxRegistryError::TooManyContracts)));
     }
 
-    /// register() also enforces the cap once MAX_CONTRACTS names are registered.
+    /// `register()` also enforces the cap once `MAX_CONTRACTS` names are registered.
     #[test]
     fn test_too_many_contracts_via_register() {
         let env = Env::default();
@@ -811,14 +684,7 @@ mod tests {
         let version = String::from_str(&env, "1.0.0");
 
         for i in 0u32..128 {
-            let sym = soroban_sdk::Symbol::new(
-                &env,
-                &format!(
-                    "{}{}",
-                    (b'a' + (i / 26) as u8) as char,
-                    (b'a' + (i % 26) as u8) as char
-                ),
-            );
+            let sym = soroban_sdk::Symbol::new(&env, &format!("n{i}"));
             client.register(&sym, &version);
         }
 
@@ -907,16 +773,10 @@ mod tests {
         let version = String::from_str(&env, "1.0.0");
         let description = String::from_str(&env, "Batcher contract");
         let author = String::from_str(&env, "mux-labs");
-        let repository =
-            String::from_str(&env, "https://github.com/mux-protocol/mux-contracts");
+        let repository = String::from_str(&env, "https://github.com/mux-protocol/mux-contracts");
 
-        let result = client.try_register_with_metadata(
-            &name,
-            &version,
-            &description,
-            &author,
-            &repository,
-        );
+        let result =
+            client.try_register_with_metadata(&name, &version, &description, &author, &repository);
         assert!(
             result.is_err(),
             "register_with_metadata must be rejected when admin auth is absent"
@@ -972,10 +832,7 @@ mod tests {
         let name = symbol_short!("perm");
         let version = String::from_str(&env, "3.0.0");
         let result = client.try_register(&name, &version);
-        assert!(
-            result.is_err(),
-            "register must reject a non-admin caller"
-        );
+        assert!(result.is_err(), "register must reject a non-admin caller");
 
         assert!(client.try_get_version(&name).is_err());
         assert_eq!(client.list_contracts().len(), 0);
@@ -1005,16 +862,10 @@ mod tests {
         let version = String::from_str(&env, "2.0.0");
         let description = String::from_str(&env, "Policy contract");
         let author = String::from_str(&env, "mux-labs");
-        let repository =
-            String::from_str(&env, "https://github.com/mux-protocol/mux-contracts");
+        let repository = String::from_str(&env, "https://github.com/mux-protocol/mux-contracts");
 
-        let result = client.try_register_with_metadata(
-            &name,
-            &version,
-            &description,
-            &author,
-            &repository,
-        );
+        let result =
+            client.try_register_with_metadata(&name, &version, &description, &author, &repository);
         assert!(
             result.is_err(),
             "register_with_metadata must reject a non-admin caller"
@@ -1097,8 +948,13 @@ mod tests {
         )>,
         idx: u32,
     ) -> soroban_sdk::Symbol {
-        let (_, topics, _) = events.get(idx).unwrap();
-        soroban_sdk::Symbol::from_val(env, &topics.get(0).unwrap())
+        let (_, topics, _) = events
+            .get(idx)
+            .unwrap_or_else(|| panic!("missing event at index {idx}"));
+        let topic = topics
+            .get(0)
+            .unwrap_or_else(|| panic!("event {idx} has no contract topic"));
+        soroban_sdk::Symbol::from_val(env, &topic)
     }
 
     /// Extract the action symbol (topics[1]) from a specific event index.
@@ -1111,8 +967,13 @@ mod tests {
         )>,
         idx: u32,
     ) -> soroban_sdk::Symbol {
-        let (_, topics, _) = events.get(idx).unwrap();
-        soroban_sdk::Symbol::from_val(env, &topics.get(1).unwrap())
+        let (_, topics, _) = events
+            .get(idx)
+            .unwrap_or_else(|| panic!("missing event at index {idx}"));
+        let topic = topics
+            .get(1)
+            .unwrap_or_else(|| panic!("event {idx} has no action topic"));
+        soroban_sdk::Symbol::from_val(env, &topic)
     }
 
     #[test]
@@ -1209,18 +1070,11 @@ mod tests {
 
         let version = String::from_str(&env, "1.0.0");
         for i in 0u32..128 {
-            let sym = soroban_sdk::Symbol::new(
-                &env,
-                &format!(
-                    "{}{}",
-                    (b'a' + (i / 26) as u8) as char,
-                    (b'a' + (i % 26) as u8) as char
-                ),
-            );
+            let sym = soroban_sdk::Symbol::new(&env, &format!("n{i}"));
             client.register(&sym, &version);
         }
         let before = env.events().all().len();
-        let overflow = soroban_sdk::Symbol::new(&env, "ey");
+        let overflow = soroban_sdk::Symbol::new(&env, "n128");
         let _ = client.try_register(&overflow, &version);
         // No extra event from the failed call.
         assert_eq!(env.events().all().len(), before);
@@ -1248,8 +1102,9 @@ mod tests {
     #[test]
     fn test_register_cap_128() {
         let (env, client, _) = setup();
+        env.budget().reset_unlimited();
         for i in 0..128u32 {
-            let name = Symbol::new(&env, &format!("c{}", i));
+            let name = Symbol::new(&env, &format!("c{i}"));
             let version = String::from_str(&env, "1.0.0");
             assert!(client.try_register(&name, &version).is_ok());
         }
@@ -1267,15 +1122,19 @@ mod tests {
         let version = String::from_str(&env, "1.0.0");
         let desc = String::from_str(&env, "Recovery contract");
         let author = String::from_str(&env, "mux-labs");
-        client.register_with_metadata(&name, &version, &desc, &author);
-        let (d, a) = client.get_metadata(&name);
-        assert_eq!(d, desc);
-        assert_eq!(a, author);
+        let repository = String::from_str(&env, "https://github.com/mux-labs/mux-contracts");
+        client.register_with_metadata(&name, &version, &desc, &author, &repository);
+        let metadata = client.get_metadata(&name);
+        assert_eq!(metadata.description, desc);
+        assert_eq!(metadata.author, author);
+        assert_eq!(metadata.repository, repository);
 
         // Verify regmeta event emitted
         let events = env.events().all();
-        assert!(events.iter().any(|e| {
-            e.topics.iter().any(|t| *t == symbol_short!("regmeta").into())
+        assert!(events.iter().any(|(_, topics, _)| {
+            topics
+                .iter()
+                .any(|topic| Symbol::from_val(&env, &topic) == symbol_short!("regmeta"))
         }));
     }
 }
