@@ -2374,6 +2374,78 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_authorize_session_fails_closed_for_invalid_or_ungranted_keys() {
+        let (env, client, owner, contract_id) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+
+        let function = symbol_short!("ping");
+        let unknown_key = Address::generate(&env);
+        let revoked_key = Address::generate(&env);
+        let expired_key = Address::generate(&env);
+        let empty_scopes_key = Address::generate(&env);
+        let wrong_scope_key = Address::generate(&env);
+        let valid_key = Address::generate(&env);
+        let now = env.ledger().timestamp();
+
+        env.as_contract(&contract_id, || {
+            let empty_scopes = Vec::new(&env);
+            let ping_scope = soroban_sdk::vec![
+                &env,
+                Scope {
+                    method: function.clone(),
+                }
+            ];
+            let pay_scope = soroban_sdk::vec![
+                &env,
+                Scope {
+                    method: symbol_short!("pay"),
+                }
+            ];
+            for (key, expires_at, scopes, revoked) in [
+                (revoked_key.clone(), now + 60, ping_scope.clone(), true),
+                (expired_key.clone(), now, ping_scope.clone(), false),
+                (empty_scopes_key.clone(), now + 60, empty_scopes, false),
+                (wrong_scope_key.clone(), now + 60, pay_scope, false),
+                (valid_key.clone(), now + 60, ping_scope, false),
+            ] {
+                env.storage().instance().set(
+                    &DataKey::SessionKey(owner.clone(), key),
+                    &SessionKeyRecord {
+                        expires_at,
+                        scopes,
+                        revoked,
+                    },
+                );
+            }
+
+            assert_eq!(
+                MuxAccount::authorize_session(&env, &unknown_key, &function),
+                Err(MuxAccountError::Unauthorized)
+            );
+            assert_eq!(
+                MuxAccount::authorize_session(&env, &revoked_key, &function),
+                Err(MuxAccountError::Unauthorized)
+            );
+            assert_eq!(
+                MuxAccount::authorize_session(&env, &expired_key, &function),
+                Err(MuxAccountError::Unauthorized)
+            );
+            assert_eq!(
+                MuxAccount::authorize_session(&env, &empty_scopes_key, &function),
+                Err(MuxAccountError::Unauthorized)
+            );
+            assert_eq!(
+                MuxAccount::authorize_session(&env, &wrong_scope_key, &function),
+                Err(MuxAccountError::ScopeNotGranted)
+            );
+            assert_eq!(
+                MuxAccount::authorize_session(&env, &valid_key, &function),
+                Ok(())
+            );
+        });
+    }
+
     /// T-40 fail-closed: a session key registered with an empty scope list
     /// grants zero capabilities and must be rejected at execution time, not
     /// silently accepted (the pre-fix behavior returned `Ok` unconditionally).

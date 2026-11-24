@@ -332,7 +332,7 @@ mod tests {
     use alloc::format;
     use soroban_sdk::{
         symbol_short,
-        testutils::{Address as _, Events},
+        testutils::{storage::Instance as _, Address as _, Events, Ledger},
         Env, FromVal, String,
     };
 
@@ -417,6 +417,72 @@ mod tests {
         let wallet = Address::generate(&env);
         assert!(client.try_register_wallet(&name, &wallet).is_ok());
         assert_eq!(client.get_wallet(&name), wallet);
+    }
+
+    #[test]
+    fn test_upgrade_before_initialize_returns_not_initialized() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, MuxWalletRegistry);
+        let client = MuxWalletRegistryClient::new(&env, &contract_id);
+        let fake_hash = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
+
+        assert_eq!(
+            client.try_upgrade(&fake_hash),
+            Err(Ok(WalletRegistryError::NotInitialized))
+        );
+    }
+
+    #[test]
+    fn test_upgrade_requires_owner_authorization() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxWalletRegistry);
+        let client = MuxWalletRegistryClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        env.as_contract(&contract_id, || {
+            env.storage().instance().set(&DataKey::Owner, &owner);
+        });
+        let fake_hash = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
+
+        assert!(
+            client.try_upgrade(&fake_hash).is_err(),
+            "upgrade must reject when owner authorization is absent"
+        );
+    }
+
+    #[test]
+    fn test_upgrade_preserves_registry_storage_and_extends_instance_ttl() {
+        let (env, client, owner) = setup();
+        let name = symbol_short!("upgrade");
+        let wallet = Address::generate(&env);
+        client.register_wallet(&name, &wallet);
+
+        env.ledger()
+            .with_mut(|ledger| ledger.sequence_number += TTL_EXTEND_TO - 1_000);
+        let ttl_before = env.as_contract(&client.address, || env.storage().instance().get_ttl());
+        assert!(ttl_before < TTL_THRESHOLD);
+
+        let mut wasm = alloc::vec![
+            0x00u8, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x00, 0x1e, 0x11,
+        ];
+        wasm.extend_from_slice(b"contractenvmetav0");
+        wasm.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 21, 0, 0, 0, 0]);
+        let new_hash = env
+            .deployer()
+            .upload_contract_wasm(soroban_sdk::Bytes::from_slice(&env, &wasm));
+        client.upgrade(&new_hash);
+
+        env.as_contract(&client.address, || {
+            let stored_owner: Address = env.storage().instance().get(&DataKey::Owner).unwrap();
+            let stored_wallet: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::Wallet(name.clone()))
+                .unwrap();
+            assert_eq!(stored_owner, owner);
+            assert_eq!(stored_wallet, wallet);
+            assert_eq!(env.storage().instance().get_ttl(), TTL_EXTEND_TO);
+        });
     }
 
     /// `initialize` must require the owner's authorisation and, on success,
@@ -623,6 +689,30 @@ mod tests {
         assert_eq!(
             client.try_get_wallet(&symbol_short!("ghost")),
             Err(Ok(WalletRegistryError::WalletNotFound))
+        );
+    }
+
+    #[test]
+    fn test_get_wallet_returns_registered_address_without_authorization() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxWalletRegistry);
+        let client = MuxWalletRegistryClient::new(&env, &contract_id);
+        let name = symbol_short!("public");
+        let wallet = Address::generate(&env);
+        env.as_contract(&contract_id, || {
+            env.storage()
+                .instance()
+                .set(&DataKey::Wallet(name.clone()), &wallet);
+        });
+
+        assert_eq!(client.try_get_wallet(&name), Ok(Ok(wallet)));
+        assert_eq!(
+            client.try_get_wallet(&symbol_short!("missing")),
+            Err(Ok(WalletRegistryError::WalletNotFound))
+        );
+        assert!(
+            env.auths().is_empty(),
+            "public lookups must not request authorization"
         );
     }
 
