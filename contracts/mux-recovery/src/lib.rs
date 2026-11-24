@@ -418,11 +418,7 @@ impl MuxRecovery {
         request.approvals.push_back(guardian.clone());
         let approval_count = request.approvals.len();
         env.storage().instance().set(&DataKey::Recovery, &request);
-        emit(
-            &env,
-            symbol_short!("rec_appr"),
-            (guardian, approval_count),
-        );
+        emit(&env, symbol_short!("rec_appr"), (guardian, approval_count));
         Self::extend_ttl(&env);
         Ok(())
     }
@@ -530,7 +526,9 @@ impl MuxRecovery {
             return Err(RecoveryError::TooManyGuardians);
         }
         guardians.push_back(guardian.clone());
-        env.storage().instance().set(&DataKey::Guardians, &guardians);
+        env.storage()
+            .instance()
+            .set(&DataKey::Guardians, &guardians);
         emit(&env, symbol_short!("grd_add"), guardian);
         Self::extend_ttl(&env);
         Ok(())
@@ -554,7 +552,9 @@ impl MuxRecovery {
             return Err(RecoveryError::MinGuardiansRequired);
         }
         guardians.remove(index);
-        env.storage().instance().set(&DataKey::Guardians, &guardians);
+        env.storage()
+            .instance()
+            .set(&DataKey::Guardians, &guardians);
         emit(&env, symbol_short!("grd_rm"), guardian);
         Self::extend_ttl(&env);
         Ok(())
@@ -622,11 +622,12 @@ impl MuxRecovery {
 
         // Cross-contract registry validation (fail-closed).
         // Call list_contracts on the registry to confirm it is live.
-        let result = env.try_invoke_contract::<soroban_sdk::Vec<soroban_sdk::Symbol>, soroban_sdk::Error>(
-            &registry_id,
-            &soroban_sdk::Symbol::new(&env, "list_contracts"),
-            soroban_sdk::Vec::new(&env),
-        );
+        let result = env
+            .try_invoke_contract::<soroban_sdk::Vec<soroban_sdk::Symbol>, soroban_sdk::Error>(
+                &registry_id,
+                &soroban_sdk::Symbol::new(&env, "list_contracts"),
+                soroban_sdk::Vec::new(&env),
+            );
         if result.is_err() {
             return Err(RecoveryError::RegistryNotFound);
         }
@@ -729,7 +730,9 @@ mod tests {
     use super::*;
     use soroban_sdk::{
         symbol_short,
-        testutils::{storage::Instance as _, Address as _, Events, Ledger, MockAuth, MockAuthInvoke},
+        testutils::{
+            storage::Instance as _, Address as _, Events, Ledger, MockAuth, MockAuthInvoke,
+        },
         vec, Env, FromVal, IntoVal,
     };
 
@@ -1108,10 +1111,7 @@ mod tests {
     #[test]
     fn test_add_duplicate_guardian_rejected() {
         let (_env, client, _, guardian) = setup();
-        let err = client
-            .try_add_guardian(&guardian)
-            .unwrap_err()
-            .unwrap();
+        let err = client.try_add_guardian(&guardian).unwrap_err().unwrap();
         assert_eq!(err, RecoveryError::GuardianAlreadyExists);
     }
 
@@ -1135,6 +1135,48 @@ mod tests {
             .unwrap_err()
             .unwrap();
         assert_eq!(err, RecoveryError::TooManyGuardians);
+    }
+
+    /// add_guardian is owner-only and caps the guardian set at MAX_GUARDIANS to
+    /// bound instance-storage growth.
+    #[test]
+    fn test_add_guardian_owner_only_and_caps_growth() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let cid = env.register_contract(None, MuxRecovery);
+        let client = MuxRecoveryClient::new(&env, &cid);
+        let owner = Address::generate(&env);
+        let g1 = Address::generate(&env);
+        client.initialize(&owner, &vec![&env, g1.clone()], &1_u32);
+
+        // Only the owner may add guardians.
+        let non_owner = Address::generate(&env);
+        let blocked = Address::generate(&env);
+        env.mock_auths(&[MockAuth {
+            address: &non_owner,
+            invoke: &MockAuthInvoke {
+                contract: &cid,
+                fn_name: "add_guardian",
+                args: vec![&env, blocked.clone().into_val(&env)],
+                sub_invokes: &[],
+            },
+        }]);
+        assert!(client.try_add_guardian(&blocked).is_err());
+        assert!(!client.guardians().contains(&blocked));
+
+        env.mock_all_auths();
+        // Fill remaining guardian slots up to MAX_GUARDIANS.
+        for _ in 1..MAX_GUARDIANS {
+            let g = Address::generate(&env);
+            client.add_guardian(&g);
+        }
+        assert_eq!(client.guardians().len(), MAX_GUARDIANS);
+
+        let overflow = Address::generate(&env);
+        let err = client.try_add_guardian(&overflow).unwrap_err().unwrap();
+        assert_eq!(err, RecoveryError::TooManyGuardians);
+        assert_eq!(client.guardians().len(), MAX_GUARDIANS);
+        assert!(!client.guardians().contains(&overflow));
     }
 
     #[test]
@@ -1164,10 +1206,7 @@ mod tests {
     fn test_remove_last_guardian_rejected() {
         let (_env, client, _, guardian) = setup();
         // Only 1 guardian, can't remove
-        let err = client
-            .try_remove_guardian(&guardian)
-            .unwrap_err()
-            .unwrap();
+        let err = client.try_remove_guardian(&guardian).unwrap_err().unwrap();
         assert_eq!(err, RecoveryError::MinGuardiansRequired);
     }
 
@@ -1201,10 +1240,7 @@ mod tests {
     fn test_remove_nonexistent_guardian_rejected() {
         let (env, client, _, _) = setup();
         let stranger = Address::generate(&env);
-        let err = client
-            .try_remove_guardian(&stranger)
-            .unwrap_err()
-            .unwrap();
+        let err = client.try_remove_guardian(&stranger).unwrap_err().unwrap();
         assert_eq!(err, RecoveryError::GuardianNotFound);
     }
 
@@ -1215,10 +1251,7 @@ mod tests {
         let contract_id = env.register_contract(None, MuxRecovery);
         let client = MuxRecoveryClient::new(&env, &contract_id);
         let guardian = Address::generate(&env);
-        let err = client
-            .try_add_guardian(&guardian)
-            .unwrap_err()
-            .unwrap();
+        let err = client.try_add_guardian(&guardian).unwrap_err().unwrap();
         assert_eq!(err, RecoveryError::NotInitialized);
     }
 
@@ -1286,7 +1319,8 @@ mod tests {
         assert_eq!(err, RecoveryError::RecoveryExpired);
 
         // expires_at - 1 is not rejected for expiry (quorum of 1 is met by the initiator).
-        env.ledger().with_mut(|l| l.sequence_number = expires_at - 1);
+        env.ledger()
+            .with_mut(|l| l.sequence_number = expires_at - 1);
         client.execute_recovery(&guardian);
         assert_eq!(client.recovery_status(), RecoveryStatus::Executed);
     }
@@ -1397,22 +1431,34 @@ mod tests {
         client.initiate_recovery(&guardian, &new_owner);
 
         // Pending
-        assert_eq!(client.recovery_request().unwrap().status, RecoveryStatus::Pending);
+        assert_eq!(
+            client.recovery_request().unwrap().status,
+            RecoveryStatus::Pending
+        );
 
         // Cancel -> Cancelled
         client.cancel_recovery();
-        assert_eq!(client.recovery_request().unwrap().status, RecoveryStatus::Cancelled);
+        assert_eq!(
+            client.recovery_request().unwrap().status,
+            RecoveryStatus::Cancelled
+        );
 
         // Re-initiate -> Pending
         let second_owner = Address::generate(&env);
         client.initiate_recovery(&guardian, &second_owner);
-        assert_eq!(client.recovery_request().unwrap().status, RecoveryStatus::Pending);
+        assert_eq!(
+            client.recovery_request().unwrap().status,
+            RecoveryStatus::Pending
+        );
 
         // Execute -> Executed
         env.ledger()
             .with_mut(|l| l.sequence_number += RECOVERY_TIMELOCK + 1);
         client.execute_recovery(&guardian);
-        assert_eq!(client.recovery_request().unwrap().status, RecoveryStatus::Executed);
+        assert_eq!(
+            client.recovery_request().unwrap().status,
+            RecoveryStatus::Executed
+        );
     }
 
     // ── registry link (#403 / #616) ───────────────────────────────────────────
@@ -1529,8 +1575,7 @@ mod tests {
         let (env, client, owner, _) = setup();
         let registry = env.register_contract(None, MockRegistry);
         // Drop instance TTL below the threshold so the extension is observable.
-        env.ledger()
-            .with_mut(|l| l.sequence_number += 510_000);
+        env.ledger().with_mut(|l| l.sequence_number += 510_000);
         client.set_registry(&owner, &registry);
 
         assert_eq!(client.registry_id(), Some(registry));
@@ -1539,7 +1584,10 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(topic_action(&env, &events, 1), symbol_short!("reg_link"));
         let ttl = env.as_contract(&client.address, || env.storage().instance().get_ttl());
-        assert!(ttl >= TTL_EXTEND_TO, "set_registry must extend instance TTL");
+        assert!(
+            ttl >= TTL_EXTEND_TO,
+            "set_registry must extend instance TTL"
+        );
     }
 
     #[test]
@@ -1608,13 +1656,59 @@ mod tests {
 
         let new_owner = Address::generate(&env);
         client.initiate_recovery(&g1, &new_owner); // g1 = 1 approval
-        client.approve_recovery(&g2);              // g2 = 2 approvals
+        client.approve_recovery(&g2); // g2 = 2 approvals
 
         env.ledger()
             .with_mut(|l| l.sequence_number += RECOVERY_TIMELOCK + 1);
 
         assert!(client.try_execute_recovery(&g1).is_ok());
         assert_eq!(client.owner(), new_owner);
+    }
+
+    /// execute_recovery must be called by a registered guardian, reject a
+    /// request whose approval count is below the stored quorum threshold, and
+    /// transfer ownership to the new_owner on the recovery request.
+    #[test]
+    fn test_execute_recovery_guardian_quorum_and_ownership_transfer() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let cid = env.register_contract(None, MuxRecovery);
+        let client = MuxRecoveryClient::new(&env, &cid);
+        let owner = Address::generate(&env);
+        let g1 = Address::generate(&env);
+        let g2 = Address::generate(&env);
+        let stranger = Address::generate(&env);
+        client.initialize(&owner, &vec![&env, g1.clone(), g2.clone()], &2_u32);
+
+        let new_owner = Address::generate(&env);
+        client.initiate_recovery(&g1, &new_owner);
+
+        // Only a registered guardian may execute.
+        let err = client.try_execute_recovery(&stranger).unwrap_err().unwrap();
+        assert_eq!(err, RecoveryError::Unauthorized);
+        assert_eq!(client.owner(), owner);
+        assert_eq!(client.recovery_status(), RecoveryStatus::Pending);
+
+        env.ledger()
+            .with_mut(|l| l.sequence_number += RECOVERY_TIMELOCK + 1);
+
+        // One approval is below the stored quorum of two.
+        assert_eq!(client.recovery_request().unwrap().approvals.len(), 1);
+        assert_eq!(client.quorum_threshold(), 2);
+        let err = client.try_execute_recovery(&g1).unwrap_err().unwrap();
+        assert_eq!(err, RecoveryError::QuorumNotReached);
+        assert_eq!(client.owner(), owner);
+        assert_eq!(client.recovery_status(), RecoveryStatus::Pending);
+
+        // Second approval reaches quorum; execution transfers ownership.
+        client.approve_recovery(&g2);
+        assert_eq!(client.recovery_request().unwrap().approvals.len(), 2);
+        client.execute_recovery(&g2);
+        assert_eq!(client.owner(), new_owner);
+        assert_eq!(
+            client.recovery_request().unwrap().status,
+            RecoveryStatus::Executed
+        );
     }
 
     /// With a full approval set, sequence `executable_at - 1` is rejected and
@@ -1787,24 +1881,6 @@ mod tests {
 
     // ── approve_recovery_admin ────────────────────────────────────────────────
 
-    /// Mock auth for `approve_recovery_admin(co_guardian)` from exactly `signer`.
-    fn admin_auth<'a>(
-        env: &'a Env,
-        contract_id: &'a Address,
-        signer: &'a Address,
-        co_guardian: &Address,
-    ) -> MockAuth<'a> {
-        MockAuth {
-            address: signer,
-            invoke: &MockAuthInvoke {
-                contract: contract_id,
-                fn_name: "approve_recovery_admin",
-                args: vec![env, co_guardian.clone().into_val(env)],
-                sub_invokes: &[],
-            },
-        }
-    }
-
     /// Owner + guardian co-sign executes the pending recovery immediately,
     /// without waiting for the timelock.
     #[test]
@@ -1832,7 +1908,15 @@ mod tests {
         let new_owner = Address::generate(&env);
         client.initiate_recovery(&guardian, &new_owner);
 
-        env.mock_auths(&[admin_auth(&env, &client.address, &owner, &guardian)]);
+        env.mock_auths(&[MockAuth {
+            address: &owner,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "approve_recovery_admin",
+                args: vec![&env, guardian.clone().into_val(&env)],
+                sub_invokes: &[],
+            },
+        }]);
         assert!(client.try_approve_recovery_admin(&guardian).is_err());
 
         assert_eq!(client.owner(), owner);
@@ -1846,7 +1930,15 @@ mod tests {
         let new_owner = Address::generate(&env);
         client.initiate_recovery(&guardian, &new_owner);
 
-        env.mock_auths(&[admin_auth(&env, &client.address, &guardian, &guardian)]);
+        env.mock_auths(&[MockAuth {
+            address: &guardian,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "approve_recovery_admin",
+                args: vec![&env, guardian.clone().into_val(&env)],
+                sub_invokes: &[],
+            },
+        }]);
         assert!(client.try_approve_recovery_admin(&guardian).is_err());
 
         assert_eq!(client.owner(), owner);
