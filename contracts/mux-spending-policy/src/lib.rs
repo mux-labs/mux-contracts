@@ -160,10 +160,7 @@ impl MuxSpendingPolicy {
         let key = DataKey::SpendLimit(account.clone(), asset.clone());
         let (spent, reset_ledger) = match env.storage().instance().get::<_, SpendLimit>(&key) {
             Some(existing) => (existing.spent, existing.reset_ledger),
-            None => (
-                0,
-                env.ledger().sequence().saturating_add(period_ledgers),
-            ),
+            None => (0, env.ledger().sequence().saturating_add(period_ledgers)),
         };
         let policy = SpendLimit {
             asset: asset.clone(),
@@ -285,12 +282,13 @@ impl MuxSpendingPolicy {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use soroban_sdk::{
         symbol_short,
-        testutils::{Address as _, Events},
+        testutils::{Address as _, Events, Ledger},
         Env, FromVal,
     };
+
+    use super::*;
 
     fn topic_action(
         env: &Env,
@@ -339,6 +337,33 @@ mod tests {
         let admin = Address::generate(&env);
         assert!(client.try_initialize(&admin).is_ok());
         assert!(client.try_initialize(&admin).is_err());
+    }
+
+    #[test]
+    fn test_initialize_stores_admin_and_rejects_missing_auth() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MuxSpendingPolicy);
+        let client = MuxSpendingPolicyClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+
+        // Without an authorization entry, initialization must not store the
+        // admin or emit the init event.
+        assert!(client.try_initialize(&admin).is_err());
+        assert!(env.events().all().is_empty());
+        assert_eq!(
+            env.as_contract(&contract_id, || {
+                env.storage().instance().get::<_, Address>(&DataKey::Admin)
+            }),
+            None
+        );
+
+        env.mock_all_auths();
+        client.initialize(&admin);
+        let stored = env.as_contract(&contract_id, || {
+            env.storage().instance().get::<_, Address>(&DataKey::Admin)
+        });
+        assert_eq!(stored, Some(admin));
+        assert_eq!(env.events().all().len(), 1);
     }
 
     #[test]
@@ -450,13 +475,13 @@ mod tests {
     }
 
     #[test]
-    fn test_set_policy_resets_spent_and_window_on_overwrite() {
-        // Regression: every set_policy call must zero `spent` and restart the
-        // window at the current ledger, so a limit change never inherits usage.
+    fn test_set_policy_preserves_spent_and_window_on_overwrite() {
+        // Changing a limit must not clear usage or restart the active window.
         let (env, client, _) = setup();
         let account = Address::generate(&env);
         let asset = Address::generate(&env);
         client.set_policy(&account, &asset, &1000, &17280);
+        let initial_reset_ledger = client.get_policy(&account, &asset).reset_ledger;
         env.as_contract(&client.address, || {
             let key = DataKey::SpendLimit(account.clone(), asset.clone());
             let mut policy: SpendLimit = env.storage().instance().get(&key).unwrap();
@@ -468,8 +493,9 @@ mod tests {
         client.set_policy(&account, &asset, &2000, &17280);
         let policy = client.get_policy(&account, &asset);
         assert_eq!(policy.limit, 2000);
-        assert_eq!(policy.spent, 0);
-        assert_eq!(policy.reset_ledger, seq);
+        assert_eq!(policy.spent, 750);
+        assert_eq!(policy.reset_ledger, initial_reset_ledger);
+        assert!(policy.reset_ledger > seq);
     }
 
     #[test]
