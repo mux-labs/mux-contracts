@@ -946,7 +946,10 @@ mod tests {
                 },
             }])
             .try_register_wallet(&name, &wallet_v1);
-        assert!(bad.is_err(), "non-owner auth must not authorise register_wallet");
+        assert!(
+            bad.is_err(),
+            "non-owner auth must not authorise register_wallet"
+        );
         assert_eq!(client.list_wallets().len(), 0);
 
         // Owner auth succeeds, then overwrites the same name.
@@ -1242,6 +1245,48 @@ mod tests {
         );
     }
 
+    /// list_wallets is read-only: it returns registered names and returns an
+    /// empty Vec when no wallets have been registered or the contract has not
+    /// yet been initialised. No authorisation is required.
+    #[test]
+    fn test_list_wallets_readonly_empty_and_populated_paths() {
+        let env = Env::default();
+        let cid = env.register_contract(None, MuxWalletRegistry);
+        let client = MuxWalletRegistryClient::new(&env, &cid);
+
+        // Uninitialised contract: no auth required, empty Vec.
+        let uninit = client.list_wallets();
+        assert_eq!(uninit.len(), 0);
+        assert!(env.auths().is_empty());
+
+        // Initialised but empty: still empty, no auth required.
+        let owner = Address::generate(&env);
+        env.as_contract(&cid, || {
+            env.storage().instance().set(&DataKey::Owner, &owner);
+            env.storage()
+                .instance()
+                .set(&DataKey::Names, &Vec::<Symbol>::new(&env));
+        });
+        let empty = client.list_wallets();
+        assert_eq!(empty.len(), 0);
+        assert!(env.auths().is_empty());
+
+        // Populated registry: returns all registered names.
+        let name_a = symbol_short!("alice");
+        let name_b = symbol_short!("bob");
+        env.as_contract(&cid, || {
+            let mut names = Vec::<Symbol>::new(&env);
+            names.push_back(name_a.clone());
+            names.push_back(name_b.clone());
+            env.storage().instance().set(&DataKey::Names, &names);
+        });
+        let listed = client.list_wallets();
+        assert_eq!(listed.len(), 2);
+        assert!(listed.contains(&name_a));
+        assert!(listed.contains(&name_b));
+        assert!(env.auths().is_empty());
+    }
+
     /// Multiple-wallet round-trip: register N wallets by both paths, retrieve
     /// each one, and verify `list_wallets` contains exactly those N names.
     #[test]
@@ -1436,9 +1481,57 @@ mod tests {
             "register_wallet_with_metadata must emit exactly one wlt_meta event"
         );
         let (_, _, data) = events.get(meta_idx[0]).unwrap();
-        assert_eq!(topic_tag(&env, &events, meta_idx[0]), symbol_short!("mux_wreg"));
+        assert_eq!(
+            topic_tag(&env, &events, meta_idx[0]),
+            symbol_short!("mux_wreg")
+        );
         let (ev_name, ev_wallet): (Symbol, Address) = FromVal::from_val(&env, &data);
         assert_eq!(ev_name, name);
         assert_eq!(ev_wallet, wallet);
+    }
+
+    /// get_metadata is a read-only lookup: it must return the metadata stored
+    /// by register_wallet_with_metadata without any authorisation, and return
+    /// WalletNotFound for a name that only has a plain wallet entry.
+    #[test]
+    fn test_get_metadata_readonly_lookup_and_missing_failure_path() {
+        let env = Env::default();
+        let cid = env.register_contract(None, MuxWalletRegistry);
+        let client = MuxWalletRegistryClient::new(&env, &cid);
+        let name = symbol_short!("meta");
+        let bare = symbol_short!("bare");
+        let label = String::from_str(&env, "Cold storage");
+        let description = String::from_str(&env, "Treasury cold wallet");
+        let bare_wallet = Address::generate(&env);
+        env.as_contract(&cid, || {
+            env.storage().instance().set(
+                &DataKey::Metadata(name.clone()),
+                &WalletMetadata {
+                    label: label.clone(),
+                    description: description.clone(),
+                },
+            );
+            env.storage()
+                .instance()
+                .set(&DataKey::Wallet(bare.clone()), &bare_wallet);
+        });
+
+        // No mock_all_auths: a metadata lookup must work for any caller.
+        let meta = client.get_metadata(&name);
+        assert_eq!(meta.label, label);
+        assert_eq!(meta.description, description);
+        assert!(env.auths().is_empty());
+
+        // A bare wallet entry does not imply metadata, and an unknown name is
+        // reported the same way.
+        assert_eq!(
+            client.try_get_metadata(&bare),
+            Err(Ok(WalletRegistryError::WalletNotFound))
+        );
+        assert_eq!(
+            client.try_get_metadata(&symbol_short!("ghost")),
+            Err(Ok(WalletRegistryError::WalletNotFound))
+        );
+        assert_eq!(client.get_wallet(&bare), bare_wallet);
     }
 }
