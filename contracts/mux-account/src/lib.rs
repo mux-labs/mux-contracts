@@ -2567,6 +2567,110 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // ── set_metadata regression (#1113) ──────────────────────────────────────
+    //
+    // The doc comment on `set_metadata` says:
+    //   "Store registry-level metadata. Owner only. Overwrites any previously
+    //    stored metadata. Emits a `meta_set` audit event."
+    //
+    // Each claim has its own assertion below so that any regression in the
+    // function causes this test to fail rather than silently passing.
+
+    /// Regression test for `set_metadata` covering all four claims in its doc
+    /// comment: owner-only gate, storage, overwrite semantics, and the
+    /// `meta_set` audit event.
+    #[test]
+    fn test_set_metadata_regression() {
+        // ── 1. Owner only: a call without owner auth must be rejected ──────────
+        // Use `setup_without_auth` so no blanket mock is active.
+        let (env_no_auth, client_no_auth, _owner_no_auth) = setup_without_auth();
+        let meta_attempt = RegistryMeta {
+            name: String::from_str(&env_no_auth, "unauthorized"),
+            version: String::from_str(&env_no_auth, "1.0.0"),
+            description: String::from_str(&env_no_auth, "should not be stored"),
+        };
+        assert_eq!(
+            client_no_auth.try_set_metadata(&meta_attempt),
+            Err(Ok(MuxAccountError::Unauthorized)),
+            "set_metadata must reject callers that are not the owner"
+        );
+        // Storage must remain empty after the rejected call.
+        assert!(
+            client_no_auth.get_metadata().is_none(),
+            "a rejected set_metadata must not write any metadata"
+        );
+        // No event may be emitted on the rejected path.
+        assert_eq!(
+            env_no_auth.events().all().len(),
+            0,
+            "a rejected set_metadata must not emit any event"
+        );
+
+        // ── 2. Stores metadata / 3. Overwrites / 4. Emits meta_set event ──────
+        let (env, client, owner, _cid) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+
+        let first = RegistryMeta {
+            name: String::from_str(&env, "first-name"),
+            version: String::from_str(&env, "0.1.0"),
+            description: String::from_str(&env, "initial metadata"),
+        };
+        client.set_metadata(&first);
+
+        // Stored value matches what was written (all three fields).
+        let stored = client.get_metadata().expect("metadata must be present after set_metadata");
+        assert_eq!(stored.name, first.name, "name must be stored exactly");
+        assert_eq!(stored.version, first.version, "version must be stored exactly");
+        assert_eq!(stored.description, first.description, "description must be stored exactly");
+
+        // A meta_set event must have been emitted for the first write.
+        let events_after_first = env.events().all();
+        // events: init + meta_set
+        assert_eq!(
+            events_after_first.len(),
+            2,
+            "exactly one meta_set event must follow initialize"
+        );
+        assert_eq!(
+            topic_action(&env, &events_after_first, 1),
+            symbol_short!("meta_set"),
+            "the second event must be meta_set"
+        );
+
+        // Overwrite: a second call must replace all three fields entirely.
+        let second = RegistryMeta {
+            name: String::from_str(&env, "second-name"),
+            version: String::from_str(&env, "1.0.0"),
+            description: String::from_str(&env, "overwritten metadata"),
+        };
+        client.set_metadata(&second);
+
+        let overwritten = client.get_metadata().expect("metadata must still be present after overwrite");
+        assert_eq!(overwritten.name, second.name, "name must be overwritten");
+        assert_eq!(overwritten.version, second.version, "version must be overwritten");
+        assert_eq!(overwritten.description, second.description, "description must be overwritten");
+
+        // The first metadata must no longer be readable.
+        assert_ne!(
+            overwritten.name, first.name,
+            "old name must not survive an overwrite"
+        );
+
+        // A second meta_set event must have been emitted for the overwrite.
+        let events_after_second = env.events().all();
+        // events: init + meta_set (first) + meta_set (second)
+        assert_eq!(
+            events_after_second.len(),
+            3,
+            "each set_metadata call must emit exactly one meta_set event"
+        );
+        assert_eq!(
+            topic_action(&env, &events_after_second, 2),
+            symbol_short!("meta_set"),
+            "the overwrite must also emit meta_set"
+        );
+    }
+
     // ── TTL extension coverage (#391) ──────────────────────────────────────────
 
     /// Helper: read the instance TTL remaining via `as_contract`.
