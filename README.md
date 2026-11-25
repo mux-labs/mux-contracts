@@ -464,3 +464,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1154 -->
 - #1154: Add a regression test for require_session_key_cap in contracts/mux-account/src/lib.rs
+
+<!-- handsoff-issue-1155 -->
+- #1155: Add a regression test for pay_scope in contracts/mux-account/src/lib.rs
