@@ -458,3 +458,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1150 -->
 - #1150: Add a regression test for is_session_key_valid in contracts/mux-account/src/lib.rs
+
+<!-- handsoff-issue-1151 -->
+- #1151: Add a regression test for get_metadata in contracts/mux-account/src/lib.rs
