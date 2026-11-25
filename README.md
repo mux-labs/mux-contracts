@@ -467,3 +467,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1105 -->
 - #1105: Add a regression test for get_admin_threshold in contracts/mux-permissions/src/lib.rs
+
+<!-- handsoff-issue-1171 -->
+- #1171: Add a regression test for simulate_batch in contracts/mux-batcher/src/lib.rs
