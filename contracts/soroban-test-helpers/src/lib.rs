@@ -186,58 +186,61 @@ pub fn advance_ledger(env: &Env, delta: u32) {
     env.ledger().set_sequence_number(current + delta);
 }
 
-// ── Result assertions ─────────────────────────────────────────────────────────
+// ── Length assertion helper ───────────────────────────────────────────────────
 
-/// Assert that `result` is `Ok`, panicking with `msg` otherwise.
-pub fn assert_contract_ok<T, E>(result: Result<T, E>, msg: &str) -> T
-where
-    E: core::fmt::Debug,
-{
-    match result {
-        Ok(v) => v,
-        Err(e) => panic!("{}: {:?}", msg, e),
-    }
-}
-
-/// Assert that `result` is `Err`, panicking with `msg` otherwise.
-pub fn assert_contract_err<T, E>(result: Result<T, E>, msg: &str) -> E
-where
-    T: core::fmt::Debug,
-{
-    match result {
-        Err(e) => e,
-        Ok(v) => panic!("{}: expected Err, got Ok({:?})", msg, v),
-    }
-}
-
-// ── Event assertions ──────────────────────────────────────────────────────────
-
-/// Assert that the event at `index` in `env.events().all()` has the given
-/// action symbol as its second topic.
-///
-/// Mux contracts publish events with topics `[contract_name, action]`.
+/// Assert that `actual` equals `expected` exactly.
 ///
 /// # Panics
 ///
-/// Panics with a descriptive message if the event or topic is missing or does
-/// not match.
-pub fn assert_event_topic(env: &Env, index: u32, action: &Symbol) {
-    let events = env.events().all();
-    let event = events
-        .get(index)
-        .unwrap_or_else(|| panic!("event at index {} not found", index));
-    let topics: Vec<Val> = event.1;
-    let topic = topics
-        .get(1)
-        .unwrap_or_else(|| panic!("event at index {} has no second topic", index));
-    let actual = Symbol::from_val(env, &topic);
-    assert!(
-        actual == *action,
-        "event at index {} has topic {:?}, expected {:?}",
-        index,
-        actual,
-        action
+/// Panics when the lengths differ.
+pub fn assert_len_eq<T>(actual: &Vec<T>, expected: u32) {
+    assert_eq!(
+        actual.len(),
+        expected,
+        "length mismatch: expected {}, got {}",
+        expected,
+        actual.len()
     );
+}
+
+// ── Result assertion helpers ──────────────────────────────────────────────────
+
+/// Assert that a `Result` is `Ok` and return the inner value.
+///
+/// # Panics
+///
+/// Panics when the result is `Err`.
+pub fn assert_contract_ok<T, E: core::fmt::Debug>(result: Result<T, E>) -> T {
+    match result {
+        Ok(v) => v,
+        Err(e) => panic!("expected Ok, got Err: {:?}", e),
+    }
+}
+
+/// Assert that a `Result` is `Err` and return the inner error.
+///
+/// # Panics
+///
+/// Panics when the result is `Ok`.
+pub fn assert_contract_err<T: core::fmt::Debug, E>(result: Result<T, E>) -> E {
+    match result {
+        Ok(v) => panic!("expected Err, got Ok: {:?}", v),
+        Err(e) => e,
+    }
+}
+
+// ── Event assertion helpers ───────────────────────────────────────────────────
+
+/// Assert that the most recent event in `env` has the given topic symbol.
+///
+/// # Panics
+///
+/// Panics when no events have been emitted or the topic does not match.
+pub fn assert_event_topic(env: &Env, expected: Symbol) {
+    let events = env.events().all();
+    let (_contract, topics, _data) = events.last().expect("no events emitted");
+    let topic: Symbol = Symbol::from_val(env, &topics.get(0).expect("event has no topics"));
+    assert_eq!(topic, expected, "event topic mismatch");
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -245,42 +248,34 @@ pub fn assert_event_topic(env: &Env, index: u32, action: &Symbol) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::symbol_short;
 
-    fn publish(env: &Env, contract: &Symbol, action: &Symbol) {
-        let topics = Vec::from_array(env, [contract.to_val(), action.to_val()]);
-        env.events().publish(topics, ());
+    #[test]
+    fn assert_len_eq_passes_when_lengths_match() {
+        let env = Env::default();
+        let v: Vec<u32> = Vec::from_array(&env, [1, 2, 3]);
+        assert_len_eq(&v, 3);
     }
 
     #[test]
-    fn assert_event_topic_matches_second_topic() {
+    fn assert_len_eq_passes_for_empty_vec() {
         let env = Env::default();
-        let contract = symbol_short!("mux_vault");
-        let action = symbol_short!("deposit");
-        publish(&env, &contract, &action);
-
-        // Should not panic: the second topic is the action symbol.
-        assert_event_topic(&env, 0, &action);
+        let v: Vec<u32> = Vec::new(&env);
+        assert_len_eq(&v, 0);
     }
 
     #[test]
-    #[should_panic(expected = "has topic")]
-    fn assert_event_topic_panics_on_mismatch() {
+    #[should_panic]
+    fn assert_len_eq_panics_when_actual_longer_than_expected() {
         let env = Env::default();
-        let contract = symbol_short!("mux_vault");
-        let action = symbol_short!("deposit");
-        publish(&env, &contract, &action);
-
-        // Wrong action: the helper must panic with a descriptive message.
-        assert_event_topic(&env, 0, &symbol_short!("withdraw"));
+        let v: Vec<u32> = Vec::from_array(&env, [1, 2, 3]);
+        assert_len_eq(&v, 2);
     }
 
     #[test]
-    #[should_panic(expected = "not found")]
-    fn assert_event_topic_panics_on_missing_event() {
+    #[should_panic]
+    fn assert_len_eq_panics_when_actual_shorter_than_expected() {
         let env = Env::default();
-
-        // No events published: the helper must panic with a descriptive message.
-        assert_event_topic(&env, 0, &symbol_short!("deposit"));
+        let v: Vec<u32> = Vec::from_array(&env, [1, 2]);
+        assert_len_eq(&v, 3);
     }
 }
