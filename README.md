@@ -458,3 +458,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1129 -->
 - #1129: Add a regression test for initialize in contracts/mux-batcher/src/lib.rs
+
+<!-- handsoff-issue-1130 -->
+- #1130: Add a regression test for upgrade in contracts/mux-account-factory/src/lib.rs
