@@ -473,3 +473,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1181 -->
 - #1181: Add a regression test for check_version in contracts/mux-registry/src/lib.rs
+
+<!-- handsoff-issue-1182 -->
+- #1182: Add a regression test for get_metadata in contracts/mux-registry/src/lib.rs
