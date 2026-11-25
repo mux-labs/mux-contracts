@@ -458,3 +458,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1131 -->
 - #1131: Add a regression test for get_account_metadata in contracts/mux-account-factory/src/lib.rs
+
+<!-- handsoff-issue-1132 -->
+- #1132: Add a regression test for simulate_deploy in contracts/mux-account-factory/src/lib.rs
