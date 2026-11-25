@@ -486,6 +486,18 @@ Apache-2.0
 <!-- handsoff-issue-1105 -->
 - #1105: Add a regression test for get_admin_threshold in contracts/mux-permissions/src/lib.rs
 
+<!-- handsoff-issue-1164 -->
+- #1164: Add a regression test for quorum_threshold in contracts/mux-recovery/src/lib.rs
+
+<!-- handsoff-issue-1169 -->
+- #1169: Add a regression test for estimate_fees in contracts/mux-batcher/src/lib.rs
+
+<!-- handsoff-issue-1170 -->
+- #1170: Add a regression test for get_registry_metadata in contracts/mux-batcher/src/lib.rs
+
+<!-- handsoff-issue-1172 -->
+- #1172: Add a regression test for make_nop_ops in contracts/mux-batcher/src/lib.rs
+
 <!-- handsoff-issue-1179 -->
 - #1179: Add a regression test for get_contract_id in contracts/mux-delegation/src/lib.rs
 
