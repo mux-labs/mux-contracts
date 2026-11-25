@@ -486,6 +486,18 @@ Apache-2.0
 <!-- handsoff-issue-1105 -->
 - #1105: Add a regression test for get_admin_threshold in contracts/mux-permissions/src/lib.rs
 
+<!-- handsoff-issue-1156 -->
+- #1156: Add a regression test for ping_scope in contracts/mux-account/src/lib.rs
+
+<!-- handsoff-issue-1157 -->
+- #1157: Add a regression test for emit in contracts/mux-wallet-registry/src/lib.rs
+
+<!-- handsoff-issue-1158 -->
+- #1158: Add a regression test for topic_action in contracts/mux-wallet-registry/src/lib.rs
+
+<!-- handsoff-issue-1159 -->
+- #1159: Add a regression test for topic_tag in contracts/mux-wallet-registry/src/lib.rs
+
 <!-- handsoff-issue-1160 -->
 - #1160: Add a regression test for initiate_recovery in contracts/mux-recovery/src/lib.rs
 
