@@ -467,3 +467,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1105 -->
 - #1105: Add a regression test for get_admin_threshold in contracts/mux-permissions/src/lib.rs
+
+<!-- handsoff-issue-1179 -->
+- #1179: Add a regression test for get_contract_id in contracts/mux-delegation/src/lib.rs
