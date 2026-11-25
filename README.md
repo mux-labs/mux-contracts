@@ -464,3 +464,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1141 -->
 - #1141: Add a regression test for initialize in contracts/mux-registry/src/lib.rs
+
+<!-- handsoff-issue-1143 -->
+- #1143: Add a regression test for get_metadata in contracts/mux-permissions/src/lib.rs
