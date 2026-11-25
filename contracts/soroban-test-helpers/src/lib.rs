@@ -182,110 +182,82 @@ use soroban_sdk::{
 /// advance_ledger(&env, 100);
 /// ```
 pub fn advance_ledger(env: &Env, delta: u32) {
-    let current = env.ledger().sequence();
-    env.ledger().set_sequence_number(current + delta);
+    let seq = env.ledger().sequence();
+    env.ledger().set_sequence_number(seq + delta);
 }
 
-// ── Event helpers ─────────────────────────────────────────────────────────────
+// ── Result assertions ─────────────────────────────────────────────────────────
 
-/// Assert that exactly `expected` events have been emitted.
-///
-/// # Panics
-/// Panics when the emitted event count does not equal `expected`.
-pub fn assert_event_count(env: &Env, expected: u32) {
-    let actual = env.events().all().len();
-    assert_eq!(
-        actual, expected,
-        "expected {} events, found {}",
-        expected, actual
-    );
+/// Assert that `result` is `Ok`, panicking with `msg` otherwise.
+pub fn assert_contract_ok<T, E: core::fmt::Debug>(result: Result<T, E>, msg: &str) -> T {
+    match result {
+        Ok(v) => v,
+        Err(e) => panic!("{}: unexpected Err({:?})", msg, e),
+    }
 }
 
-/// Assert that the most recent event's first topic equals `topic`.
-///
-/// # Panics
-/// Panics when no events have been emitted or the topic does not match.
+/// Assert that `result` is `Err`, panicking with `msg` otherwise.
+pub fn assert_contract_err<T: core::fmt::Debug, E>(result: Result<T, E>, msg: &str) -> E {
+    match result {
+        Ok(v) => panic!("{}: unexpected Ok({:?})", msg, v),
+        Err(e) => e,
+    }
+}
+
+// ── Event assertions ──────────────────────────────────────────────────────────
+
+/// Assert that the most recent event has `topic` as its first topic entry.
 pub fn assert_event_topic(env: &Env, topic: Symbol) {
     let events = env.events().all();
-    assert!(!events.is_empty(), "no events emitted");
-    let (_contract, topics, _data) = events.last().unwrap();
-    let first: Val = topics.get(0).expect("event has no topics");
-    let actual = Symbol::from_val(env, &first);
-    assert_eq!(actual, topic, "event topic mismatch");
+    let (_contract, topics, _data) = events.last().expect("no events emitted");
+    let first: Symbol = Symbol::from_val(env, &topics.get(0).expect("event has no topics"));
+    assert_eq!(first, topic, "unexpected event topic");
 }
 
-// ── Result helpers ────────────────────────────────────────────────────────────
+// ── Length / bound assertions ─────────────────────────────────────────────────
 
-/// Assert that a `Result` is `Ok` and return the contained value.
+/// Assert that `actual` does not exceed `max` (storage / batch bound check).
+///
+/// Use after cap-rejection tests to prove collections did not grow past the
+/// configured griefing bound.
 ///
 /// # Panics
-/// Panics when the result is `Err`.
-pub fn assert_contract_ok<T, E: core::fmt::Debug>(result: Result<T, E>) -> T {
-    match result {
-        Ok(value) => value,
-        Err(err) => panic!("expected Ok, got Err: {:?}", err),
-    }
-}
-
-/// Assert that a `Result` is `Err` and return the contained error.
 ///
-/// # Panics
-/// Panics when the result is `Ok`.
-pub fn assert_contract_err<T: core::fmt::Debug, E>(result: Result<T, E>) -> E {
-    match result {
-        Ok(value) => panic!("expected Err, got Ok: {:?}", value),
-        Err(err) => err,
-    }
+/// Panics when `actual > max`.
+pub fn assert_len_at_most(actual: u32, max: u32) {
+    assert!(
+        actual <= max,
+        "length {} exceeds maximum {}",
+        actual,
+        max
+    );
 }
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::symbol_short;
 
     #[test]
-    fn assert_event_count_passes_when_count_matches() {
-        let env = Env::default();
-        let contract = Address::generate(&env);
-
-        env.events().publish((symbol_short!("a"),), 1u32);
-        env.events().publish((symbol_short!("b"),), 2u32);
-
-        // Should not panic: exactly two events were emitted.
-        assert_event_count(&env, 2);
-        let _ = contract;
+    fn assert_len_at_most_accepts_within_bound() {
+        // Equal to the bound is allowed.
+        assert_len_at_most(0, 0);
+        assert_len_at_most(5, 5);
+        // Strictly below the bound is allowed.
+        assert_len_at_most(0, 10);
+        assert_len_at_most(9, 10);
     }
 
     #[test]
-    fn assert_event_count_passes_when_zero_events() {
-        let env = Env::default();
-
-        // Should not panic: no events emitted.
-        assert_event_count(&env, 0);
+    #[should_panic(expected = "exceeds maximum")]
+    fn assert_len_at_most_panics_when_over_bound() {
+        // One past the bound must panic.
+        assert_len_at_most(11, 10);
     }
 
     #[test]
-    #[should_panic]
-    fn assert_event_count_panics_when_count_too_low() {
-        let env = Env::default();
-
-        env.events().publish((symbol_short!("a"),), 1u32);
-
-        // One event emitted but two expected: must panic.
-        assert_event_count(&env, 2);
-    }
-
-    #[test]
-    #[should_panic]
-    fn assert_event_count_panics_when_count_too_high() {
-        let env = Env::default();
-
-        env.events().publish((symbol_short!("a"),), 1u32);
-        env.events().publish((symbol_short!("b"),), 2u32);
-
-        // Two events emitted but one expected: must panic.
-        assert_event_count(&env, 1);
+    #[should_panic(expected = "exceeds maximum")]
+    fn assert_len_at_most_panics_when_max_is_zero() {
+        // Any non-zero length exceeds a zero bound.
+        assert_len_at_most(1, 0);
     }
 }
