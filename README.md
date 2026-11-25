@@ -473,3 +473,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1166 -->
 - #1166: Add a regression test for execute_batch in contracts/mux-batcher/src/lib.rs
+
+<!-- handsoff-issue-1167 -->
+- #1167: Add a regression test for max_batch_size in contracts/mux-batcher/src/lib.rs
