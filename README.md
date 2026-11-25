@@ -461,3 +461,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1136 -->
 - #1136: Add a regression test for record_spend in contracts/mux-policy/src/lib.rs
+
+<!-- handsoff-issue-1137 -->
+- #1137: Add a regression test for initialize in contracts/mux-delegation/src/lib.rs
