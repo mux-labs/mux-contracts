@@ -470,3 +470,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1165 -->
 - #1165: Add a regression test for extend_ttl in contracts/mux-spending-policy/src/lib.rs
+
+<!-- handsoff-issue-1166 -->
+- #1166: Add a regression test for execute_batch in contracts/mux-batcher/src/lib.rs
