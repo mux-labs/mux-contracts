@@ -458,3 +458,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1135 -->
 - #1135: Add a regression test for get_daily_limit in contracts/mux-policy/src/lib.rs
+
+<!-- handsoff-issue-1136 -->
+- #1136: Add a regression test for record_spend in contracts/mux-policy/src/lib.rs
