@@ -476,3 +476,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1158 -->
 - #1158: Add a regression test for topic_action in contracts/mux-wallet-registry/src/lib.rs
+
+<!-- handsoff-issue-1159 -->
+- #1159: Add a regression test for topic_tag in contracts/mux-wallet-registry/src/lib.rs
