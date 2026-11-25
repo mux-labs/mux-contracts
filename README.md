@@ -458,3 +458,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1146 -->
 - #1146: Add a regression test for set_delegate in contracts/mux-account/src/lib.rs
+
+<!-- handsoff-issue-1147 -->
+- #1147: Add a regression test for acquire_guard in contracts/mux-account/src/lib.rs
