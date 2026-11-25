@@ -456,6 +456,24 @@ Apache-2.0
 <!-- handsoff-issue-972 -->
 - #972: mux-account: add Rust tests for the delegate-count cap and the spend-limit enforcement path
 
+<!-- handsoff-issue-1129 -->
+- #1129: Add a regression test for initialize in contracts/mux-batcher/src/lib.rs
+
+<!-- handsoff-issue-1130 -->
+- #1130: Add a regression test for upgrade in contracts/mux-account-factory/src/lib.rs
+
+<!-- handsoff-issue-1150 -->
+- #1150: Add a regression test for is_session_key_valid in contracts/mux-account/src/lib.rs
+
+<!-- handsoff-issue-1151 -->
+- #1151: Add a regression test for get_metadata in contracts/mux-account/src/lib.rs
+
+<!-- handsoff-issue-1133 -->
+- #1133: Add a regression test for simulate_deploy_with_metadata in contracts/mux-account-factory/src/lib.rs
+
+<!-- handsoff-issue-1134 -->
+- #1134: Add a regression test for upgrade in contracts/mux-policy/src/lib.rs
+
 <!-- handsoff-issue-1102 -->
 - #1102: Add a regression test for upgrade in contracts/mux-permissions/src/lib.rs
 
@@ -479,3 +497,24 @@ Apache-2.0
 
 <!-- handsoff-issue-1183 -->
 - #1183: Add a regression test for topic_tag in contracts/mux-registry/src/lib.rs
+
+<!-- handsoff-issue-1165 -->
+- #1165: Add a regression test for extend_ttl in contracts/mux-spending-policy/src/lib.rs
+
+<!-- handsoff-issue-1166 -->
+- #1166: Add a regression test for execute_batch in contracts/mux-batcher/src/lib.rs
+
+<!-- handsoff-issue-1167 -->
+- #1167: Add a regression test for max_batch_size in contracts/mux-batcher/src/lib.rs
+
+<!-- handsoff-issue-1168 -->
+- #1168: Add a regression test for submit_batch in contracts/mux-batcher/src/lib.rs
+
+<!-- handsoff-issue-1171 -->
+- #1171: Add a regression test for simulate_batch in contracts/mux-batcher/src/lib.rs
+
+<!-- handsoff-issue-1146 -->
+- #1146: Add a regression test for set_delegate in contracts/mux-account/src/lib.rs
+
+<!-- handsoff-issue-1147 -->
+- #1147: Add a regression test for acquire_guard in contracts/mux-account/src/lib.rs
