@@ -458,3 +458,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1102 -->
 - #1102: Add a regression test for upgrade in contracts/mux-permissions/src/lib.rs
+
+<!-- handsoff-issue-1103 -->
+- #1103: Add a regression test for has_permission in contracts/mux-permissions/src/lib.rs
