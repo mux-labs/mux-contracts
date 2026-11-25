@@ -1767,6 +1767,51 @@ mod tests {
         ]
     }
 
+    #[test]
+    fn test_pay_scope_is_non_empty_and_grants_pay() {
+        let (env, client, owner, contract_id) = setup();
+        client.initialize(&owner, &Vec::new(&env));
+
+        let scopes = pay_scope(&env);
+        assert_eq!(scopes.len(), 1);
+        assert_eq!(scopes.get(0).unwrap().method, symbol_short!("pay"));
+
+        let now = env.ledger().timestamp();
+        env.as_contract(&contract_id, || {
+            let pay_key = Address::generate(&env);
+            let empty_key = Address::generate(&env);
+            env.storage()
+                .instance()
+                .set(
+                    &DataKey::SessionKey(owner.clone(), pay_key),
+                    &SessionKeyRecord {
+                        expires_at: now + 60,
+                        scopes: pay_scope(&env),
+                        revoked: false,
+                    },
+                );
+            env.storage()
+                .instance()
+                .set(
+                    &DataKey::SessionKey(owner.clone(), empty_key),
+                    &SessionKeyRecord {
+                        expires_at: now + 60,
+                        scopes: Vec::new(&env),
+                        revoked: false,
+                    },
+                );
+
+            assert_eq!(
+                MuxAccount::authorize_session(&env, &pay_key, &symbol_short!("pay")),
+                Ok(())
+            );
+            assert_eq!(
+                MuxAccount::authorize_session(&env, &empty_key, &symbol_short!("pay")),
+                Err(MuxAccountError::Unauthorized)
+            );
+        });
+    }
+
     /// Scope list granting exactly the `ping` method of `ExecuteTarget`, used
     /// by the dispatch tests.
     fn ping_scope(env: &Env) -> soroban_sdk::Vec<Scope> {
