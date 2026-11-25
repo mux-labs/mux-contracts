@@ -461,3 +461,21 @@ Apache-2.0
 
 <!-- handsoff-issue-1134 -->
 - #1134: Add a regression test for upgrade in contracts/mux-policy/src/lib.rs
+
+<!-- handsoff-issue-1102 -->
+- #1102: Add a regression test for upgrade in contracts/mux-permissions/src/lib.rs
+
+<!-- handsoff-issue-1103 -->
+- #1103: Add a regression test for has_permission in contracts/mux-permissions/src/lib.rs
+
+<!-- handsoff-issue-1104 -->
+- #1104: Add a regression test for set_admin_threshold in contracts/mux-permissions/src/lib.rs
+
+<!-- handsoff-issue-1105 -->
+- #1105: Add a regression test for get_admin_threshold in contracts/mux-permissions/src/lib.rs
+
+<!-- handsoff-issue-1146 -->
+- #1146: Add a regression test for set_delegate in contracts/mux-account/src/lib.rs
+
+<!-- handsoff-issue-1147 -->
+- #1147: Add a regression test for acquire_guard in contracts/mux-account/src/lib.rs
