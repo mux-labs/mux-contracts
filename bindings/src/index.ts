@@ -138,3 +138,4 @@ export * as registryExamples from "./examples/registry-invoke";
 // Provides MuxBatcherClient + cap constants + assertBatchWithinCaps under the
 // `batcher` namespace for consumers who prefer a grouped import surface.
 export * as batcher from "./batcher";
+export * from "./serialization";

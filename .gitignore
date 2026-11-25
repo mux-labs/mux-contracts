@@ -75,3 +75,22 @@ Thumbs.db
 *.tmp
 *.log
 *.pid
+
+# ── Test snapshots / vitest ───────────────────────────────────────────────────
+**/__snapshots__/
+*.snap
+**/*.snap
+vitest-results/
+test-results/
+coverage/
+
+# ── OS / editor noise ────────────────────────────────────────────────────────
+.DS_Store
+*.orig
+*.rej
+*.bak
+
+# ── Package manager lock files (keep package-lock.json, ignore others) ────────
+yarn.lock
+pnpm-lock.yaml
+
