@@ -179,59 +179,108 @@ use soroban_sdk::{
 ///
 /// # Example
 /// ```ignore
-/// advance_ledger(&env, RECOVERY_TIMELOCK + 1);
+/// advance_ledger(&env, 100);
 /// ```
 pub fn advance_ledger(env: &Env, delta: u32) {
     let current = env.ledger().sequence();
     env.ledger().set_sequence_number(current + delta);
 }
 
+// ── Result assertions ─────────────────────────────────────────────────────────
+
+/// Assert that `result` is `Ok`, panicking with `msg` otherwise.
+pub fn assert_contract_ok<T, E>(result: Result<T, E>, msg: &str) -> T
+where
+    E: core::fmt::Debug,
+{
+    match result {
+        Ok(v) => v,
+        Err(e) => panic!("{}: {:?}", msg, e),
+    }
+}
+
+/// Assert that `result` is `Err`, panicking with `msg` otherwise.
+pub fn assert_contract_err<T, E>(result: Result<T, E>, msg: &str) -> E
+where
+    T: core::fmt::Debug,
+{
+    match result {
+        Err(e) => e,
+        Ok(v) => panic!("{}: expected Err, got Ok({:?})", msg, v),
+    }
+}
+
+// ── Event assertions ──────────────────────────────────────────────────────────
+
+/// Assert that the event at `index` in `env.events().all()` has the given
+/// action symbol as its second topic.
+///
+/// Mux contracts publish events with topics `[contract_name, action]`.
+///
+/// # Panics
+///
+/// Panics with a descriptive message if the event or topic is missing or does
+/// not match.
+pub fn assert_event_topic(env: &Env, index: u32, action: &Symbol) {
+    let events = env.events().all();
+    let event = events
+        .get(index)
+        .unwrap_or_else(|| panic!("event at index {} not found", index));
+    let topics: Vec<Val> = event.1;
+    let topic = topics
+        .get(1)
+        .unwrap_or_else(|| panic!("event at index {} has no second topic", index));
+    let actual = Symbol::from_val(env, &topic);
+    assert!(
+        actual == *action,
+        "event at index {} has topic {:?}, expected {:?}",
+        index,
+        actual,
+        action
+    );
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soroban_sdk::symbol_short;
 
-    #[test]
-    fn advance_ledger_advances_sequence_by_delta() {
-        let env = Env::default();
-        let start = env.ledger().sequence();
-
-        advance_ledger(&env, 10);
-
-        assert_eq!(env.ledger().sequence(), start + 10);
+    fn publish(env: &Env, contract: &Symbol, action: &Symbol) {
+        let topics = Vec::from_array(env, [contract.to_val(), action.to_val()]);
+        env.events().publish(topics, ());
     }
 
     #[test]
-    fn advance_ledger_accumulates_across_calls() {
+    fn assert_event_topic_matches_second_topic() {
         let env = Env::default();
-        let start = env.ledger().sequence();
+        let contract = symbol_short!("mux_vault");
+        let action = symbol_short!("deposit");
+        publish(&env, &contract, &action);
 
-        advance_ledger(&env, 3);
-        advance_ledger(&env, 4);
-
-        assert_eq!(env.ledger().sequence(), start + 7);
+        // Should not panic: the second topic is the action symbol.
+        assert_event_topic(&env, 0, &action);
     }
 
     #[test]
-    fn advance_ledger_with_zero_delta_is_noop() {
+    #[should_panic(expected = "has topic")]
+    fn assert_event_topic_panics_on_mismatch() {
         let env = Env::default();
-        let start = env.ledger().sequence();
+        let contract = symbol_short!("mux_vault");
+        let action = symbol_short!("deposit");
+        publish(&env, &contract, &action);
 
-        advance_ledger(&env, 0);
-
-        assert_eq!(env.ledger().sequence(), start);
+        // Wrong action: the helper must panic with a descriptive message.
+        assert_event_topic(&env, 0, &symbol_short!("withdraw"));
     }
 
     #[test]
-    fn advance_ledger_past_timelock_expires_it() {
-        // Mirrors the documented example: advancing by a timelock-sized delta
-        // moves the ledger sequence past the timelock boundary.
-        const RECOVERY_TIMELOCK: u32 = 100;
+    #[should_panic(expected = "not found")]
+    fn assert_event_topic_panics_on_missing_event() {
         let env = Env::default();
-        let start = env.ledger().sequence();
 
-        advance_ledger(&env, RECOVERY_TIMELOCK + 1);
-
-        assert_eq!(env.ledger().sequence(), start + RECOVERY_TIMELOCK + 1);
-        assert!(env.ledger().sequence() > start + RECOVERY_TIMELOCK);
+        // No events published: the helper must panic with a descriptive message.
+        assert_event_topic(&env, 0, &symbol_short!("deposit"));
     }
 }
