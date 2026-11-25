@@ -458,3 +458,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1106 -->
 - #1106: Add a regression test for propose_admin in contracts/mux-permissions/src/lib.rs
+
+<!-- handsoff-issue-1107 -->
+- #1107: Add a regression test for approve_admin in contracts/mux-permissions/src/lib.rs
