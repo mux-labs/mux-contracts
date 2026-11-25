@@ -456,14 +456,14 @@ Apache-2.0
 <!-- handsoff-issue-972 -->
 - #972: mux-account: add Rust tests for the delegate-count cap and the spend-limit enforcement path
 
-<!-- handsoff-issue-1135 -->
-- #1135: Add a regression test for get_daily_limit in contracts/mux-policy/src/lib.rs
+<!-- handsoff-issue-1102 -->
+- #1102: Add a regression test for upgrade in contracts/mux-permissions/src/lib.rs
 
-<!-- handsoff-issue-1136 -->
-- #1136: Add a regression test for record_spend in contracts/mux-policy/src/lib.rs
+<!-- handsoff-issue-1103 -->
+- #1103: Add a regression test for has_permission in contracts/mux-permissions/src/lib.rs
 
-<!-- handsoff-issue-1137 -->
-- #1137: Add a regression test for initialize in contracts/mux-delegation/src/lib.rs
+<!-- handsoff-issue-1104 -->
+- #1104: Add a regression test for set_admin_threshold in contracts/mux-permissions/src/lib.rs
 
-<!-- handsoff-issue-1138 -->
-- #1138: Add a regression test for upgrade in contracts/mux-delegation/src/lib.rs
+<!-- handsoff-issue-1105 -->
+- #1105: Add a regression test for get_admin_threshold in contracts/mux-permissions/src/lib.rs
