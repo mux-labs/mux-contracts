@@ -458,3 +458,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1148 -->
 - #1148: Add a regression test for get_delegate in contracts/mux-account/src/lib.rs
+
+<!-- handsoff-issue-1149 -->
+- #1149: Add a regression test for nonce in contracts/mux-account/src/lib.rs
