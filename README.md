@@ -476,3 +476,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1162 -->
 - #1162: Add a regression test for recovery_request in contracts/mux-recovery/src/lib.rs
+
+<!-- handsoff-issue-1163 -->
+- #1163: Add a regression test for registry_id in contracts/mux-recovery/src/lib.rs
