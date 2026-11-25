@@ -23,7 +23,7 @@
 // ─── RULES REFERENCE (docs/no-testutils-wasm.md) ─────────────────────────────
 //
 //  Layer                          Testutils allowed?  Notes
-//  ─────────────────────────────  ──────────────────  ──────────────────────────
+//  -----------------------------  ------------------  --------------------------
 //  [dependencies] of mux-* crates  NO                 soroban-sdk must be feature-free
 //  [dev-dependencies]              YES                 used by #[cfg(test)] modules only
 //  Optional crate feature          YES                 opt-in for local testing
@@ -182,24 +182,54 @@ use soroban_sdk::{
 /// advance_ledger(&env, 100);
 /// ```
 pub fn advance_ledger(env: &Env, delta: u32) {
-    let current = env.ledger().sequence();
-    env.ledger().set_sequence_number(current + delta);
+    let seq = env.ledger().sequence();
+    env.ledger().set_sequence_number(seq + delta);
 }
 
-// ── Length assertion helper ───────────────────────────────────────────────────
+// ── Result assertions ─────────────────────────────────────────────────────────
 
-/// Assert that `actual` equals `expected` exactly.
+/// Assert that `result` is `Ok`, panicking with `msg` otherwise.
+pub fn assert_contract_ok<T, E: core::fmt::Debug>(result: Result<T, E>, msg: &str) -> T {
+    match result {
+        Ok(v) => v,
+        Err(e) => panic!("{}: unexpected Err({:?})", msg, e),
+    }
+}
+
+/// Assert that `result` is `Err`, panicking with `msg` otherwise.
+pub fn assert_contract_err<T: core::fmt::Debug, E>(result: Result<T, E>, msg: &str) -> E {
+    match result {
+        Ok(v) => panic!("{}: unexpected Ok({:?})", msg, v),
+        Err(e) => e,
+    }
+}
+
+// ── Event assertions ──────────────────────────────────────────────────────────
+
+/// Assert that the most recent event has `topic` as its first topic entry.
+pub fn assert_event_topic(env: &Env, topic: Symbol) {
+    let events = env.events().all();
+    let (_contract, topics, _data) = events.last().expect("no events emitted");
+    let first: Symbol = Symbol::from_val(env, &topics.get(0).expect("event has no topics"));
+    assert_eq!(first, topic, "unexpected event topic");
+}
+
+// ── Length / bound assertions ─────────────────────────────────────────────────
+
+/// Assert that `actual` does not exceed `max` (storage / batch bound check).
+///
+/// Use after cap-rejection tests to prove collections did not grow past the
+/// configured griefing bound.
 ///
 /// # Panics
 ///
-/// Panics when the lengths differ.
-pub fn assert_len_eq<T>(actual: &Vec<T>, expected: u32) {
-    assert_eq!(
-        actual.len(),
-        expected,
-        "length mismatch: expected {}, got {}",
-        expected,
-        actual.len()
+/// Panics when `actual > max`.
+pub fn assert_len_at_most(actual: u32, max: u32) {
+    assert!(
+        actual <= max,
+        "length {} exceeds maximum {}",
+        actual,
+        max
     );
 }
 
@@ -277,5 +307,29 @@ mod tests {
         let env = Env::default();
         let v: Vec<u32> = Vec::from_array(&env, [1, 2]);
         assert_len_eq(&v, 3);
+    }
+
+    #[test]
+    fn assert_len_at_most_accepts_within_bound() {
+        // Equal to the bound is allowed.
+        assert_len_at_most(0, 0);
+        assert_len_at_most(5, 5);
+        // Strictly below the bound is allowed.
+        assert_len_at_most(0, 10);
+        assert_len_at_most(9, 10);
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds maximum")]
+    fn assert_len_at_most_panics_when_over_bound() {
+        // One past the bound must panic.
+        assert_len_at_most(11, 10);
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds maximum")]
+    fn assert_len_at_most_panics_when_max_is_zero() {
+        // Any non-zero length exceeds a zero bound.
+        assert_len_at_most(1, 0);
     }
 }
