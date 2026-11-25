@@ -464,3 +464,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1108 -->
 - #1108: Add a regression test for set_metadata in contracts/mux-permissions/src/lib.rs
+
+<!-- handsoff-issue-1110 -->
+- #1110: Add a regression test for initialize in contracts/mux-account/src/lib.rs
