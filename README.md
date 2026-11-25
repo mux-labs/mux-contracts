@@ -458,3 +458,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1144 -->
 - #1144: Add a regression test for check_permission_inner in contracts/mux-permissions/src/lib.rs
+
+<!-- handsoff-issue-1145 -->
+- #1145: Add a regression test for extend_ttl in contracts/mux-permissions/src/lib.rs
