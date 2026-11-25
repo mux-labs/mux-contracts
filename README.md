@@ -470,3 +470,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1156 -->
 - #1156: Add a regression test for ping_scope in contracts/mux-account/src/lib.rs
+
+<!-- handsoff-issue-1157 -->
+- #1157: Add a regression test for emit in contracts/mux-wallet-registry/src/lib.rs
