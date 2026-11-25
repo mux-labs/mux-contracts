@@ -233,9 +233,81 @@ pub fn assert_len_at_most(actual: u32, max: u32) {
     );
 }
 
+// ── Result assertion helpers ──────────────────────────────────────────────────
+
+/// Assert that a `Result` is `Ok` and return the inner value.
+///
+/// # Panics
+///
+/// Panics when the result is `Err`.
+pub fn assert_contract_ok<T, E: core::fmt::Debug>(result: Result<T, E>) -> T {
+    match result {
+        Ok(v) => v,
+        Err(e) => panic!("expected Ok, got Err: {:?}", e),
+    }
+}
+
+/// Assert that a `Result` is `Err` and return the inner error.
+///
+/// # Panics
+///
+/// Panics when the result is `Ok`.
+pub fn assert_contract_err<T: core::fmt::Debug, E>(result: Result<T, E>) -> E {
+    match result {
+        Ok(v) => panic!("expected Err, got Ok: {:?}", v),
+        Err(e) => e,
+    }
+}
+
+// ── Event assertion helpers ───────────────────────────────────────────────────
+
+/// Assert that the most recent event in `env` has the given topic symbol.
+///
+/// # Panics
+///
+/// Panics when no events have been emitted or the topic does not match.
+pub fn assert_event_topic(env: &Env, expected: Symbol) {
+    let events = env.events().all();
+    let (_contract, topics, _data) = events.last().expect("no events emitted");
+    let topic: Symbol = Symbol::from_val(env, &topics.get(0).expect("event has no topics"));
+    assert_eq!(topic, expected, "event topic mismatch");
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn assert_len_eq_passes_when_lengths_match() {
+        let env = Env::default();
+        let v: Vec<u32> = Vec::from_array(&env, [1, 2, 3]);
+        assert_len_eq(&v, 3);
+    }
+
+    #[test]
+    fn assert_len_eq_passes_for_empty_vec() {
+        let env = Env::default();
+        let v: Vec<u32> = Vec::new(&env);
+        assert_len_eq(&v, 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn assert_len_eq_panics_when_actual_longer_than_expected() {
+        let env = Env::default();
+        let v: Vec<u32> = Vec::from_array(&env, [1, 2, 3]);
+        assert_len_eq(&v, 2);
+    }
+
+    #[test]
+    #[should_panic]
+    fn assert_len_eq_panics_when_actual_shorter_than_expected() {
+        let env = Env::default();
+        let v: Vec<u32> = Vec::from_array(&env, [1, 2]);
+        assert_len_eq(&v, 3);
+    }
 
     #[test]
     fn assert_len_at_most_accepts_within_bound() {
