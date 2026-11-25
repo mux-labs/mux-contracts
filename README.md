@@ -473,3 +473,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1169 -->
 - #1169: Add a regression test for estimate_fees in contracts/mux-batcher/src/lib.rs
+
+<!-- handsoff-issue-1170 -->
+- #1170: Add a regression test for get_registry_metadata in contracts/mux-batcher/src/lib.rs
