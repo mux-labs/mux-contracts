@@ -476,3 +476,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1182 -->
 - #1182: Add a regression test for get_metadata in contracts/mux-registry/src/lib.rs
+
+<!-- handsoff-issue-1183 -->
+- #1183: Add a regression test for topic_tag in contracts/mux-registry/src/lib.rs
