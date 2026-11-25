@@ -458,3 +458,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1139 -->
 - #1139: Add a regression test for get_delegate_permissions in contracts/mux-delegation/src/lib.rs
+
+<!-- handsoff-issue-1140 -->
+- #1140: Add a regression test for get_delegates in contracts/mux-delegation/src/lib.rs
