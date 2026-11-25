@@ -470,3 +470,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1164 -->
 - #1164: Add a regression test for quorum_threshold in contracts/mux-recovery/src/lib.rs
+
+<!-- handsoff-issue-1169 -->
+- #1169: Add a regression test for estimate_fees in contracts/mux-batcher/src/lib.rs
