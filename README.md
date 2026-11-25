@@ -470,3 +470,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1160 -->
 - #1160: Add a regression test for initiate_recovery in contracts/mux-recovery/src/lib.rs
+
+<!-- handsoff-issue-1161 -->
+- #1161: Add a regression test for approve_recovery in contracts/mux-recovery/src/lib.rs
