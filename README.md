@@ -455,3 +455,6 @@ Apache-2.0
 
 <!-- handsoff-issue-972 -->
 - #972: mux-account: add Rust tests for the delegate-count cap and the spend-limit enforcement path
+
+<!-- handsoff-issue-1129 -->
+- #1129: Add a regression test for initialize in contracts/mux-batcher/src/lib.rs
