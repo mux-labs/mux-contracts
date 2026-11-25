@@ -486,6 +486,18 @@ Apache-2.0
 <!-- handsoff-issue-1105 -->
 - #1105: Add a regression test for get_admin_threshold in contracts/mux-permissions/src/lib.rs
 
+<!-- handsoff-issue-1180 -->
+- #1180: Add a regression test for get_version in contracts/mux-registry/src/lib.rs
+
+<!-- handsoff-issue-1181 -->
+- #1181: Add a regression test for check_version in contracts/mux-registry/src/lib.rs
+
+<!-- handsoff-issue-1182 -->
+- #1182: Add a regression test for get_metadata in contracts/mux-registry/src/lib.rs
+
+<!-- handsoff-issue-1183 -->
+- #1183: Add a regression test for topic_tag in contracts/mux-registry/src/lib.rs
+
 <!-- handsoff-issue-1165 -->
 - #1165: Add a regression test for extend_ttl in contracts/mux-spending-policy/src/lib.rs
 
