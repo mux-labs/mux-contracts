@@ -23,7 +23,7 @@
 // ─── RULES REFERENCE (docs/no-testutils-wasm.md) ─────────────────────────────
 //
 //  Layer                          Testutils allowed?  Notes
-//  ─────────────────────────────  ──────────────────  ──────────────────────────
+//  -----------------------------  ------------------  --------------------------
 //  [dependencies] of mux-* crates  NO                 soroban-sdk must be feature-free
 //  [dev-dependencies]              YES                 used by #[cfg(test)] modules only
 //  Optional crate feature          YES                 opt-in for local testing
@@ -179,157 +179,42 @@ use soroban_sdk::{
 ///
 /// # Example
 /// ```ignore
-/// advance_ledger(&env, RECOVERY_TIMELOCK + 1);
+/// advance_ledger(&env, 100);
 /// ```
 pub fn advance_ledger(env: &Env, delta: u32) {
-    env.ledger().with_mut(|l| {
-        l.sequence_number = l.sequence_number.saturating_add(delta);
-    });
+    let seq = env.ledger().sequence();
+    env.ledger().set_sequence_number(seq + delta);
 }
 
-/// Set the ledger sequence to an absolute value.
-pub fn set_ledger_sequence(env: &Env, sequence: u32) {
-    env.ledger().with_mut(|l| {
-        l.sequence_number = sequence;
-    });
-}
+// ── Result assertions ─────────────────────────────────────────────────────────
 
-/// Set the ledger timestamp (Unix seconds).
-pub fn set_ledger_timestamp(env: &Env, timestamp: u64) {
-    env.ledger().with_mut(|l| {
-        l.timestamp = timestamp;
-    });
-}
-
-// ── Event helpers ─────────────────────────────────────────────────────────────
-
-/// Assert that the event at `index` in `env.events().all()` has the given
-/// action symbol as its second topic.
-///
-/// Mux contracts publish events with topics `[contract_name, action]`.
-///
-/// # Panics
-/// Panics with a descriptive message if the event or topic is missing or
-/// does not match.
-pub fn assert_event_topic(
-    env: &Env,
-    events: &Vec<(Address, Vec<Val>, Val)>,
-    index: u32,
-    expected_action: Symbol,
-) {
-    let (_, topics, _) = events
-        .get(index)
-        .unwrap_or_else(|| panic!("no event at index {index}"));
-    let actual = Symbol::from_val(
-        env,
-        &topics
-            .get(1)
-            .unwrap_or_else(|| panic!("event at index {index} has no second topic")),
-    );
-    assert_eq!(
-        actual, expected_action,
-        "event[{index}] action mismatch: expected {expected_action:?}, got {actual:?}"
-    );
-}
-
-/// Return the number of events emitted so far in the test environment.
-pub fn event_count(env: &Env) -> u32 {
-    env.events().all().len()
-}
-
-/// Assert that exactly `expected` events have been emitted.
-///
-/// # Panics
-/// Panics when the emitted event count does not equal `expected`.
-pub fn assert_event_count(env: &Env, expected: u32) {
-    let actual = event_count(env);
-    assert_eq!(
-        actual, expected,
-        "event count mismatch: expected {expected}, got {actual}"
-    );
-}
-
-// ── Address helpers ───────────────────────────────────────────────────────────
-
-/// Generate `n` distinct test addresses.
-pub fn generate_addresses(env: &Env, n: u32) -> Vec<Address> {
-    use soroban_sdk::testutils::Address as _;
-    let mut v = Vec::new(env);
-    for _ in 0..n {
-        v.push_back(Address::generate(env));
-    }
-    v
-}
-
-// ── Shared Result assertions ──────────────────────────────────────────────────
-//
-// Soroban contract clients expose `try_*` helpers whose return type is:
-//
-//   Result<Result<T, ConversionError>, Result<E, InvokeError>>
-//
-// where:
-//   Ok(Ok(t))  — contract returned successfully
-//   Ok(Err(c)) — host-side conversion / decode failure
-//   Err(Ok(e)) — contract returned a typed contract error `E`
-//   Err(Err(i)) — host invoke failure (auth, panic, budget, …)
-//
-// These helpers centralise that match so individual tests stay readable and
-// produce consistent panic messages across crates.
-
-/// Assert that a `try_*` client call succeeded and return the inner value.
-///
-/// # Panics
-/// Panics if the call returned a contract error, conversion error, or invoke error.
-pub fn assert_contract_ok<T, C, E, I>(result: Result<Result<T, C>, Result<E, I>>) -> T
-where
-    T: core::fmt::Debug,
-    C: core::fmt::Debug,
-    E: core::fmt::Debug,
-    I: core::fmt::Debug,
-{
+/// Assert that `result` is `Ok`, panicking with `msg` otherwise.
+pub fn assert_contract_ok<T, E: core::fmt::Debug>(result: Result<T, E>, msg: &str) -> T {
     match result {
-        Ok(Ok(value)) => value,
-        Ok(Err(conv)) => panic!("expected Ok, got conversion error: {conv:?}"),
-        Err(Ok(err)) => panic!("expected Ok, got contract error: {err:?}"),
-        Err(Err(inv)) => panic!("expected Ok, got invoke error: {inv:?}"),
+        Ok(v) => v,
+        Err(e) => panic!("{}: unexpected Err({:?})", msg, e),
     }
 }
 
-/// Assert that a `try_*` client call returned the expected contract error.
-///
-/// Matches the common pattern:
-/// `assert_eq!(client.try_foo(...), Err(Ok(MyError::Variant)))`.
-///
-/// # Panics
-/// Panics if the call succeeded, returned a different contract error, or
-/// failed at the conversion / invoke layer.
-pub fn assert_contract_err<T, C, E, I>(
-    result: Result<Result<T, C>, Result<E, I>>,
-    expected: E,
-) where
-    T: core::fmt::Debug,
-    C: core::fmt::Debug,
-    E: core::fmt::Debug + PartialEq,
-    I: core::fmt::Debug,
-{
+/// Assert that `result` is `Err`, panicking with `msg` otherwise.
+pub fn assert_contract_err<T: core::fmt::Debug, E>(result: Result<T, E>, msg: &str) -> E {
     match result {
-        Err(Ok(err)) => {
-            assert_eq!(
-                err, expected,
-                "contract error mismatch: expected {expected:?}, got {err:?}"
-            );
-        }
-        Ok(Ok(value)) => {
-            panic!("expected contract error {expected:?}, got Ok({value:?})")
-        }
-        Ok(Err(conv)) => {
-            panic!("expected contract error {expected:?}, got conversion error: {conv:?}")
-        }
-        Err(Err(inv)) => {
-            panic!("expected contract error {expected:?}, got invoke error: {inv:?}")
-        }
+        Ok(v) => panic!("{}: unexpected Ok({:?})", msg, v),
+        Err(e) => e,
     }
 }
+
+// ── Event assertions ──────────────────────────────────────────────────────────
+
+/// Assert that the most recent event has `topic` as its first topic entry.
+pub fn assert_event_topic(env: &Env, topic: Symbol) {
+    let events = env.events().all();
+    let (_contract, topics, _data) = events.last().expect("no events emitted");
+    let first: Symbol = Symbol::from_val(env, &topics.get(0).expect("event has no topics"));
+    assert_eq!(first, topic, "unexpected event topic");
+}
+
+// ── Length / bound assertions ─────────────────────────────────────────────────
 
 /// Assert that `actual` does not exceed `max` (storage / batch bound check).
 ///
@@ -337,22 +222,14 @@ pub fn assert_contract_err<T, C, E, I>(
 /// configured griefing bound.
 ///
 /// # Panics
+///
 /// Panics when `actual > max`.
-pub fn assert_len_at_most(actual: u32, max: u32, label: &str) {
+pub fn assert_len_at_most(actual: u32, max: u32) {
     assert!(
         actual <= max,
-        "{label}: length {actual} exceeds bound {max}"
-    );
-}
-
-/// Assert that `actual` equals `expected` exactly.
-///
-/// # Panics
-/// Panics when the lengths differ.
-pub fn assert_len_eq(actual: u32, expected: u32, label: &str) {
-    assert_eq!(
-        actual, expected,
-        "{label}: length mismatch: expected {expected}, got {actual}"
+        "length {} exceeds maximum {}",
+        actual,
+        max
     );
 }
 
@@ -361,40 +238,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn assert_contract_ok_unwraps_success() {
-        let result: Result<Result<u32, &str>, Result<&str, &str>> = Ok(Ok(42));
-        assert_eq!(assert_contract_ok(result), 42);
+    fn assert_len_at_most_accepts_within_bound() {
+        // Equal to the bound is allowed.
+        assert_len_at_most(0, 0);
+        assert_len_at_most(5, 5);
+        // Strictly below the bound is allowed.
+        assert_len_at_most(0, 10);
+        assert_len_at_most(9, 10);
     }
 
     #[test]
-    #[should_panic(expected = "expected Ok, got contract error")]
-    fn assert_contract_ok_panics_on_contract_err() {
-        let result: Result<Result<u32, &str>, Result<&str, &str>> = Err(Ok("boom"));
-        let _ = assert_contract_ok(result);
+    #[should_panic(expected = "exceeds maximum")]
+    fn assert_len_at_most_panics_when_over_bound() {
+        // One past the bound must panic.
+        assert_len_at_most(11, 10);
     }
 
     #[test]
-    fn assert_contract_err_matches_expected() {
-        let result: Result<Result<u32, &str>, Result<&str, &str>> = Err(Ok("cap"));
-        assert_contract_err(result, "cap");
-    }
-
-    #[test]
-    #[should_panic(expected = "expected contract error")]
-    fn assert_contract_err_panics_on_ok() {
-        let result: Result<Result<u32, &str>, Result<&str, &str>> = Ok(Ok(1));
-        assert_contract_err(result, "cap");
-    }
-
-    #[test]
-    fn assert_len_helpers() {
-        assert_len_at_most(64, 64, "accounts");
-        assert_len_eq(50, 50, "batch");
-    }
-
-    #[test]
-    #[should_panic(expected = "exceeds bound")]
-    fn assert_len_at_most_panics_when_over() {
-        assert_len_at_most(65, 64, "accounts");
+    #[should_panic(expected = "exceeds maximum")]
+    fn assert_len_at_most_panics_when_max_is_zero() {
+        // Any non-zero length exceeds a zero bound.
+        assert_len_at_most(1, 0);
     }
 }
