@@ -188,47 +188,53 @@ pub fn advance_ledger(env: &Env, delta: u32) {
 
 // ── Event helpers ─────────────────────────────────────────────────────────────
 
-/// Return the number of events emitted so far in the test environment.
-///
-/// Panics if the test environment has no events interface available.
-pub fn event_count(env: &Env) -> usize {
-    env.events().all().len() as usize
-}
-
-/// Assert that at least one emitted event has the given topic symbol.
+/// Assert that exactly `expected` events have been emitted.
 ///
 /// # Panics
-/// Panics with a descriptive message if no matching event is found.
-pub fn assert_event_topic(env: &Env, topic: &Symbol) {
+/// Panics when the emitted event count does not equal `expected`.
+pub fn assert_event_count(env: &Env, expected: u32) {
+    let actual = env.events().all().len();
+    assert_eq!(
+        actual, expected,
+        "expected {} events, found {}",
+        expected, actual
+    );
+}
+
+/// Assert that the most recent event's first topic equals `topic`.
+///
+/// # Panics
+/// Panics when no events have been emitted or the topic does not match.
+pub fn assert_event_topic(env: &Env, topic: Symbol) {
     let events = env.events().all();
-    for i in 0..events.len() {
-        let (_contract, topics, _data) = events.get(i).unwrap();
-        if let Some(first) = topics.get(0) {
-            if let Ok(sym) = Symbol::try_from_val(env, &first) {
-                if &sym == topic {
-                    return;
-                }
-            }
-        }
-    }
-    panic!("no event with topic found");
+    assert!(!events.is_empty(), "no events emitted");
+    let (_contract, topics, _data) = events.last().unwrap();
+    let first: Val = topics.get(0).expect("event has no topics");
+    let actual = Symbol::from_val(env, &first);
+    assert_eq!(actual, topic, "event topic mismatch");
 }
 
 // ── Result helpers ────────────────────────────────────────────────────────────
 
-/// Assert that a `Result` is `Ok`, panicking with the error otherwise.
+/// Assert that a `Result` is `Ok` and return the contained value.
+///
+/// # Panics
+/// Panics when the result is `Err`.
 pub fn assert_contract_ok<T, E: core::fmt::Debug>(result: Result<T, E>) -> T {
     match result {
-        Ok(v) => v,
-        Err(e) => panic!("expected Ok, got Err: {:?}", e),
+        Ok(value) => value,
+        Err(err) => panic!("expected Ok, got Err: {:?}", err),
     }
 }
 
-/// Assert that a `Result` is `Err`, panicking with the value otherwise.
+/// Assert that a `Result` is `Err` and return the contained error.
+///
+/// # Panics
+/// Panics when the result is `Ok`.
 pub fn assert_contract_err<T: core::fmt::Debug, E>(result: Result<T, E>) -> E {
     match result {
-        Ok(v) => panic!("expected Err, got Ok: {:?}", v),
-        Err(e) => e,
+        Ok(value) => panic!("expected Err, got Ok: {:?}", value),
+        Err(err) => err,
     }
 }
 
@@ -237,34 +243,49 @@ pub fn assert_contract_err<T: core::fmt::Debug, E>(result: Result<T, E>) -> E {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::testutils::Events;
-    use soroban_sdk::{symbol_short, Env};
+    use soroban_sdk::symbol_short;
 
     #[test]
-    fn event_count_is_zero_with_no_events() {
-        let env = Env::default();
-        assert_eq!(event_count(&env), 0);
-    }
-
-    #[test]
-    fn event_count_tracks_emitted_events() {
+    fn assert_event_count_passes_when_count_matches() {
         let env = Env::default();
         let contract = Address::generate(&env);
 
         env.events().publish((symbol_short!("a"),), 1u32);
-        assert_eq!(event_count(&env), 1);
-
         env.events().publish((symbol_short!("b"),), 2u32);
-        assert_eq!(event_count(&env), 2);
+
+        // Should not panic: exactly two events were emitted.
+        assert_event_count(&env, 2);
+        let _ = contract;
     }
 
     #[test]
-    fn event_count_matches_events_all_len() {
+    fn assert_event_count_passes_when_zero_events() {
         let env = Env::default();
-        env.events().publish((symbol_short!("x"),), 7u32);
-        env.events().publish((symbol_short!("y"),), 8u32);
-        env.events().publish((symbol_short!("z"),), 9u32);
-        assert_eq!(event_count(&env), env.events().all().len() as usize);
-        assert_eq!(event_count(&env), 3);
+
+        // Should not panic: no events emitted.
+        assert_event_count(&env, 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn assert_event_count_panics_when_count_too_low() {
+        let env = Env::default();
+
+        env.events().publish((symbol_short!("a"),), 1u32);
+
+        // One event emitted but two expected: must panic.
+        assert_event_count(&env, 2);
+    }
+
+    #[test]
+    #[should_panic]
+    fn assert_event_count_panics_when_count_too_high() {
+        let env = Env::default();
+
+        env.events().publish((symbol_short!("a"),), 1u32);
+        env.events().publish((symbol_short!("b"),), 2u32);
+
+        // Two events emitted but one expected: must panic.
+        assert_event_count(&env, 1);
     }
 }
