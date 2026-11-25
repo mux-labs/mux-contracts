@@ -458,3 +458,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1152 -->
 - #1152: Add a regression test for extend_ttl in contracts/mux-account/src/lib.rs
+
+<!-- handsoff-issue-1153 -->
+- #1153: Add a regression test for dispatch in contracts/mux-account/src/lib.rs
