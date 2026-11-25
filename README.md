@@ -467,3 +467,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1105 -->
 - #1105: Add a regression test for get_admin_threshold in contracts/mux-permissions/src/lib.rs
+
+<!-- handsoff-issue-1156 -->
+- #1156: Add a regression test for ping_scope in contracts/mux-account/src/lib.rs
