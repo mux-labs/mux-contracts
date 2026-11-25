@@ -476,3 +476,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1170 -->
 - #1170: Add a regression test for get_registry_metadata in contracts/mux-batcher/src/lib.rs
+
+<!-- handsoff-issue-1172 -->
+- #1172: Add a regression test for make_nop_ops in contracts/mux-batcher/src/lib.rs
