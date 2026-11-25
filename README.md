@@ -458,3 +458,6 @@ Apache-2.0
 
 <!-- handsoff-issue-1127 -->
 - #1127: Add a regression test for upgrade in contracts/mux-spending-policy/src/lib.rs
+
+<!-- handsoff-issue-1128 -->
+- #1128: Add a regression test for check_spend in contracts/mux-spending-policy/src/lib.rs
